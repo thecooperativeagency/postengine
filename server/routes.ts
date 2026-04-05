@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertPostSchema, insertDealershipSchema } from "@shared/schema";
 import { scanDriveFolders, archiveFile } from "./drive-scanner";
 import { publishPost } from "./zernio-publisher";
+import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
 
 export async function registerRoutes(server: Server, app: Express) {
   // ---- Dealerships ----
@@ -135,6 +136,81 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ---- Activity ----
+  // ── TELEGRAM ────────────────────────────────────────────
+  // Telegram webhook — handles Approve/Reject button taps
+  app.post("/api/telegram/webhook", async (req, res) => {
+    const { callback_query } = req.body;
+    if (!callback_query) return res.json({ ok: true });
+
+    const data = callback_query.data || "";
+    const chatId = callback_query.message?.chat?.id;
+    const messageId = callback_query.message?.message_id;
+    const token = process.env.TELEGRAM_BOT_TOKEN || "";
+
+    if (data.startsWith("approve_")) {
+      const postId = parseInt(data.replace("approve_", ""));
+      const post = storage.getPost(postId);
+      if (post) {
+        storage.updatePost(postId, { status: "scheduled" });
+        const result = await publishPost(postId);
+        // Update Telegram message
+        await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }),
+        });
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, text: `✅ Approved & scheduled: *${post.vehicleInfo}*`, parse_mode: "Markdown" }),
+        });
+      }
+    } else if (data.startsWith("reject_")) {
+      const postId = parseInt(data.replace("reject_", ""));
+      const post = storage.getPost(postId);
+      if (post) {
+        storage.updatePost(postId, { status: "rejected" });
+        await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }),
+        });
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, text: `❌ Rejected: *${post.vehicleInfo}*`, parse_mode: "Markdown" }),
+        });
+      }
+    }
+
+    // Answer callback to remove loading state
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callback_query.id }),
+    });
+
+    res.json({ ok: true });
+  });
+
+  // Send approval request for a specific post
+  app.post("/api/posts/:id/notify", async (req, res) => {
+    const post = storage.getPost(parseInt(req.params.id));
+    if (!post) return res.status(404).json({ error: "Not found" });
+    const dealerships = storage.getDealerships();
+    const dealer = dealerships.find(d => d.id === post.dealershipId);
+    const success = await sendApprovalRequest(post, dealer?.name || "Unknown");
+    res.json({ success });
+  });
+
+  // Send weekly summary to Telegram
+  app.post("/api/notify/weekly", async (req, res) => {
+    const posts = storage.getPosts({ status: "queued" });
+    const dealerships = storage.getDealerships();
+    await sendWeeklySummary(posts, dealerships);
+    res.json({ success: true, count: posts.length });
+  });
+
   // ── ZERNIO PUBLISH ─────────────────────────────────────────
   // Manually publish a post immediately (for testing)
   app.post("/api/posts/:id/publish", async (req, res) => {

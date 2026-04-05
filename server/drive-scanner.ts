@@ -8,6 +8,7 @@
 import { execSync } from "child_process";
 import { storage } from "./storage";
 import { generateCaption } from "./caption-writer";
+import { hostImage } from "./media-host";
 import fs from "fs";
 import path from "path";
 
@@ -203,6 +204,12 @@ export async function scanDriveFolders(): Promise<number> {
           generateCaption({ dealershipName, brand: dealership.brand, postType, vehicleInfo, platform: "googlebusiness", tone: "professional" }),
         ]);
 
+        // Upload image to GitHub for public hosting
+        const publicUrl = await hostImage(file.id, file.name);
+        const mediaUrls = publicUrl
+          ? JSON.stringify([publicUrl])
+          : JSON.stringify([`https://drive.usercontent.google.com/download?id=${file.id}&export=download`]);
+
         const scheduledFor = scheduleDates[i] || null;
 
         storage.createPost({
@@ -215,7 +222,7 @@ export async function scanDriveFolders(): Promise<number> {
           captionGmb: captionGMB,
           hashtags: null,
           ctaBlock: dealership.captionTemplate,
-          mediaUrls: JSON.stringify([`https://drive.usercontent.google.com/download?id=${file.id}&export=download`]),
+          mediaUrls,
           mediaType: file.mimeType?.startsWith("video/") ? "video" : "image",
           platforms: rule.platforms,
           scheduledFor,
