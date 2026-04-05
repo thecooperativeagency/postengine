@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { useState } from "react";
 import {
   Save, Building2, Key, FolderOpen, Instagram, Facebook, Video,
-  Calendar, Plus, Trash2, Clock, CheckSquare,
+  Calendar, Plus, Trash2, Clock, CheckSquare, Camera, AlertCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -223,6 +223,53 @@ function AddCadenceForm({ dealershipId, onClose }: { dealershipId: number; onClo
   );
 }
 
+
+function MediaRequirements({ settings }: { settings: CadenceSetting[] }) {
+  if (settings.length === 0) return null;
+
+  const weeklyTotal = settings.reduce((total, s) => {
+    const days = JSON.parse(s.daysOfWeek) as string[];
+    return total + (days.length * s.postsPerDay);
+  }, 0);
+
+  const monthlyTotal = Math.ceil(weeklyTotal * 4.33);
+
+  return (
+    <div className="mt-3 p-3 rounded-lg bg-muted/20 border border-muted/30">
+      <div className="flex items-center gap-2 mb-3">
+        <Camera className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Media Requirements</span>
+      </div>
+      <div className="space-y-2">
+        {settings.map(s => {
+          const days = JSON.parse(s.daysOfWeek) as string[];
+          const weekly = days.length * s.postsPerDay;
+          const monthly = Math.ceil(weekly * 4.33);
+          return (
+            <div key={s.id} className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">{s.postType}</span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs"><span className="font-semibold text-foreground">{weekly}</span> <span className="text-muted-foreground">photos/week</span></span>
+                <span className="text-xs"><span className="font-semibold text-foreground">{monthly}</span> <span className="text-muted-foreground">photos/month</span></span>
+              </div>
+            </div>
+          );
+        })}
+        <div className="pt-2 mt-2 border-t border-muted/30 flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <AlertCircle className="h-3 w-3 text-amber-500" />
+            <span className="text-xs font-semibold text-foreground">Total needed</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-bold text-primary">{weeklyTotal} photos/week</span>
+            <span className="text-xs font-bold text-primary">{monthlyTotal} photos/month</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CadenceSection({ dealership }: { dealership: Dealership }) {
   const [showAdd, setShowAdd] = useState(false);
   const { toast } = useToast();
@@ -268,6 +315,7 @@ function CadenceSection({ dealership }: { dealership: Dealership }) {
         {settings.map(s => (
           <CadenceRow key={s.id} setting={s} onDelete={() => deleteMutation.mutate(s.id)} />
         ))}
+        <MediaRequirements settings={settings} />
       </CardContent>
     </Card>
   );
