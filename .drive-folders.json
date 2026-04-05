@@ -1,0 +1,49 @@
+{
+  "account": "lance@thecoopbrla.com",
+  "dealerships": {
+    "Brian Harris BMW": {
+      "id": 2,
+      "root": "1lYpn2ha-9NfB2DPE-c8iRETZyTo8QB_n",
+      "folders": {
+        "New Cars": "1XFcy2iz1H2yyr7RRK7qnY3Vms1t-XiTp",
+        "Pre-Owned Cars": "1frj4HSZptDPZCFqU8nNlet5iGuTlqe1A",
+        "Service": "1wyqzi3dhEq4jIiQ39CpyOZ1jWraWhs-T",
+        "Parts & Accessories": "1GymTbHlah_Tu-b9DwsVmYrdUk19_f4VG",
+        "_Archive": "14znfOioiwjFJloE_dgadh-qwzTggaC6u"
+      }
+    },
+    "BMW of Jackson": {
+      "id": 1,
+      "root": "1VrvSBEZ6ch0QgQTtNzzh-xYgxRPWpXqC",
+      "folders": {
+        "New Cars": "1Brgx3LU5oay7ZOgXxYpDR4lePOGGyOaG",
+        "Pre-Owned Cars": "1f1LTdMTFXp6sGfBAxnt86XPUxOX2_4O_",
+        "Service": "1dSbL8K6UZmsyhUZcr5RJa8m5lXuKyMJ5",
+        "Parts & Accessories": "1ezeyhAFCgT2M2tVPjX0VrJQD8LBpHqzD",
+        "_Archive": "17Av9HHzw927VibWRRlgGDoQ53LFqjo0o"
+      }
+    },
+    "Audi Baton Rouge": {
+      "id": 3,
+      "root": "1qA3juHq72ezNotu3NaOukfg9E-K5YKzd",
+      "folders": {
+        "New Cars": "1P7eUZUoYQrd5Z_xSdeduI8Ffj0s9waZD",
+        "Pre-Owned Cars": "1eYDCbzIx2-kGF7zRXxEkHe7tyYZaNPQ0",
+        "Service": "1ZQxvwNFAEg6VUGS-N6i2IojtQfSqnTqo",
+        "Parts & Accessories": "1m6H_Yl3UAIAKeQBWZuRGofYI5lOYx-wn",
+        "_Archive": "1mSNjuRMqcN9QW0EZ9N4msIOUv-pi6R2h"
+      }
+    },
+    "Harris Porsche": {
+      "id": 4,
+      "root": "1vWOiInvpN6HJX-NU9Iwy1Pm-s20x85Ya",
+      "folders": {
+        "New Cars": "1_FXZRfng8AXl2rbw-NofyrnQKmRYHGw2",
+        "Pre-Owned Cars": "1IsCXiajYmj7orgofcjgvg0-6w1ICZWkR",
+        "Service": "1zvl7aJ8OacSVVVznMGjY_ZMeFFKnQhwq",
+        "Parts & Accessories": "1DEm6YiJ1QCA7aBjuOkahZnJlLxHmQuD9",
+        "_Archive": "1U6PUSIvwVIRJ4oqetzNtPhUFGvtIZWxr"
+      }
+    }
+  }
+}
