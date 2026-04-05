@@ -75,11 +75,16 @@ export function AppSidebar({ dealershipFilter, onDealershipFilterChange }: AppSi
   return (
     <Sidebar>
       <SidebarHeader className="px-4 py-4">
-        <a href="#/" className="flex items-center gap-2.5" data-testid="link-home-logo">
-          <span className="text-sidebar-primary">
-            <PostEngineLogo />
-          </span>
-          <span className="font-display font-semibold text-lg tracking-tight text-sidebar-foreground">
+        <a href="#/" className="flex flex-col gap-1" data-testid="link-home-logo">
+          <div className="flex items-center gap-2.5">
+            <img
+              src="https://images.squarespace-cdn.com/content/v1/68fac8a3d20e8d72215ede75/6669040e-00b7-4113-a0c0-a29b3706227f/Asset+26.png?format=200w"
+              alt="The Cooperative Agency"
+              className="h-7 w-auto object-contain"
+              style={{ filter: 'brightness(0) invert(1)' }}
+            />
+          </div>
+          <span className="text-xs text-sidebar-foreground/40 font-medium tracking-wider uppercase pl-0.5">
             PostEngine
           </span>
         </a>
@@ -153,9 +158,14 @@ export function AppSidebar({ dealershipFilter, onDealershipFilterChange }: AppSi
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="px-4 py-3">
-        <div className="text-xs text-sidebar-foreground/40">
-          {dealerships?.length ?? 0} accounts managed
+      <SidebarFooter className="px-4 py-3 border-t border-sidebar-border/30">
+        <div className="flex flex-col gap-0.5">
+          <div className="text-xs text-sidebar-foreground/50 font-medium">
+            {dealerships?.length ?? 0} accounts managed
+          </div>
+          <div className="text-xs text-sidebar-foreground/30">
+            © 2026 The Cooperative Agency
+          </div>
         </div>
       </SidebarFooter>
     </Sidebar>

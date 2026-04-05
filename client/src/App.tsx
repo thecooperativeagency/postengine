@@ -8,7 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeProvider, useTheme } from "@/components/theme-provider";
-import { PerplexityAttribution } from "@/components/PerplexityAttribution";
+
 import { Button } from "@/components/ui/button";
 import { Sun, Moon } from "lucide-react";
 import NotFound from "@/pages/not-found";
@@ -71,7 +71,7 @@ function AppContent() {
                 <Route component={NotFound} />
               </Switch>
             </Router>
-            <PerplexityAttribution />
+
           </main>
         </div>
       </div>
