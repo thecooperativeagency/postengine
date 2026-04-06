@@ -121,6 +121,16 @@ export class DatabaseStorage implements IStorage {
         color: "#C8102E",
         captionTemplate: "Click here --> @harrisporsche then click the linkin.bio to browse and click on the link of this post.",
       },
+      {
+        name: "Luc OpenCRAW",
+        brand: "OpenCRAW",
+        domain: "opencraw.ai",
+        location: "Baton Rouge, LA",
+        instagramHandle: "@opencraw",
+        facebookPage: "",
+        color: "#eb2300",
+        captionTemplate: "",
+      },
     ];
 
     for (const store of stores) {

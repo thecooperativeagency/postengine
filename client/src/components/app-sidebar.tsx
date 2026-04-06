@@ -137,10 +137,10 @@ export function AppSidebar({ dealershipFilter, onDealershipFilterChange }: AppSi
                 data-testid="select-dealership-filter"
               >
                 <Building2 className="h-4 w-4 mr-2 opacity-60" />
-                <SelectValue placeholder="All Dealerships" />
+                <SelectValue placeholder="All Clients" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Dealerships</SelectItem>
+                <SelectItem value="all">All Clients</SelectItem>
                 {dealerships?.map((d) => (
                   <SelectItem key={d.id} value={d.id.toString()}>
                     <span className="flex items-center gap-2">

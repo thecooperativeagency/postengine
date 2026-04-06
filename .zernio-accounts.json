@@ -6,6 +6,13 @@
     "bmw_jackson": "69d1bd6bde93ece084ea691c",
     "harris_porsche": "69d1bf0e893c5a0f75150e8c"
   },
+  "profiles": {
+    "audi_baton_rouge": "69d1b97f531ac97fa79a78b6",
+    "brian_harris_bmw": "69d1bc5fde93ece084ea3dab",
+    "bmw_jackson": "69d1bd6bde93ece084ea691c",
+    "harris_porsche": "69d1bf0e893c5a0f75150e8c",
+    "opencraw": "69d313d2c4be9cd4af77fc82"
+  },
   "accounts": {
     "audi_baton_rouge": {
       "instagram": "69d1bbb43343e7799231b5a2",
@@ -26,6 +33,9 @@
       "instagram": "69d1bf613343e7799231bed5",
       "facebook": "69d1c1223343e7799231c263",
       "googlebusiness": "69d1c1653343e7799231c324"
+    },
+    "opencraw": {
+      "instagram": "69d3141ab668e4ea1d4d8014"
     }
   }
 }

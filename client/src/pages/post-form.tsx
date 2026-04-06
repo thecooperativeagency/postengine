@@ -216,7 +216,7 @@ export default function PostForm() {
                       name="dealershipId"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Dealership</FormLabel>
+                          <FormLabel>Client</FormLabel>
                           <Select
                             value={field.value?.toString()}
                             onValueChange={(val) => field.onChange(Number(val))}

@@ -344,7 +344,7 @@ function DealershipCard({ dealership }: { dealership: Dealership }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/dealerships"] });
-      toast({ title: "Dealership updated" });
+      toast({ title: "Client updated" });
       setIsEditing(false);
     },
     onError: (err: Error) => {
@@ -475,11 +475,11 @@ export default function Settings() {
 
       <Separator />
 
-      {/* Dealership Settings */}
+      {/* Client Settings */}
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
           <Building2 className="h-4 w-4" />
-          Dealerships
+          Clients
         </h2>
         <div className="space-y-3">
           {dealerships?.map((d) => (

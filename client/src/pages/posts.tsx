@@ -246,7 +246,7 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                       data-testid="checkbox-select-all"
                     />
                   </TableHead>
-                  <TableHead>Dealership</TableHead>
+                  <TableHead>Client</TableHead>
                   <TableHead>Vehicle / Subject</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Status</TableHead>
