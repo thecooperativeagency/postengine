@@ -78,7 +78,7 @@ Instructions:
 
 # Run Claude Code in background
 echo "[$(date)] Spawning Claude Code..." >> "$LOG_FILE"
-cd "$WORKDIR" && claude --permission-mode bypassPermissions --print "$PROMPT" >> "$LOG_FILE" 2>&1
+cd "$WORKDIR" && /opt/homebrew/bin/claude --permission-mode bypassPermissions --print "$PROMPT" >> "$LOG_FILE" 2>&1
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -eq 0 ]; then
