@@ -166,6 +166,14 @@ export function AppSidebar({ dealershipFilter, onDealershipFilterChange }: AppSi
           <div className="text-xs text-sidebar-foreground/30">
             © 2026 The Cooperative Agency
           </div>
+          <a
+            href="https://thecooperativeagency.github.io/Ga4-dashboards/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-sidebar-foreground/40 hover:text-sidebar-foreground/70 transition-colors mt-1"
+          >
+            ← Command Hub
+          </a>
         </div>
       </SidebarFooter>
     </Sidebar>
