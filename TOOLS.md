@@ -92,6 +92,32 @@ Use `memo` CLI for Apple Notes.
 - **Read note:** `memo read <noteId>`
 - **Edit note:** `memo edit <noteId> --body "Updated content"`
 
+## Todoist (Task Management)
+Use the Todoist API for all task tracking. Token stored in openclaw.json env.
+
+### Projects
+- 🚗 Client Work: `6gJvwp7WpXWphjq3`
+- 📈 Business Dev: `6gJvwpQHHpF8jgFp`
+- ⚙️ Operations: `6gJvwpWCF49wj57r`
+- 🔮 Someday: `6gJvwpcfPrRJJgHj`
+
+### Common commands
+- **List tasks:** `python3 clawchief/scripts/todoist_cli.py list`
+- **Add task:** `python3 clawchief/scripts/todoist_cli.py add "Task" --project "Client Work" --priority 3`
+- **Complete task:** `python3 clawchief/scripts/todoist_cli.py complete <task_id>`
+- **API direct:** `curl -H "Authorization: Bearer $TODOIST_API_TOKEN" https://api.todoist.com/api/v1/tasks`
+
+### Priority levels
+- P1 (4) = Urgent — do today
+- P2 (3) = Important — do this week  
+- P3 (2) = Normal
+- P4 (1) = Someday
+
+### Rules
+- All open commitments go in Todoist, not just COMMITMENTS.md
+- COMMITMENTS.md is now a reference/summary; Todoist is the live system
+- Lance's account: lance@thecoopbrla.com (Google auth)
+
 ## Apple Reminders (remindctl)
 Use `remindctl` CLI for Apple Reminders.
 - **List reminders:** `remindctl list`
