@@ -7,7 +7,7 @@
 
 ## Contact
 - Phone: TBD
-- Email: TBD
+- Email: rick.mccary@herrin-gear.com ✅
 
 ## Relationship Notes
 - New client (kick-off 3/30/2026)

@@ -5,7 +5,7 @@
 - **Company:** Porsche (OEM digital/website team)
 
 ## Contact
-- Email: harrisporsche738@gmail.com (account used for GA4/OEM access requests)
+- Email: cody.vanderveen@porsche.us ✅ (also uses harrisporsche738@gmail.com for GA4/OEM access)
 - Phone: TBD
 
 ## Stores He Covers

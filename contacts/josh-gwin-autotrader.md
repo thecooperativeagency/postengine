@@ -6,7 +6,7 @@
 - **LinkedIn:** https://www.linkedin.com/in/joshgwin
 
 ## Contact
-- Email: josh.gwin@autotrader.com
+- Email: josh.gwin@autotrader.com (confirmed)
 - Phone: 225-283-4455
 - Secondary: 225-802-5226
 

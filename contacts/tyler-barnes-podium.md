@@ -7,7 +7,7 @@
 - **LinkedIn:** https://www.linkedin.com/in/tylertbarnes/
 
 ## Contact
-- Email: TBD (format likely @podium.com — confirm)
+- Email: tyler.barnes@podium.com ✅
 - Phone: TBD
 
 ## Stores He Covers

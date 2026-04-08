@@ -7,7 +7,7 @@
 
 ## Contact
 - Phone: TBD
-- Email: TBD
+- Email: Brett.Bagley@brianharrisbmw.com ✅
 
 ## Relationship Notes
 - Active client GM

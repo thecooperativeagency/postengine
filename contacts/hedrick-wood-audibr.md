@@ -6,7 +6,7 @@
 
 ## Contact
 - Phone: TBD
-- Email: TBD
+- Email: hedrick.wood@brianharrisaudi.com ✅
 
 ## Relationship Notes
 - Active client GM
