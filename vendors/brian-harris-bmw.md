@@ -2,6 +2,7 @@
 
 **Location:** Baton Rouge, LA  
 **Group:** Brian Harris Automotive  
+**GM:** Brett Bagley  
 **Last Updated:** 2026-04-08
 
 ---

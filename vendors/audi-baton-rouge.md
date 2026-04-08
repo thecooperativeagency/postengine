@@ -1,6 +1,7 @@
 # Audi Baton Rouge — Vendor Registry
 
 **Location:** Baton Rouge, LA  
+**GM:** Hedrick Wood  
 **Last Updated:** 2026-04-08
 
 ---

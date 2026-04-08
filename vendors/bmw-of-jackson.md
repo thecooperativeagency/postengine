@@ -2,6 +2,7 @@
 
 **Location:** Jackson, MS  
 **Group:** Herrin-Gear Automotive Group  
+**GM:** Rick McCary  
 **Last Updated:** 2026-04-08
 
 ---
