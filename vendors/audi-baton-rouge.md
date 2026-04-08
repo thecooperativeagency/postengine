@@ -29,6 +29,7 @@
 
 | Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
 |--------|----------|-----|-------|-------|-------------|-------|
+| CARFAX | Vehicle History | Clay Dugas | TBD | (225) 266-6561 | TBD | Vehicle history reports, One-Owner badges |
 | TBD | | | | | | |
 
 ## Notes
