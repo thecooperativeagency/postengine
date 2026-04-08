@@ -10,8 +10,7 @@
 - Email: TBD
 
 ## Stores She Covers
-- Brian Harris BMW (confirmed)
-- Others TBD
+- Brian Harris BMW only
 
 ## What AMP Does
 - Marketing automation inside VinSolutions CRM
