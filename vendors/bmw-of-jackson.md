@@ -32,6 +32,7 @@
 
 | Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
 |--------|----------|-----|-------|-------|-------------|-------|
+| CARFAX | Vehicle History | TBD | TBD | TBD | TBD | Rep TBD — confirm with Rick McCary |
 | TBD | | | | | | |
 
 ## Notes
