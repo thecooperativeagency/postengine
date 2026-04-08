@@ -59,6 +59,7 @@
 
 - Default Google account: lance@thecoopbrla.com
 - Based in Louisiana (225 area code)
+- Cell: (225) 276-5682 — primary contact, text preferred
 - Manages Google Business Profiles for clients — hours, posts, reviews, responses
 - "The dealerships" = his 4 clients above
 - Co-op dollars are manufacturer marketing funds dealers can claim — this is a big part of the value prop
