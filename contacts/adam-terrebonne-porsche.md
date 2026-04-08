@@ -7,7 +7,7 @@
 
 ## Contact
 - Phone: (504) 810-1049 ✅
-- Email: TBD (not in contacts — ask next visit)
+- Email: Adam.Terrebonne@harrisporsche.com ✅
 
 ## Relationship Notes
 - New client (kick-off 3/30/2026)

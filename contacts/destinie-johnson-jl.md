@@ -6,7 +6,7 @@
 
 ## Contact
 - Email: djohnson@jandlmarketing.com ✅
-- Phone: TBD
+- Phone: (270) 977-7728 ✅
 
 ## Stores She Covers
 - Brian Harris BMW
