@@ -11,7 +11,7 @@
 | Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
 |--------|----------|-----|-------|-------|-------------|-------|
 | CDK Global | DMS | TBD | TBD | TBD | TBD | Primary DMS |
-| VinSolutions | CRM | Royce (TBD last name) | TBD | TBD | TBD | Cox Automotive; data export pending |
+| VinSolutions | CRM | Royce Lee | +1 (309) 997-8009 | TBD | TBD | Cox Automotive; data export pending |
 | Vauto | Inventory Mgmt | Dwayne Hearl | @coxautoinc.com | TBD | TBD | Performance Manager |
 
 ## Marketing & Advertising
