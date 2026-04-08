@@ -1,5 +1,18 @@
 # HEARTBEAT.md
 
+## System Health Check
+Every heartbeat, check these logs for silent failures:
+1. `tail -5 ~/Library/Logs/kalshi-weather.log` — if last entry is >1hr old, something's wrong
+2. `tail -5 ~/Library/Logs/kalshi-settle.log` — check for errors
+3. `curl -s http://localhost:3001/health` — investment monitor alive?
+4. `curl -s http://localhost:3200/api/portfolio` — Kalshi dashboard alive?
+5. If anything is down, restart it and send Lance a Telegram alert
+
+## Kalshi Settlement Follow-up
+- After 9am CDT daily, check if settlement ran: `cat ~/.openclaw/workspace/kalshi-weather/data/results.json`
+- If new results exist that haven't been reported, send Lance a summary
+- After settlement, confirm next day's trades were placed (check resting orders)
+
 ## @opencraw Content Pipeline
 
 Every heartbeat, check if fewer than 3 posts are queued in PostEngine for client ID 5 (Luc OpenCRAW).
