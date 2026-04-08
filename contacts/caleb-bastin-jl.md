@@ -6,7 +6,7 @@
 
 ## Contact
 - Phone: +1 (513) 827-2086 ✅
-- Email: cbastin@jandlmarketing.com (likely — not confirmed in email yet)
+- Email: cbastin@jandlmarketing.com ✅
 
 ## Stores He Covers
 - Brian Harris BMW
