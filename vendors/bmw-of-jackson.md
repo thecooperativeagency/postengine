@@ -25,7 +25,7 @@
 | J&L Marketing | SEM / Google Ads | Michael Dorsey (primary) / Caleb Bastin (secondary) | mdorsey@jandlmarketing.com | (513) 703-1151 | ~$8K/mo (was $16K) | Google Ads managed by J&L; Lance cut spend 50%, sales up 30% |
 | Epsilon | Digital Marketing / Data | Adam Nicholas | Adam.Nicholas@epsilon.com | (213) 509-0888 | TBD | BMW OEM co-op digital advertising |
 | TBD | SEO | TBD | TBD | TBD | TBD | |
-| J&L Marketing | Direct Mail / Events | Michael Dorsey (primary) / Caleb Bastin (secondary) | TBD | (513) 703-1151 / (513) 827-2086 | TBD | Direct mail, sales events, conquest campaigns |
+
 | TBD | Email Marketing | TBD | TBD | TBD | TBD | |
 
 ## Other

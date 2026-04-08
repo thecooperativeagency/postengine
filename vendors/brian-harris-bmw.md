@@ -25,7 +25,7 @@
 | Podium | AI/BDC/WebChat | Tyler Barnes | @podium.com | TBD | TBD | CSM; covers all 4 stores |
 | J&L Marketing | SEM / Google Ads | Michael Dorsey (primary) / Caleb Bastin (secondary) | mdorsey@jandlmarketing.com | (513) 703-1151 | TBD | Google Ads managed by J&L |
 | TBD | SEO | TBD | TBD | TBD | TBD | |
-| J&L Marketing | Direct Mail / Events | Michael Dorsey (primary) / Caleb Bastin (secondary) | TBD | (513) 703-1151 / (513) 827-2086 | TBD | Direct mail, sales events, conquest campaigns |
+
 | TBD | Email Marketing | TBD | TBD | TBD | TBD | |
 
 ## Other
