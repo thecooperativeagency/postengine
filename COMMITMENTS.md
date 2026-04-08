@@ -23,8 +23,9 @@ Items I've committed to doing or have in progress.
 
 | Item | Context | Due | Status |
 |------|---------|-----|--------|
-| Build vendor registry per store | New — agreed 2026-04-08 | TBD | In Progress |
-| Build contacts/ directory for key relationships | New — agreed 2026-04-08 | Today | In Progress |
+| Reconnect Brian Harris BMW Facebook in Zernio | Token expired — failed post Apr 8. Check all stores for stale scheduled posts before turning cadences back on | When photos are ready | Open |
+| Build vendor registry per store | Agreed 2026-04-08 — in progress | TBD | In Progress |
+| Build contacts/ directory for key relationships | Agreed 2026-04-08 | Done ✅ | Done |
 | VinSolutions lead data → GA4 dashboards | Awaiting CSV from Royce | After exports | Waiting |
 | Harris Porsche GA4 dashboard | Awaiting Cody to grant access | TBD | Waiting |
 | Add Coop Agency as 5th PostEngine client | | TBD | Open |
