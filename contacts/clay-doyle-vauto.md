@@ -6,7 +6,7 @@
 - **Territory:** Jackson, MS
 
 ## Contact
-- Phone: TBD
+- Phone: (270) 612-1287 ✅
 - Email: TBD
 
 ## Stores He Covers

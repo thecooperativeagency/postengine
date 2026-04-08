@@ -13,13 +13,13 @@
 |--------|----------|-----|-------|-------|-------------|-------|
 | Reynolds & Reynolds | DMS | TBD | TBD | TBD | TBD | Tough integration — no easy API |
 | Reynolds & Reynolds | CRM | TBD | TBD | TBD | TBD | Same platform as DMS |
-| Vauto | Inventory Mgmt | Clay Doyle | TBD | TBD | TBD | Jackson-specific Vauto rep |
+| Vauto | Inventory Mgmt | Clay Doyle | TBD | (270) 612-1287 | TBD | Jackson-specific Vauto rep |
 
 ## Marketing & Advertising
 
 | Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
 |--------|----------|-----|-------|-------|-------------|-------|
-| Autotrader | Listings | Steve Nini | TBD | TBD | TBD | Jackson-specific Autotrader rep |
+| Autotrader | Listings | Steven Nini | steven.nini@coxautoinc.com | (601) 996-1277 | TBD | Jackson-specific Autotrader rep |
 | Motive | Website | Dessrae Edison | @motivehq.com | TBD | TBD | Client Operations Specialist |
 | Podium | AI/BDC/WebChat | Tyler Barnes | @podium.com | TBD | TBD | CSM; covers all 4 stores |
 | TBD | SEM / Google Ads | TBD | TBD | TBD | ~$8K/mo (was $16K) | Lance cut spend 50%, sales up 30% |

@@ -6,8 +6,8 @@
 - **Territory:** Jackson, MS
 
 ## Contact
-- Phone: TBD
-- Email: TBD
+- Phone: (601) 996-1277 ✅
+- Email: steven.nini@coxautoinc.com ✅
 
 ## Stores He Covers
 - BMW of Jackson
