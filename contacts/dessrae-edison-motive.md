@@ -7,7 +7,7 @@
 
 ## Contact
 - Phone: +1 (601) 550-2972 ✅
-- Email: TBD (format: @motivehq.com — ask next contact)
+- Email: dessrae.edison@motivehq.com ✅
 
 ## Stores She Covers
 - Brian Harris BMW
