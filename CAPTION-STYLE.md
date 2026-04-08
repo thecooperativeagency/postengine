@@ -34,6 +34,10 @@
 ### Brian Harris BMW (Baton Rouge)
 `Brian Harris BMW` `BMW Baton Rouge` `new BMW` `BMW dealer Louisiana` `BMW X3` `BMW 5 Series` `luxury cars Baton Rouge`
 
+**Signature phrase:** "Thank you for making Brian Harris BMW the #1 BMW dealer in Louisiana."
+- Use as a closer, a CTA anchor, or a standalone brand statement
+- Don't overuse — reserve for high-impact posts (milestones, events, big inventory drops)
+
 ### Audi Baton Rouge
 `Audi Baton Rouge` `new Audi` `Audi SUV` `Q5 Baton Rouge` `Audi dealer Louisiana` `luxury SUV`
 
