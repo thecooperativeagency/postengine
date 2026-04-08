@@ -15,8 +15,8 @@
 - (NOT Audi Baton Rouge)
 
 ## What J&L Marketing Does
-- **Google Ads / SEM management** for Brian Harris BMW, BMW of Jackson, Harris Porsche
-- No direct mail — digital advertising only
+- **Google Ads & Meta Advertising** for Brian Harris BMW, BMW of Jackson, Harris Porsche
+- Google Ads & Meta (Facebook/Instagram) — digital advertising only. No direct mail.
 - (NOT Audi Baton Rouge — The Cooperative Agency manages Google Ads there)
 
 ## Notes
