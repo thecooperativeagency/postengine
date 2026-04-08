@@ -21,7 +21,7 @@
 | Autotrader | Listings | Josh Gwin | josh.gwin@autotrader.com | 225-283-4455 | TBD | Cox Automotive; local BR rep |
 | Motive | Website | Dessrae Edison | @motivehq.com | TBD | TBD | OEM-approved platform |
 | Podium | AI/BDC/WebChat | Tyler Barnes | @podium.com | TBD | TBD | CSM; covers all 4 stores |
-| TBD | SEM / Google Ads | TBD (SEM guy) | TBD | TBD | TBD | Optimization brief in Drive; review this week |
+| The Cooperative Agency | SEM / Google Ads | Lance Faucheux | lance@thecoopbrla.com | — | TBD | Managed by Lance; optimization brief in Drive; review this week |
 | TBD | SEO | TBD | TBD | TBD | TBD | |
 | TBD | Email Marketing | TBD | TBD | TBD | TBD | |
 
