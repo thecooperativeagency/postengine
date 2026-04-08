@@ -5,7 +5,7 @@
 - **Store:** Audi Baton Rouge (Baton Rouge, LA)
 
 ## Contact
-- Phone: TBD
+- Phone: (225) 978-9305 ✅
 - Email: hedrick.wood@brianharrisaudi.com ✅
 
 ## Relationship Notes

@@ -6,7 +6,7 @@
 - **Group:** Brian Harris Automotive
 
 ## Contact
-- Phone: TBD
+- Phone: (225) 276-2004 ✅
 - Email: Brett.Bagley@brianharrisbmw.com ✅
 
 ## Relationship Notes

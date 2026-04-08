@@ -6,9 +6,9 @@
 - **LinkedIn:** https://www.linkedin.com/in/joshgwin
 
 ## Contact
-- Email: josh.gwin@autotrader.com (confirmed)
-- Phone: 225-283-4455
-- Secondary: 225-802-5226
+- Email: josh.gwin@autotrader.com ✅
+- Phone: +1 (225) 954-1627 ✅
+- Secondary: (225) 802-5226
 
 ## Stores He Covers
 - Brian Harris BMW

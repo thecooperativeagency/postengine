@@ -6,7 +6,7 @@
 - **Group:** Herrin-Gear Automotive Group
 
 ## Contact
-- Phone: TBD
+- Phone: (601) 278-5340 ✅
 - Email: rick.mccary@herrin-gear.com ✅
 
 ## Relationship Notes

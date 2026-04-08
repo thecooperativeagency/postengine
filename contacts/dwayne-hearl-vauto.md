@@ -7,8 +7,8 @@
 - **LinkedIn:** Search "Dwayne Hearl vAuto" on LinkedIn
 
 ## Contact
-- Email: TBD (format: @coxautoinc.com — gated)
-- Phone: TBD (gated)
+- Phone: +1 (813) 215-3632 ✅
+- Email: TBD (format: @coxautoinc.com — ask next contact)
 
 ## Stores He Covers
 - Brian Harris BMW

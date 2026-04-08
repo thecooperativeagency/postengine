@@ -6,8 +6,8 @@
 - **LinkedIn/ZoomInfo:** https://www.zoominfo.com/p/Dessrae-Edison/5977500615
 
 ## Contact
-- Email: TBD (format: @motivehq.com — confirm first name with Lance)
-- Phone: TBD (gated)
+- Phone: +1 (601) 550-2972 ✅
+- Email: TBD (format: @motivehq.com — ask next contact)
 
 ## Stores She Covers
 - Brian Harris BMW

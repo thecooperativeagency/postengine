@@ -8,7 +8,7 @@
 
 ## Contact
 - Email: tyler.barnes@podium.com ✅
-- Phone: TBD
+- Phone: (385) 485-6773 ✅
 
 ## Stores He Covers
 - Brian Harris BMW

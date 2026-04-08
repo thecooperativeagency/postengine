@@ -6,8 +6,8 @@
 - **Group:** Brian Harris Automotive
 
 ## Contact
-- Phone: TBD
-- Email: TBD
+- Phone: (504) 810-1049 ✅
+- Email: TBD (not in contacts — ask next visit)
 
 ## Relationship Notes
 - New client (kick-off 3/30/2026)
