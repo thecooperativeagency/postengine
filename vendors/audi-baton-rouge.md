@@ -19,7 +19,8 @@
 | Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
 |--------|----------|-----|-------|-------|-------------|-------|
 | Autotrader | Listings | Josh Gwin | josh.gwin@autotrader.com | 225-283-4455 | TBD | Cox Automotive; local BR rep |
-| Motive | Website | Dessrae Edison | @motivehq.com | TBD | TBD | OEM-approved platform |
+| Motive | Dealer Website | Dessrae Edison | dessrae.edison@motivehq.com | (601) 550-2972 | TBD | Dealer-managed website |
+| Audi OEM Platform | OEM Website | Vania Beauchimain | TBD | (802) 503-9349 | TBD | Audi franchise-required OEM site — Lance manages both |
 | Podium | AI/BDC/WebChat | Tyler Barnes | @podium.com | TBD | TBD | CSM; covers all 4 stores |
 | The Cooperative Agency | SEM / Google Ads | Lance Faucheux | lance@thecoopbrla.com | — | TBD | Managed by Lance; optimization brief in Drive; review this week |
 | TBD | SEO | TBD | TBD | TBD | TBD | |
