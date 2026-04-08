@@ -1,5 +1,8 @@
 # HEARTBEAT.md
 
+## Overnight Work Queue
+If there are pending code tasks in memory/2026-*.md marked as TODO or incomplete, work on them during off-peak heartbeats. Do not wait for Lance to ask — just do it and report completion.
+
 ## System Health Check
 Every heartbeat, check these logs for silent failures:
 1. `tail -5 ~/Library/Logs/kalshi-weather.log` — if last entry is >1hr old, something's wrong
