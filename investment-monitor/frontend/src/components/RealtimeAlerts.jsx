@@ -3,7 +3,7 @@ import { io } from 'socket.io-client'
 import { AlertCircle, X } from 'lucide-react'
 import { useStore } from '../store/appStore'
 
-const socket = io('http://localhost:3001', {
+const socket = io(window.location.origin, {
   reconnection: true,
   reconnectionDelay: 1000,
   reconnectionDelayMax: 5000,

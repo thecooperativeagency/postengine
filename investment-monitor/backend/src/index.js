@@ -31,8 +31,8 @@ const io = new Server(server, {
 });
 
 // Middleware
-app.use(helmet());
-app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:3000' }));
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 // Rate limiting
@@ -84,14 +84,19 @@ app.use((err, req, res, next) => {
 });
 
 // Serve frontend build
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const frontendDist = join(__dirname, '../../../frontend/dist');
-app.use(express.static(frontendDist));
-app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api') && !req.path.startsWith('/health')) {
-    res.sendFile(join(frontendDist, 'index.html'));
+import { createRequire } from 'module';
+const require2 = createRequire(import.meta.url);
+const path2 = require2('path');
+const url2 = require2('url');
+const __filename2 = url2.fileURLToPath(import.meta.url);
+const __dirname2 = path2.dirname(__filename2);
+const frontendDist = path2.join(__dirname2, '../../frontend/dist');
+app.use(express.static(frontendDist, { index: 'index.html' }));
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api') && !req.path.startsWith('/health') && !req.path.startsWith('/socket.io')) {
+    res.sendFile(path2.join(frontendDist, 'index.html'));
+  } else {
+    next();
   }
 });
 

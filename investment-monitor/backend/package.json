@@ -10,6 +10,9 @@
     "db:migrate": "node src/db/migrate.js",
     "db:seed": "node src/db/seed.js",
     "ingest": "node src/tasks/run-ingest.js",
+    "ingest:x": "node src/tasks/ingest-x.js",
+    "intel": "node src/tasks/x-intelligence.js",
+    "search": "node src/tasks/x-intelligence.js --search",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": ["investment", "monitoring", "investors", "alerts"],
