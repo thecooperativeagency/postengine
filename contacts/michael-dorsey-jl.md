@@ -17,6 +17,8 @@
 ## What J&L Marketing Does
 - Automotive direct mail and event-based marketing
 - Sales events, conquest campaigns, service mailers
+- **Google Ads / SEM management** for Brian Harris BMW, BMW of Jackson, Harris Porsche
+- (NOT Audi Baton Rouge — separate SEM vendor)
 
 ## Notes
 - Secondary contact: Caleb Bastin

@@ -22,7 +22,7 @@
 | Autotrader | Listings | Steven Nini | steven.nini@coxautoinc.com | (601) 996-1277 | TBD | Jackson-specific Autotrader rep |
 | Motive | Website | Dessrae Edison | @motivehq.com | TBD | TBD | Client Operations Specialist |
 | Podium | AI/BDC/WebChat | Tyler Barnes | @podium.com | TBD | TBD | CSM; covers all 4 stores |
-| TBD | SEM / Google Ads | TBD | TBD | TBD | ~$8K/mo (was $16K) | Lance cut spend 50%, sales up 30% |
+| J&L Marketing | SEM / Google Ads | Michael Dorsey (primary) / Caleb Bastin (secondary) | mdorsey@jandlmarketing.com | (513) 703-1151 | ~$8K/mo (was $16K) | Google Ads managed by J&L; Lance cut spend 50%, sales up 30% |
 | Epsilon | Digital Marketing / Data | Adam Nicholas | Adam.Nicholas@epsilon.com | (213) 509-0888 | TBD | BMW OEM co-op digital advertising |
 | TBD | SEO | TBD | TBD | TBD | TBD | |
 | J&L Marketing | Direct Mail / Events | Michael Dorsey (primary) / Caleb Bastin (secondary) | TBD | (513) 703-1151 / (513) 827-2086 | TBD | Direct mail, sales events, conquest campaigns |

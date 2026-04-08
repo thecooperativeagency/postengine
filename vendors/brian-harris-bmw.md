@@ -23,7 +23,7 @@
 | Autotrader | Listings | Josh Gwin | josh.gwin@autotrader.com | 225-283-4455 | TBD | Cox Automotive; local BR rep |
 | Motive | Website | Dessrae Edison | @motivehq.com | TBD | TBD | Client Operations Specialist |
 | Podium | AI/BDC/WebChat | Tyler Barnes | @podium.com | TBD | TBD | CSM; covers all 4 stores |
-| TBD | SEM / Google Ads | TBD | TBD | TBD | TBD | |
+| J&L Marketing | SEM / Google Ads | Michael Dorsey (primary) / Caleb Bastin (secondary) | mdorsey@jandlmarketing.com | (513) 703-1151 | TBD | Google Ads managed by J&L |
 | TBD | SEO | TBD | TBD | TBD | TBD | |
 | J&L Marketing | Direct Mail / Events | Michael Dorsey (primary) / Caleb Bastin (secondary) | TBD | (513) 703-1151 / (513) 827-2086 | TBD | Direct mail, sales events, conquest campaigns |
 | TBD | Email Marketing | TBD | TBD | TBD | TBD | |
