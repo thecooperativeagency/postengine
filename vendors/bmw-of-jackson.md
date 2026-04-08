@@ -9,30 +9,31 @@
 
 ## Core Systems
 
-| Vendor | Category | POC | Contact | Monthly Cost | Contract | Notes |
-|--------|----------|-----|---------|-------------|----------|-------|
+| Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
+|--------|----------|-----|-------|-------|-------------|-------|
 | Reynolds & Reynolds | DMS | TBD | TBD | TBD | TBD | Tough integration — no easy API |
 | Reynolds & Reynolds | CRM | TBD | TBD | TBD | TBD | Same platform as DMS |
 
 ## Marketing & Advertising
 
-| Vendor | Category | POC | Contact | Monthly Cost | Contract | Notes |
-|--------|----------|-----|---------|-------------|----------|-------|
-| TBD | SEM | TBD | TBD | ~$8K/mo (was $16K) | TBD | Lance cut spend 50%, sales up 30% |
-| TBD | Website | TBD | TBD | TBD | TBD | Fill in |
-| TBD | SEO | TBD | TBD | TBD | TBD | Fill in |
-| TBD | Social Media | TBD | TBD | TBD | TBD | Lance managing |
-| TBD | Email Marketing | TBD | TBD | TBD | TBD | Fill in |
+| Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
+|--------|----------|-----|-------|-------|-------------|-------|
+| Autotrader | Listings | Josh Gwin | josh.gwin@autotrader.com | 225-283-4455 | TBD | Cox Automotive |
+| Motive | Website | Dessrae Edison | @motivehq.com | TBD | TBD | Client Operations Specialist |
+| Podium | AI/BDC/WebChat | Tyler Barnes | @podium.com | TBD | TBD | CSM; covers all 4 stores |
+| TBD | SEM / Google Ads | TBD | TBD | TBD | ~$8K/mo (was $16K) | Lance cut spend 50%, sales up 30% |
+| TBD | SEO | TBD | TBD | TBD | TBD | |
+| TBD | Email Marketing | TBD | TBD | TBD | TBD | |
 
 ## Other
 
-| Vendor | Category | POC | Contact | Monthly Cost | Contract | Notes |
-|--------|----------|-----|---------|-------------|----------|-------|
-| TBD | | TBD | TBD | TBD | TBD | |
+| Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
+|--------|----------|-----|-------|-------|-------------|-------|
+| TBD | | | | | | |
 
 ## Notes
 - New client, kick-off 3/30/2026
-- 30-car store — was spending $16K/mo on SEM, Lance cut to $8K, sales up 30% YoY
-- Reynolds is notoriously hard to integrate with — data exports may require manual process
+- 30-car store — SEM cut from $16K → $8K/mo, sales up 30% YoY
+- Reynolds & Reynolds is notoriously hard to integrate — data exports may require manual process
 - GA4 property 255835161, account 118997487
-- GM is friend/ally — path to Herrin-Gear group deal (Lexus, Chevy, INFINITI, Toyota)
+- GM Rick McCary is friend/ally — path to Herrin-Gear group deal

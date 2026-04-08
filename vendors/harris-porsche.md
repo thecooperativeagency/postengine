@@ -9,37 +9,38 @@
 
 ## Core Systems
 
-| Vendor | Category | POC | Contact | Monthly Cost | Contract | Notes |
-|--------|----------|-----|---------|-------------|----------|-------|
+| Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
+|--------|----------|-----|-------|-------|-------------|-------|
 | CDK Global | DMS | TBD | TBD | TBD | TBD | Primary DMS |
-| VinSolutions | CRM | TBD | TBD | TBD | TBD | Cox Automotive product |
+| VinSolutions | CRM | Royce (TBD last name) | TBD | TBD | TBD | Cox Automotive |
+| Vauto | Inventory Mgmt | Dwayne Hearl | @coxautoinc.com | TBD | TBD | Performance Manager |
 
 ## Marketing & Advertising
 
-| Vendor | Category | POC | Contact | Monthly Cost | Contract | Notes |
-|--------|----------|-----|---------|-------------|----------|-------|
-| TBD | SEM | TBD | TBD | TBD | TBD | OEM co-op eligible |
-| TBD | Website | TBD | TBD | TBD | TBD | OEM-controlled (Porsche) |
-| TBD | SEO | TBD | TBD | TBD | TBD | Fill in |
-| TBD | Social Media | TBD | TBD | TBD | TBD | Lance managing |
-| TBD | Email Marketing | TBD | TBD | TBD | TBD | Fill in |
+| Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
+|--------|----------|-----|-------|-------|-------------|-------|
+| Autotrader | Listings | Josh Gwin | josh.gwin@autotrader.com | 225-283-4455 | TBD | Cox Automotive |
+| Porsche OEM Platform | Website | Cody Vander Veen | harrisporsche738@gmail.com | TBD | TBD | OEM-mandated; NOT Motive |
+| Podium | AI/BDC/WebChat | Tyler Barnes | @podium.com | TBD | TBD | CSM; covers all 4 stores |
+| TBD | SEM / Google Ads | TBD | TBD | TBD | TBD | OEM co-op eligible |
+| TBD | SEO | TBD | TBD | TBD | TBD | |
+| TBD | Email Marketing | TBD | TBD | TBD | TBD | |
 
 ## Parts Department
 
-| Vendor | Category | POC | Contact | Monthly Cost | Contract | Notes |
-|--------|----------|-----|---------|-------------|----------|-------|
-| eBay (TBD) | Parts Marketplace | TBD | TBD | TBD | TBD | Setup pending — BH Porsche account |
-| TBD | Parts Marketing | TBD | TBD | TBD | TBD | Historically underrepresented |
+| Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
+|--------|----------|-----|-------|-------|-------------|-------|
+| eBay (TBD) | Parts Marketplace | TBD | TBD | TBD | TBD | Setup pending — BH Porsche account name |
 
 ## Other
 
-| Vendor | Category | POC | Contact | Monthly Cost | Contract | Notes |
-|--------|----------|-----|---------|-------------|----------|-------|
-| TBD | | TBD | TBD | TBD | TBD | |
+| Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
+|--------|----------|-----|-------|-------|-------------|-------|
+| TBD | | | | | | |
 
 ## Notes
 - New client, kick-off 3/30/2026
-- GA4 access OEM-controlled — waiting on Cody (harrisporsche738@gmail.com) to grant
+- GA4 access OEM-controlled — waiting on Cody Vander Veen to grant
 - Parts dept action items: photography shoot, eBay store setup, Design watches promo
 - Van livery project in progress (concept in workspace + Drive folder)
-- Non-returnable Porsche inventory needs clearing (parts dept)
+- Non-returnable Porsche inventory needs clearing

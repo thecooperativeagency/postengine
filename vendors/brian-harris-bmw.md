@@ -9,29 +9,30 @@
 
 ## Core Systems
 
-| Vendor | Category | POC | Contact | Monthly Cost | Contract | Notes |
-|--------|----------|-----|---------|-------------|----------|-------|
+| Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
+|--------|----------|-----|-------|-------|-------------|-------|
 | CDK Global | DMS | TBD | TBD | TBD | TBD | Primary DMS |
-| VinSolutions | CRM | Royce | TBD | TBD | TBD | Cox Automotive product |
-| Vauto | Inventory Mgmt | Dwayne | TBD | TBD | TBD | Pricing + aging |
+| VinSolutions | CRM | Royce (TBD last name) | TBD | TBD | TBD | Cox Automotive; data export pending |
+| Vauto | Inventory Mgmt | Dwayne Hearl | @coxautoinc.com | TBD | TBD | Performance Manager; Tampa Bay |
 
 ## Marketing & Advertising
 
-| Vendor | Category | POC | Contact | Monthly Cost | Contract | Notes |
-|--------|----------|-----|---------|-------------|----------|-------|
-| TBD | SEM | TBD | TBD | TBD | TBD | Fill in |
-| TBD | Website | TBD | TBD | TBD | TBD | Fill in |
-| TBD | SEO | TBD | TBD | TBD | TBD | Fill in |
-| TBD | Social Media | TBD | TBD | TBD | TBD | Fill in |
-| TBD | Email Marketing | TBD | TBD | TBD | TBD | Fill in |
+| Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
+|--------|----------|-----|-------|-------|-------------|-------|
+| Autotrader | Listings | Josh Gwin | josh.gwin@autotrader.com | 225-283-4455 | TBD | Cox Automotive; local BR rep |
+| Motive | Website | Dessrae Edison | @motivehq.com | TBD | TBD | Client Operations Specialist |
+| Podium | AI/BDC/WebChat | Tyler Barnes | @podium.com | TBD | TBD | CSM; covers all 4 stores |
+| TBD | SEM / Google Ads | TBD | TBD | TBD | TBD | |
+| TBD | SEO | TBD | TBD | TBD | TBD | |
+| TBD | Email Marketing | TBD | TBD | TBD | TBD | |
 
 ## Other
 
-| Vendor | Category | POC | Contact | Monthly Cost | Contract | Notes |
-|--------|----------|-----|---------|-------------|----------|-------|
-| TBD | | TBD | TBD | TBD | TBD | |
+| Vendor | Category | POC | Email | Phone | Monthly Cost | Notes |
+|--------|----------|-----|-------|-------|-------------|-------|
+| TBD | | | | | | |
 
 ## Notes
-- GM loves AI, into optimization
+- GM Brett Bagley loves AI, into optimization
 - Lance managing GBP, GA4 (property 334199347), social content
-- VinSolutions data export to lucfasho@gmail.com — pending Royce confirmation
+- VinSolutions data export to lucfasho@gmail.com — draft email sent, awaiting confirmation
