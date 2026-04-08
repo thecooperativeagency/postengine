@@ -24,6 +24,7 @@
 | Podium | AI/BDC/WebChat | Tyler Barnes | @podium.com | TBD | TBD | CSM; covers all 4 stores |
 | TBD | SEM / Google Ads | TBD | TBD | TBD | TBD | OEM co-op eligible |
 | TBD | SEO | TBD | TBD | TBD | TBD | |
+| J&L Marketing | Direct Mail / Events | Michael Dorsey (primary) / Caleb Bastin (secondary) | TBD | (513) 703-1151 / (513) 827-2086 | TBD | Direct mail, sales events, conquest campaigns |
 | TBD | Email Marketing | TBD | TBD | TBD | TBD | |
 
 ## Parts Department
