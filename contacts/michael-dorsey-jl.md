@@ -6,7 +6,7 @@
 
 ## Contact
 - Phone: +1 (513) 703-1151 ✅
-- Email: TBD
+- Email: mdorsey@jandlmarketing.com ✅
 
 ## Stores He Covers
 - Brian Harris BMW
