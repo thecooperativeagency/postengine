@@ -112,6 +112,28 @@ Export-based data aggregation + reporting system. Pulls weekly exports from:
 2. Restart proxy: `launchctl kickstart -k gui/$(id -u)/com.claude-max-api`
 3. Rollback config: `cp ~/.openclaw/openclaw.json.bak.pre-claude-max ~/.openclaw/openclaw.json && openclaw gateway restart`
 
+## Luc Social Handles
+- X/Twitter: @lucopencraw → https://x.com/lucopencraw
+- Instagram: @opencraw → https://www.instagram.com/opencraw
+- Display name: Luc Fasho
+- Both connected to PostEngine/Zernio for posting
+- Josh Gwin (Autotrader) approved on iMessage (+12259541627) — introduced to Luc April 9, 2026
+
+## Claude Max / Billing Status (April 9, 2026)
+- Anthropic killed subscription billing for third-party tools on April 4, 2026
+- Our claude-max-api-proxy NO LONGER routes through Max subscription — now hits Extra Usage billing
+- $600+ spent on Anthropic API to date
+- Options discussed: bypass proxy (ToS risk), Gemini free tier, hard cap
+- Decision: no change for now, revisit soon
+- Action: set hard spending cap in Anthropic settings to limit bleeding
+
+## Demo Prestige BMW Vendor Brief
+- Live at: https://thecooperativeagency.github.io/vendor-briefs/demo-prestige-bmw.html
+- Fake dealership for prospect pitches — Prestige BMW of Nashville, GM: Michael Hartley
+- Includes: vendor stack, spend summary, meetings & events, meeting notes with linked summaries
+- Two meeting note pages: Apr 2 (onboarding kickoff) + Apr 9 (zone manager prep)
+- No links back to real client pages — safe to send to prospects
+
 ## Lessons Learned
 - Christy Faucheux is Lance's wife — email: christyfaucheux@gmail.com
 - Model switching works: Haiku for daily work, escalate to Sonnet/Opus when needed (complex analysis, creative direction)
