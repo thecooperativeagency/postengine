@@ -5,7 +5,6 @@
 ### Daily
 - Check lance@thecoopbrla.com inbox for urgent emails
 - Check calendar for upcoming meetings/deadlines
-- Monitor Google Business Profile reviews for all 4 dealerships
 - **MORNING:** Review Dealer Intel brief, add actionable items, have ready by 8 AM
 
 ### Weekly
