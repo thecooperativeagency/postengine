@@ -65,3 +65,19 @@ If so, generate 1 new post:
 - Keep Lance as the decision-maker in all copy
 - Max 1 post generated per heartbeat
 - Skip if it's between 11PM–7AM CDT
+
+## Reddit Community Sweep (Once Daily — Morning)
+Pull top posts from the last 24 hours across these 4 subreddits via JSON API:
+- r/openclaw — `https://www.reddit.com/r/openclaw/new.json?limit=10`
+- r/OpenclawHQ — `https://www.reddit.com/r/OpenclawHQ/new.json?limit=10`
+- r/AI_Agents — `https://www.reddit.com/r/AI_Agents/new.json?limit=10`
+- r/better_claw — `https://www.reddit.com/r/better_claw/new.json?limit=10`
+
+Flag and send Lance a Telegram summary if any post covers:
+1. New skills worth installing (cross-check against r/better_claw security reviews first)
+2. OpenClaw bugs or breaking changes that affect our setup
+3. Billing/model workarounds relevant to our situation
+4. Real workflows that could improve how we operate
+
+Skip: memes, generic complaints, non-English posts, anything from Russian/Chinese sources.
+Only send if something is genuinely actionable — not just interesting.
