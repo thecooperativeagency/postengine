@@ -118,6 +118,15 @@ Export-based data aggregation + reporting system. Pulls weekly exports from:
 - Both connected to PostEngine/Zernio for posting
 - Josh Gwin (Autotrader) approved on iMessage (+12259541627) — introduced to Luc April 9, 2026
 
+## Model Switch — April 9, 2026 (ACTIVE)
+- Switched primary model from anthropic/claude-sonnet-4-6 to **xai/grok-4.1-fast**
+- xAI API key configured: xai-7pmnZpKvhfAGfYS0Zw81X75XKBq3P361RrnUlJ0c9l0Xt2pOTsbixloXPW5A73NiW2e2kRt63jsPsXGv
+- Fallbacks: xai/grok-4.20 → anthropic/claude-sonnet-4-6
+- Pricing: Grok 4.1 Fast = $0.20/$0.50 per million tokens (vs $3/$15 for Claude Sonnet)
+- Grok has real-time X search built in via xai/grok-4 models
+- Config: ~/.openclaw/openclaw.json + ~/.openclaw/agents/main/agent/models.json
+- Gateway restarted April 9 ~9:55 PM CDT — confirmed loading grok-4.1-fast
+
 ## Claude Max / Billing Status (April 9, 2026)
 - Anthropic killed subscription billing for third-party tools on April 4, 2026
 - Our claude-max-api-proxy NO LONGER routes through Max subscription — now hits Extra Usage billing
