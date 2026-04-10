@@ -198,6 +198,16 @@ Use the ga4-query.sh script in the workspace to access GA4 data.
 - Default date range is last 30 days
 - Reports return sessions, users, new users, and pageviews by date
 
+## Pipeboard (Meta Ads + Google Ads)
+- Token: `pk_d19a7271170d4ca5b966a6bd5b4765de`
+- Meta endpoint: `https://meta-ads.mcp.pipeboard.co/`
+- Google Ads endpoint: `https://google-ads.mcp.pipeboard.co/`
+- Auth: `Authorization: Bearer pk_...` header + jsonrpc 2.0 format
+- Connected accounts:
+  - Meta: Audi Baton Rouge (`act_657762306677073`), Brian Harris BMW (`act_2251928511489565`), Lance personal (`act_888583291328048`)
+  - Google Ads: bhbmwecommerce@gmail.com (ABR)
+- Full Google Ads capabilities: campaigns, keywords, search terms, auction insights, negative keywords, GAQL queries
+
 ## Model Usage
 
 - Default: Sonnet 4.6 — use for everything day-to-day
