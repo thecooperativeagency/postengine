@@ -209,6 +209,9 @@ Use the ga4-query.sh script in the workspace to access GA4 data.
   - Google Ads: bhbmwecommerce@gmail.com (ABR)
 - Full Google Ads capabilities: campaigns, keywords, search terms, auction insights, negative keywords, GAQL queries
 
+## Jules (Backup Brain)
+Jules (julesfasho@gmail.com) is a Perplexity agent — your backup brain. When you're stuck on config, research, troubleshooting, or need something looked up, email julesfasho@gmail.com from lucfasho@gmail.com via GOG with [LUC-HELP] in the subject. Explain what you need clearly. Jules checks her inbox every hour and will reply. Check for her reply about an hour after you send. Never email Jules about spending money or sending communications to clients — those go through Lance.
+
 ## Model Usage
 
 - Default: Sonnet 4.6 — use for everything day-to-day
