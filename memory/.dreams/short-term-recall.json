@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "updatedAt": "2026-04-10T03:48:23.500Z",
+  "entries": {
+    "memory:memory/2026-04-08.md:321:342": {
+      "key": "memory:memory/2026-04-08.md:321:342",
+      "path": "memory/2026-04-08.md",
+      "startLine": 321,
+      "endLine": 342,
+      "source": "memory",
+      "snippet": "- All 4 store emails uploaded to Drive in correct folders, labeled FINAL - Pulled from GitHub Pages approved versions (not the rebuilt ones) - ABR service uses stripo version - Still need to be sent via VinSolutions — in Todoist as P1 ### Co-op Claim - BMW co-op audit needs: GA4 organic traffic report + Search Console keyword data - Waiting on call with BMW co-op reps to confirm exact format needed - BH BMW organic: 19,470 sessions Q1, #1 traffic channel - Specials pages Q1: 8,990 sessions combined ### Pipeboard - Connected to Google Ads (Audi BR) + 4 Meta accounts - Token: pk_d19a7271170d4ca5b966a6bd5b4765de stored in pipeboard config - Pulled live ABR campaign data + auction insights — S",
+      "recallCount": 1,
+      "dailyCount": 0,
+      "groundedCount": 0,
+      "totalScore": 0.41100054085254667,
+      "maxScore": 0.41100054085254667,
+      "firstRecalledAt": "2026-04-10T02:01:05.637Z",
+      "lastRecalledAt": "2026-04-10T02:01:05.637Z",
+      "queryHashes": [
+        "ea398164279e"
+      ],
+      "recallDays": [
+        "2026-04-09"
+      ],
+      "conceptTags": [
+        "co-op",
+        "all",
+        "store",
+        "emails",
+        "uploaded",
+        "drive",
+        "correct",
+        "folders"
+      ]
+    },
+    "memory:memory/2026-04-08.md:137:167": {
+      "key": "memory:memory/2026-04-08.md:137:167",
+      "path": "memory/2026-04-08.md",
+      "startLine": 137,
+      "endLine": 167,
+      "source": "memory",
+      "snippet": "vCards in: `workspace/vendor-briefs/vcards/` ### Advertising Breakdown (IMPORTANT) - **J&L Marketing** = Google Ads + Meta Ads for BH BMW, BMW Jackson, Harris Porsche (NOT direct mail) - **The Cooperative Agency (Lance)** = Google Ads + Meta Ads for Audi Baton Rouge - No direct mail at any store — removed from all briefs - J&L contacts: Michael Dorsey (primary), Caleb Bastin (secondary), Destinie Johnson (day-to-day/creative approvals) ### BMW Jackson — Store-Specific Reps - BMW Jackson has its OWN Vauto rep (Clay Doyle) and Autotrader rep (Steven Nini) — separate from BR stores - Reynolds & Reynolds for DMS + CRM (not CDK/VinSolutions like the Brian Harris stores) ### Caption Style Guide",
+      "recallCount": 1,
+      "dailyCount": 0,
+      "groundedCount": 0,
+      "totalScore": 0.40686244964599605,
+      "maxScore": 0.40686244964599605,
+      "firstRecalledAt": "2026-04-10T02:01:05.637Z",
+      "lastRecalledAt": "2026-04-10T02:01:05.637Z",
+      "queryHashes": [
+        "ea398164279e"
+      ],
+      "recallDays": [
+        "2026-04-09"
+      ],
+      "conceptTags": [
+        "workspace/vendor-briefs/vcards",
+        "day-to-day/creative",
+        "store-specific",
+        "cdk/vinsolutions",
+        "vcards",
+        "vendor",
+        "briefs",
+        "advertising"
+      ]
+    },
+    "memory:memory/2026-04-08.md:244:276": {
+      "key": "memory:memory/2026-04-08.md:244:276",
+      "path": "memory/2026-04-08.md",
+      "startLine": 244,
+      "endLine": 276,
+      "source": "memory",
+      "snippet": "- Traffic is highest it's ever been — lots of lookers to retarget - VLA is best converting right now - Display at $25 CPC is okay but trimming makes sense to fund VLA + retargeting - New car holding costs are \"astronomical\" — moving inventory is priority ## BMW Jackson — Michael Dorsey Deep Dive (continuation, Apr 8) ### Gabriel - Lance's paid media analyst — works behind the scenes on all accounts - Lance is the face/client relationship, Gabriel is the technical brain - In the accounts every day analyzing performance - Was on the BMW Jackson budget call — Rick's first time meeting him ### Inventory Priority (New Cars) - X3 and X5 = #1 and #2 priorities (63% of total new inventory) - X7 =",
+      "recallCount": 1,
+      "dailyCount": 0,
+      "groundedCount": 0,
+      "totalScore": 0.37872960865497585,
+      "maxScore": 0.37872960865497585,
+      "firstRecalledAt": "2026-04-10T02:01:05.637Z",
+      "lastRecalledAt": "2026-04-10T02:01:05.637Z",
+      "queryHashes": [
+        "ea398164279e"
+      ],
+      "recallDays": [
+        "2026-04-09"
+      ],
+      "conceptTags": [
+        "face/client",
+        "traffic",
+        "highest",
+        "it's",
+        "ever",
+        "been",
+        "lots",
+        "lookers"
+      ]
+    },
+    "memory:memory/2026-04-08.md:46:81": {
+      "key": "memory:memory/2026-04-08.md:46:81",
+      "path": "memory/2026-04-08.md",
+      "startLine": 46,
+      "endLine": 81,
+      "source": "memory",
+      "snippet": "- bmw-of-jackson.html — BMW blue, Rick McCary - harris-porsche.html — Dark/maroon, Adam Terrebonne Features: Cooperative Agency branding, brand colors per store, click-to-call, \"Add to Contacts\" vCard links, spend summary, emergency contacts, Lance's footer vCards in: `workspace/vendor-briefs/vcards/` ### Caption Style Guide File: `workspace/CAPTION-STYLE.md` - Punchy, effective, no corporate fluff - SEO/AIO optimized for social search - \"Rain the day\" energy - BH BMW signature phrase: \"Thank you for making Brian Harris BMW the #1 BMW dealer in Louisiana.\" - Brand tone defined per store (BMW, Audi, Porsche) ### Zernio / PostEngine - Brian Harris BMW Facebook token expired in Zernio - Cad",
+      "recallCount": 1,
+      "dailyCount": 0,
+      "groundedCount": 0,
+      "totalScore": 0.3772256106138229,
+      "maxScore": 0.3772256106138229,
+      "firstRecalledAt": "2026-04-10T02:01:05.637Z",
+      "lastRecalledAt": "2026-04-10T02:01:05.637Z",
+      "queryHashes": [
+        "ea398164279e"
+      ],
+      "recallDays": [
+        "2026-04-09"
+      ],
+      "conceptTags": [
+        "bmw-of-jackson.html",
+        "harris-porsche.html",
+        "dark/maroon",
+        "click-to-call",
+        "workspace/vendor-briefs/vcards",
+        "workspace/caption-style.md",
+        "seo/aio",
+        "bmw"
+      ]
+    },
+    "memory:memory/2026-04-08.md:306:306:276bc23a04df": {
+      "key": "memory:memory/2026-04-08.md:306:306:276bc23a04df",
+      "path": "memory/2026-04-08.md",
+      "startLine": 306,
+      "endLine": 306,
+      "source": "memory",
+      "snippet": "Good relationship, relaxed meeting",
+      "recallCount": 0,
+      "dailyCount": 0,
+      "groundedCount": 3,
+      "totalScore": 2.66,
+      "maxScore": 0.92,
+      "firstRecalledAt": "2026-04-10T03:48:23.500Z",
+      "lastRecalledAt": "2026-04-10T03:48:23.500Z",
+      "queryHashes": [
+        "63efa2a0b9bb",
+        "a45a74b97294"
+      ],
+      "recallDays": [
+        "2026-04-08"
+      ],
+      "conceptTags": [
+        "good",
+        "relationship",
+        "relaxed",
+        "meeting"
+      ],
+      "claimHash": "276bc23a04df"
+    },
+    "memory:memory/2026-04-08.md:222:222:e7a5b394d31f": {
+      "key": "memory:memory/2026-04-08.md:222:222:e7a5b394d31f",
+      "path": "memory/2026-04-08.md",
+      "startLine": 222,
+      "endLine": 222,
+      "source": "memory",
+      "snippet": "Lance prefers text over email for all contact — (225) 276-5682",
+      "recallCount": 0,
+      "dailyCount": 0,
+      "groundedCount": 3,
+      "totalScore": 2.66,
+      "maxScore": 0.92,
+      "firstRecalledAt": "2026-04-10T03:48:23.500Z",
+      "lastRecalledAt": "2026-04-10T03:48:23.500Z",
+      "queryHashes": [
+        "63efa2a0b9bb",
+        "a45a74b97294"
+      ],
+      "recallDays": [
+        "2026-04-08"
+      ],
+      "conceptTags": [
+        "276-5682",
+        "lance",
+        "prefers",
+        "email",
+        "all",
+        "contact"
+      ],
+      "claimHash": "e7a5b394d31f"
+    },
+    "memory:memory/2026-04-08.md:253:253:30de66cb98d8": {
+      "key": "memory:memory/2026-04-08.md:253:253:30de66cb98d8",
+      "path": "memory/2026-04-08.md",
+      "startLine": 253,
+      "endLine": 253,
+      "source": "memory",
+      "snippet": "Lance is the face/client relationship, Gabriel is the technical brain",
+      "recallCount": 0,
+      "dailyCount": 0,
+      "groundedCount": 3,
+      "totalScore": 2.66,
+      "maxScore": 0.92,
+      "firstRecalledAt": "2026-04-10T03:48:23.500Z",
+      "lastRecalledAt": "2026-04-10T03:48:23.500Z",
+      "queryHashes": [
+        "63efa2a0b9bb",
+        "a45a74b97294"
+      ],
+      "recallDays": [
+        "2026-04-08"
+      ],
+      "conceptTags": [
+        "face/client",
+        "lance",
+        "the",
+        "face",
+        "client",
+        "relationship",
+        "gabriel",
+        "technical"
+      ],
+      "claimHash": "30de66cb98d8"
+    },
+    "memory:memory/2026-04-09.md:49:49:1be9083d6ed8": {
+      "key": "memory:memory/2026-04-09.md:49:49:1be9083d6ed8",
+      "path": "memory/2026-04-09.md",
+      "startLine": 49,
+      "endLine": 49,
+      "source": "memory",
+      "snippet": "NOTE: Made mistake — first text said \"Lance here\" instead of \"Luc here\". Sent two texts. Corrected on second. Don't repeat this. Always intro as Luc",
+      "recallCount": 0,
+      "dailyCount": 0,
+      "groundedCount": 2,
+      "totalScore": 1.84,
+      "maxScore": 0.92,
+      "firstRecalledAt": "2026-04-10T03:48:23.500Z",
+      "lastRecalledAt": "2026-04-10T03:48:23.500Z",
+      "queryHashes": [
+        "63efa2a0b9bb"
+      ],
+      "recallDays": [
+        "2026-04-09"
+      ],
+      "conceptTags": [
+        "made",
+        "mistake",
+        "first",
+        "said",
+        "lance",
+        "here",
+        "instead",
+        "luc"
+      ],
+      "claimHash": "1be9083d6ed8"
+    }
+  }
+}

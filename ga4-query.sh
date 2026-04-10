@@ -10,8 +10,11 @@ CLIENT_SECRET="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"
 EMAIL="$1"
 ACTION="$2"
 
-# Get refresh token from keyring
-REFRESH_JSON=$(security find-generic-password -a "token:default:${EMAIL}" -s "gogcli" -w 2>/dev/null)
+# Get refresh token from keyring — try analytics-scoped token first, fall back to default
+REFRESH_JSON=$(security find-generic-password -a "token:analytics:${EMAIL}" -s "gogcli" -w 2>/dev/null)
+if [ -z "$REFRESH_JSON" ]; then
+  REFRESH_JSON=$(security find-generic-password -a "token:default:${EMAIL}" -s "gogcli" -w 2>/dev/null)
+fi
 REFRESH_TOKEN=$(echo "$REFRESH_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['refresh_token'])")
 
 # Get access token
