@@ -121,6 +121,7 @@ Use the Todoist API for all task tracking. Token stored in openclaw.json env.
 ## Apple Reminders (remindctl)
 Use `remindctl` CLI for Apple Reminders.
 - **List reminders:** `remindctl list`
+- **List due soon:** `remindctl list --completed=false --due-soon`
 - **Add reminder:** `remindctl add "Task name" --due "2026-03-31T09:00:00"`
 - **Complete reminder:** `remindctl complete <reminderId>`
 - **List by list:** `remindctl list --list "Work"`
