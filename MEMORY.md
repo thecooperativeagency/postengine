@@ -601,3 +601,31 @@ Find 3-4 other high-conviction public investors with:
 - ⏳ Double Service campaign budget ($10 → $20/day)
 - Brief: https://docs.google.com/document/d/17qcSjmjsuQQnrUiN5At6c9yQdUBO-8KQ/edit
 - Data: https://docs.google.com/spreadsheets/d/15xl3whvuaUnGkwPBEy3Mz_xeYM6DMkFHtv4rh1GHnRs/edit
+
+## Mission Control Dashboard
+- **Live URL (Vercel):** https://mission-control-kvhd0duxe-thecooperativeagencys-projects.vercel.app/tasks
+- **Local (Tailscale):** http://100.102.212.22:3000
+- **Local (LAN):** http://192.168.0.14:3000
+- **GitHub:** https://github.com/thecooperativeagency/mission-control
+- Auth removed for now — add back once stable
+- Todoist live (62 tasks), Memory, Projects, Office all wired
+- Next: point hub.thecoopbrla.com at Vercel, add auth back
+
+## SEO Comp Page Rules — Sister Store Logic
+
+### Core 4 BMW Competitors
+BMW, Lexus, Mercedes-Benz, Audi
+
+### Sister Store Matrix (NEVER build comps against sister brands)
+- **Brian Harris BMW (Baton Rouge)** — sister: Audi Baton Rouge → skip all Audi comps
+- **BMW of Jackson** — sister: Lexus Jackson (Herrin-Gear group also has Chevy + Infiniti) → skip Lexus + Infiniti comps
+
+### Comp pages per store
+| Comp | BHBMW | BMW Jackson |
+|------|-------|-------------|
+| vs Mercedes | ✅ | ✅ |
+| vs Lexus | ✅ | ❌ |
+| vs Audi | ❌ | ✅ |
+| vs Infiniti | N/A | ❌ |
+
+Always check dealer group before building comp pages.

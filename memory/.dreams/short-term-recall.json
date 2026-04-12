@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-04-11T12:39:17.950Z",
+  "updatedAt": "2026-04-11T17:05:02.950Z",
   "entries": {
     "memory:memory/2026-04-08.md:321:342": {
       "key": "memory:memory/2026-04-08.md:321:342",
@@ -105,19 +105,21 @@
       "endLine": 81,
       "source": "memory",
       "snippet": "- bmw-of-jackson.html — BMW blue, Rick McCary - harris-porsche.html — Dark/maroon, Adam Terrebonne Features: Cooperative Agency branding, brand colors per store, click-to-call, \"Add to Contacts\" vCard links, spend summary, emergency contacts, Lance's footer vCards in: `workspace/vendor-briefs/vcards/` ### Caption Style Guide File: `workspace/CAPTION-STYLE.md` - Punchy, effective, no corporate fluff - SEO/AIO optimized for social search - \"Rain the day\" energy - BH BMW signature phrase: \"Thank you for making Brian Harris BMW the #1 BMW dealer in Louisiana.\" - Brand tone defined per store (BMW, Audi, Porsche) ### Zernio / PostEngine - Brian Harris BMW Facebook token expired in Zernio - Cad",
-      "recallCount": 1,
+      "recallCount": 2,
       "dailyCount": 0,
       "groundedCount": 0,
-      "totalScore": 0.3772256106138229,
-      "maxScore": 0.3772256106138229,
+      "totalScore": 0.7558621138334274,
+      "maxScore": 0.37863650321960446,
       "firstRecalledAt": "2026-04-10T02:01:05.637Z",
-      "lastRecalledAt": "2026-04-10T02:01:05.637Z",
+      "lastRecalledAt": "2026-04-11T17:05:02.950Z",
       "queryHashes": [
-        "ea398164279e"
+        "ea398164279e",
+        "88eb3b458612"
       ],
       "recallDays": [
         "2026-04-09",
-        "2026-04-10"
+        "2026-04-10",
+        "2026-04-11"
       ],
       "conceptTags": [
         "bmw-of-jackson.html",
