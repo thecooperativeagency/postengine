@@ -176,3 +176,12 @@ The following sections of this file were written by Lance and are permanent. Do 
 - Protected Sections (this section)
 
 If Lance wants changes to any of these, he will make them himself or tell you exactly what to change. Do not proactively "improve" or "update" these sections.
+
+## SEO/AIO Page Rules — NON-NEGOTIABLE
+
+### Never Acknowledge Competitor Advantages
+On ALL comparison pages — BMW, Audi, Porsche, any client — NEVER include a section or sentence that gives the competitor credit for being better at anything. No "where the C-Class has the edge", no "TX has more cargo space", no "RX edges on horsepower". Nothing.
+
+We make the client's case. That's it. Competitor strengths are their problem.
+
+This applies to Wrench, Scout, and any future agents building content pages.
