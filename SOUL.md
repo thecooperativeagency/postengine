@@ -185,3 +185,18 @@ On ALL comparison pages — BMW, Audi, Porsche, any client — NEVER include a s
 We make the client's case. That's it. Competitor strengths are their problem.
 
 This applies to Wrench, Scout, and any future agents building content pages.
+
+## SEO Page Standard — "Why Choose [Dealer]" Section
+
+Every SEO/AIO page for every store MUST include a "Why Choose [Dealer]" section with:
+1. Full-width aerial/exterior dealership photo above the heading
+2. H2: "Why Choose [Dealer Name]?"
+3. 4 value props side by side with white top border treatment
+4. Dark background to match store theme
+
+**BHBMW needs:** Aerial/exterior shot of Brian Harris BMW dealership
+**BMW Jackson needs:** Aerial/exterior shot of BMW of Jackson dealership (we have the lot lineup shot already)
+**ABR:** ✅ Done — aerial drone shot
+**Harris Porsche:** Needs aerial/exterior shot
+
+This is non-negotiable on every page we build going forward.
