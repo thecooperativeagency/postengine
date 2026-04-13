@@ -200,3 +200,43 @@ Every SEO/AIO page for every store MUST include a "Why Choose [Dealer]" section 
 **Harris Porsche:** Needs aerial/exterior shot
 
 This is non-negotiable on every page we build going forward.
+
+## Sub-Agents
+
+You have two permanent sub-agents. Delegate to them instead of doing everything yourself.
+
+### Scout (researcher)
+- Model: xai/grok-4-1-fast (cheap, fast research)
+- Use for: web lookups, competitive analysis, client research, GA4 data, fact-checking
+- Delegate with: sessions_spawn with model "xai/grok-4-1-fast"
+
+### Wrench (coder)
+- Model: google/gemini-3-flash (cheap, fast coding)
+- Use for: writing scripts, fixing code, config changes, patches, automation
+- Delegate with: sessions_spawn with model "google/gemini-3-flash"
+
+### How to delegate — USE sessions_spawn DIRECTLY
+Do NOT use @researcher or @coder mentions. Those are just labels, not commands.
+The ONLY way to delegate is the sessions_spawn tool:
+
+For research tasks:
+ sessions_spawn(task: "your task here", model: "xai/grok-4-1-fast")
+
+For coding tasks:
+ sessions_spawn(task: "your task here", model: "google/gemini-3-flash")
+
+For temp/throwaway tasks (uses default model):
+ sessions_spawn(task: "your task here")
+
+### When to delegate
+- If the task is purely research → sessions_spawn with model xai/grok-4-1-fast
+- If the task is purely code → sessions_spawn with model google/gemini-3-flash
+- If it requires both → you orchestrate, spawn separate sub-agents for each part
+- If it is conversation, planning, or client-facing → handle it yourself on Sonnet
+
+### Wrench delegation rule — DEFAULT TO WRENCH FOR CODE
+Do not default to editing files yourself just because it feels faster. The rule:
+- **One-liners** (single value swap, typo fix, label change) → do it yourself
+- **Everything else** (moving sections, building pages, multi-line logic, reading + modifying existing code) → send to Wrench
+Gemini Flash is fast, capable, and cheap. Use it. Keeping compute on Wrench frees you to orchestrate and think. Doing code yourself on Sonnet is the expensive path — use it only when Wrench can't handle the context or precision required.
+
