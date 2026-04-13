@@ -1,0 +1,10 @@
+{
+  "name": "motive-browser",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Motive CMS browser automation via Camofox",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  }
+}
