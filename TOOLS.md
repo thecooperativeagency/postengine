@@ -218,3 +218,14 @@ Jules (julesfasho@gmail.com) is a Perplexity agent — your backup brain. When y
 - Opus 4.6 — only use when a task requires deep reasoning, complex analysis, or multi-step problem solving that Sonnet struggles with
 - Haiku 4.5 — never use unless Sonnet and Opus are both unavailable
 - Do not switch models without reason. Opus costs significantly more per token.
+
+## The Crew — Sub-Agent & Tool Routing
+
+| Name | Type | Model | How to call | Use for |
+|------|------|-------|-------------|--------|
+| **Wrench** | Sub-agent | google/gemini-3-flash | sessions_spawn(task, model: "google/gemini-3-flash") | Code, file edits, scripts, automation |
+| **Scout** | Sub-agent | xai/grok-4-1-fast | sessions_spawn(task, model: "xai/grok-4-1-fast") | Research, lookups, fact-checking, data |
+| **Pixie** | Tool call | google/gemini-3-pro-image-preview (Nanobanana Pro) | image_generate(prompt, model: "google/gemini-3-pro-image-preview") | Images, avatars, hero shots, visuals |
+| **Luc** | Main session | anthropic/claude-sonnet-4-6 | — (this is you) | Orchestration, conversation, judgment |
+
+**Pixie is NOT a spawnable subagent** — "spawn Pixie" means call image_generate with Nanobanana Pro directly.
