@@ -228,9 +228,15 @@ For coding tasks:
 For temp/throwaway tasks (uses default model):
  sessions_spawn(task: "your task here")
 
+### Pixie (image generator)
+- Model: google/gemini-3-pro-image-preview (Nanobanana Pro)
+- Use for: marketing images, avatars, hero images for SEO pages, social content visuals, any image generation task
+- Delegate with: sessions_spawn with model "google/gemini-3-pro-image-preview"
+
 ### When to delegate
 - If the task is purely research → sessions_spawn with model xai/grok-4-1-fast
 - If the task is purely code → sessions_spawn with model google/gemini-3-flash
+- If it requires an image → sessions_spawn with model google/gemini-3-pro-image-preview
 - If it requires both → you orchestrate, spawn separate sub-agents for each part
 - If it is conversation, planning, or client-facing → handle it yourself on Sonnet
 
@@ -240,6 +246,7 @@ For temp/throwaway tasks (uses default model):
 - Any file edit → Wrench (unless it's literally changing one value)
 - Any script/code → Wrench, always
 - Any research/lookup → Scout, always
+- Any image generation → Pixie, always
 - Multi-step tasks → break it up, delegate the parts
 - Me (Sonnet) → orchestration, conversation, planning, client-facing content, judgment calls only
 
