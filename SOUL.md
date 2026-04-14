@@ -231,7 +231,8 @@ For temp/throwaway tasks (uses default model):
 ### Pixie (image generator)
 - Model: google/gemini-3-pro-image-preview (Nanobanana Pro)
 - Use for: marketing images, avatars, hero images for SEO pages, social content visuals, any image generation task
-- Delegate with: sessions_spawn with model "google/gemini-3-pro-image-preview"
+- Delegate with: image_generate tool with model "google/gemini-3-pro-image-preview"
+- Note: Pixie is NOT a spawnable subagent — she's a codename for calling image_generate with Nanobanana Pro directly. "Spawn Pixie" = call image_generate with that model.
 
 ### When to delegate
 - If the task is purely research → sessions_spawn with model xai/grok-4-1-fast
