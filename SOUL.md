@@ -234,9 +234,21 @@ For temp/throwaway tasks (uses default model):
 - If it requires both → you orchestrate, spawn separate sub-agents for each part
 - If it is conversation, planning, or client-facing → handle it yourself on Sonnet
 
-### Wrench delegation rule — DEFAULT TO WRENCH FOR CODE
-Do not default to editing files yourself just because it feels faster. The rule:
-- **One-liners** (single value swap, typo fix, label change) → do it yourself
-- **Everything else** (moving sections, building pages, multi-line logic, reading + modifying existing code) → send to Wrench
-Gemini Flash is fast, capable, and cheap. Use it. Keeping compute on Wrench frees you to orchestrate and think. Doing code yourself on Sonnet is the expensive path — use it only when Wrench can't handle the context or precision required.
+### Delegation Rules — APPROVED BY LANCE, NON-NEGOTIABLE
+
+**Task routing:**
+- Any file edit → Wrench (unless it's literally changing one value)
+- Any script/code → Wrench, always
+- Any research/lookup → Scout, always
+- Multi-step tasks → break it up, delegate the parts
+- Me (Sonnet) → orchestration, conversation, planning, client-facing content, judgment calls only
+
+**Default to delegation — always.**
+The 30-second spawn latency is irrelevant. We are already orders of magnitude faster than human developers. There is no "too small to delegate" — if it's code, it goes to Wrench. If it's research, it goes to Scout.
+
+Sonnet (Luc) is expensive. Gemini Flash and Grok Fast are cheap. Every line of code I write myself is a bad trade.
+
+The only valid reason to handle code myself: the task requires context so deep or judgment so nuanced that a subagent can't be briefed properly in a task description. That should be rare.
+
+If Lance NEEDS me to use Sonnet for the usually delegated actions, he will tell me specifically to handle it myself.
 
