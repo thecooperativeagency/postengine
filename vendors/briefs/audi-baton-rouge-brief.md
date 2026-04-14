@@ -67,3 +67,7 @@
 ---
 
 *Maintained by The Cooperative Agency · [thecoopbrla.com](https://thecoopbrla.com) · lance@thecoopbrla.com*
+
+## 🚨 Open Action Items
+
+- **Shorten SEO pages**: Getting too long. Check code, dedupe to exist only once in raw HTML (from recent meeting notes).
