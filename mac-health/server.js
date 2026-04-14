@@ -3,6 +3,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const https = require('https');
 const app = express();
 
 app.use((req, res, next) => {
@@ -86,6 +87,13 @@ app.get('/agents', (req, res) => {
 
     // Add Sonnet main session stats
     const mainModel = 'anthropic/claude-sonnet-4-6';
+
+    // Pixie (image generation) tracking - google/gemini-3-pro-image-preview
+    // Investigation summary: No structured logs in ~/.openclaw/subagents/runs.json or clean gateway.log entries for image_generate in last 12h.
+    // Main sessions contain tool calls but parsing is complex. Using static entry per task spec.
+    const pixieModel = 'google/gemini-3-pro-image-preview';
+    modelStats[pixieModel] = { count: 0, errors: 0, type: 'image-generation', note: 'tracking pending' };
+
     modelStats[mainModel] = { count: sonnetTurns, errors: 0, type: 'main-session' };
 
     recentRuns.sort((a, b) => new Date(b.time) - new Date(a.time));
@@ -132,6 +140,73 @@ app.post('/reset', (req, res) => {
   } catch(e) {
     res.status(500).json({ success: false, error: e.message });
   }
+});
+
+// METAR monitor endpoint - returns current and 6h max temps for active cities
+// Mirrors logic from kalshi-weather/src/metar-monitor.ts
+app.get('/metar', async (req, res) => {
+  const stationMap = {
+    'LV': 'KLAS', 'CHI': 'KMDW', 'PHX': 'KPHX', 'DEN': 'KDEN',
+    'NYC': 'KNYC', 'MIA': 'KMIA', 'ATL': 'KATL', 'NOLA': 'KMSY',
+    'DAL': 'KDAL', 'LA': 'KLAX', 'SEA': 'KSEA', 'DC': 'KDCA', 'BOS': 'KBOS'
+  };
+
+  const result = {};
+  const promises = Object.entries(stationMap).map(async ([city, station]) => {
+    try {
+      const url = `https://aviationweather.gov/api/data/metar?ids=${station}&format=json&hours=6`;
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'MacHealthMetar/1.0' },
+        signal: AbortSignal.timeout(10000)
+      });
+      const observations = await response.json();
+      const obsArray = Array.isArray(observations) ? observations : [];
+
+      const tempsF = obsArray
+        .map((o) => {
+          let tc = o.temp !== undefined ? parseFloat(o.temp) :
+                  (o.properties && o.properties.temperature && o.properties.temperature.value ? parseFloat(o.properties.temperature.value) : null);
+          if (tc !== null && !isNaN(tc)) {
+            return Math.round((tc * 9 / 5 + 32) * 10) / 10;
+          }
+          return null;
+        })
+        .filter((t) => t !== null);
+
+      const sixHourMax = tempsF.length > 0 ? Math.max(...tempsF) : null;
+      const latestObs = obsArray[0] || obsArray[obsArray.length - 1];
+      let currentTemp = sixHourMax;
+      if (latestObs) {
+        let latestC = latestObs.temp !== undefined ? parseFloat(latestObs.temp) :
+                      (latestObs.properties && latestObs.properties.temperature && latestObs.properties.temperature.value ? parseFloat(latestObs.properties.temperature.value) : null);
+        if (latestC !== null && !isNaN(latestC)) {
+          currentTemp = Math.round((latestC * 9 / 5 + 32) * 10) / 10;
+        }
+      }
+
+      return [city, {
+        station: station,
+        currentTemp: currentTemp || null,
+        sixHourMax: sixHourMax || null,
+        lastUpdate: new Date().toISOString(),
+        rawMetar: latestObs ? (latestObs.rawOb || latestObs.raw_text || '') : ''
+      }];
+    } catch (err) {
+      return [city, {
+        station,
+        currentTemp: null,
+        sixHourMax: null,
+        lastUpdate: new Date().toISOString(),
+        error: err.message
+      }];
+    }
+  });
+
+  const entries = await Promise.all(promises);
+  for (const [city, data] of entries) {
+    result[city] = data;
+  }
+  res.json(result);
 });
 
 app.listen(3099, () => console.log('Mac health API running on port 3099'));
