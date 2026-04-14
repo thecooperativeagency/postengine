@@ -525,11 +525,25 @@
             const modelConfig = {
                 'google/gemini-3-flash': { name: 'Gemini', color: '#3498db', role: 'Wrench ✅' },
                 'xai/grok-4-1-fast': { name: 'Grok', color: '#e67e22', role: 'Scout ✅' },
-                'anthropic/claude-sonnet-4-6': { name: 'Sonnet', color: '#9b59b6', role: 'Luc (main) ✅' }
+                'anthropic/claude-sonnet-4-6': { name: 'Sonnet', color: '#9b59b6', role: 'Luc (main) ✅' },
+                'google/gemini-3-pro-image-preview': { name: 'Pixie', color: '#f1c40f', role: 'Image Gen ✅' }
             };
 
             // Part 1: Model Compute Summary
             let summaryHtml = '';
+            
+            // Add Pixie (Image Generator) - Static entry as requested
+            summaryHtml += `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; border-bottom: 1px solid #222;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="background: #f1c40f; color: black; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 700;">PIXIE</span>
+                        <span>Image generation — marketing assets, avatars, hero images, social visuals</span>
+                    </div>
+                    <div style="display: flex; gap: 12px; font-size: 0.8rem;">
+                        <span style="color: var(--success); font-weight: 700;">ON CALL</span>
+                    </div>
+                </div>`;
+
             const models = Object.keys(data.modelStats);
             
             // Ensure main agent is listed if missing from stats
