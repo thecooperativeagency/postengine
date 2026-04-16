@@ -82,3 +82,15 @@
 ---
 
 *Maintained by The Cooperative Agency · [thecoopbrla.com](https://thecoopbrla.com) · lance@thecoopbrla.com*
+
+---
+
+## 📝 Meeting Notes
+
+### April 16, 2026 — Rick McCary Sit Down
+
+- **Vendor expense reclassification:** Don't lump the website into advertising — it's a semi-fixed operational expense, not an ad spend line item. Same goes for Podium.
+- **True advertising** = AutoTrader, Cars.com (if active), J&L, Epsilon, SEM/Google Ads — things that directly drive leads or traffic.
+- **Semi-fixed operational** = Website (Motive), Podium, and similar platform/SaaS tools that support operations but aren't "advertising" in the traditional sense.
+- Action: Audit full vendor list, finish GM brief with costs itemized under the correct categories.
+- *(More takeaways TBD — Lance to add)*
