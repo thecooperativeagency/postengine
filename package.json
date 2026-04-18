@@ -59,6 +59,7 @@
     "next-themes": "^0.4.6",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
+    "playwright": "^1.59.1",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
     "react-dom": "^18.3.1",
@@ -104,5 +105,17 @@
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"
-  }
+  },
+  "description": "Interactive GA4 analytics dashboards for dealership performance tracking.",
+  "main": "postcss.config.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thecooperativeagency/postengine.git"
+  },
+  "keywords": [],
+  "author": "",
+  "bugs": {
+    "url": "https://github.com/thecooperativeagency/postengine/issues"
+  },
+  "homepage": "https://github.com/thecooperativeagency/postengine#readme"
 }

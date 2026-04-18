@@ -1,3 +1,43 @@
+## Hero / GroupCTA Button Pattern (Correct for ABR pages)
+
+The GroupCTA pattern is used for hero section CTAs on Motive CMS pages (Q3, Q5, etc.)
+NOT the Button-module pattern. Use this for all hero section buttons.
+
+### Link button (Shop Inventory, etc.):
+<a class="GroupCTA-module-scss-module__8ELkBa__button" target="_self" draggable="false" tabindex="0" href="URL">
+  <div class="GroupCTA-module-scss-module__8ELkBa__ctn">
+    <div class="GroupCTA-module-scss-module__8ELkBa__iconCtn">
+      <i class="Icon-module-scss-module__row4fW__dynamicIcon GroupCTA-module-scss-module__8ELkBa__icon" data-wg-notranslate="true" aria-hidden="true" data-icon="car_tag"></i>
+    </div>
+    <p class="Text-module-scss-module__Iw40ma__text Text-module-scss-module__Iw40ma__text--bodyLarge Text-module-scss-module__Iw40ma__text--textPrimary Text-module-scss-module__Iw40ma__text--center Text-module-scss-module__Iw40ma__text--medium GroupCTA-module-scss-module__8ELkBa__buttonText">
+      <span class="Text-module-scss-module__Iw40ma__textContent">BUTTON TEXT</span>
+    </p>
+  </div>
+</a>
+
+### Modal/action button (Get Pre-Qualified, Schedule Test Drive, Value My Trade):
+<button class="GroupCTA-module-scss-module__8ELkBa__button" type="button">
+  <div class="GroupCTA-module-scss-module__8ELkBa__ctn">
+    <div class="GroupCTA-module-scss-module__8ELkBa__iconCtn">
+      <i class="Icon-module-scss-module__row4fW__dynamicIcon GroupCTA-module-scss-module__8ELkBa__icon" data-wg-notranslate="true" aria-hidden="true" data-icon="ICON"></i>
+    </div>
+    <p class="Text-module-scss-module__Iw40ma__text Text-module-scss-module__Iw40ma__text--bodyLarge Text-module-scss-module__Iw40ma__text--textPrimary Text-module-scss-module__Iw40ma__text--center Text-module-scss-module__Iw40ma__text--medium GroupCTA-module-scss-module__8ELkBa__buttonText">
+      <span class="Text-module-scss-module__Iw40ma__textContent">BUTTON TEXT</span>
+    </p>
+  </div>
+</button>
+
+### Container wrapper:
+<div class="InventoryCTAs-module-scss-module__qj3srG__ctn">
+  [buttons here]
+</div>
+
+### Icon names to use:
+- Get Pre-Qualified: attach_money
+- Schedule Test Drive / Appointment: calendar_add_on
+- Value My Trade: swap_horiz
+- Shop Inventory: car_tag
+
 # Motive CTA Standards — The Cooperative Agency
 
 This document defines the correct button/link patterns for all SEO and content pages built for Motive-hosted dealership sites. Always reference this before building or reviewing pages.

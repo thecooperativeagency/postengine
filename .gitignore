@@ -4,3 +4,5 @@ sqlite.db
 data.db
 *.db
 dist/
+pepper/pepper_tokens.env
+*.env
