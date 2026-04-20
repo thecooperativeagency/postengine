@@ -56,7 +56,7 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
     queryKey: ["/api/dealerships"],
   });
 
-  const queryParams = new URLSearchParams({ status: "queued" });
+  const queryParams = new URLSearchParams({ status: "pending_review" });
   if (dealershipFilter) queryParams.set("dealershipId", dealershipFilter.toString());
 
   const { data: posts, isLoading } = useQuery<Post[]>({
