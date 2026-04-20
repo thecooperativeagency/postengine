@@ -18,6 +18,7 @@ import PostForm from "@/pages/post-form";
 import ReviewQueue from "@/pages/review-queue";
 import CalendarPage from "@/pages/calendar-page";
 import Settings from "@/pages/settings";
+import ContentEngine from "@/pages/content-engine";
 
 function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
@@ -67,6 +68,7 @@ function AppContent() {
                 <Route path="/posts/:id" component={PostForm} />
                 <Route path="/queue" component={() => <ReviewQueue dealershipFilter={dealershipFilter} />} />
                 <Route path="/calendar" component={() => <CalendarPage dealershipFilter={dealershipFilter} />} />
+                <Route path="/content-engine" component={ContentEngine} />
                 <Route path="/settings" component={Settings} />
                 <Route component={NotFound} />
               </Switch>
