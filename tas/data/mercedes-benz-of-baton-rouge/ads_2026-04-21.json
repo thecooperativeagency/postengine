@@ -1,0 +1,70 @@
+{
+  "dealer": "Mercedes-Benz of Baton Rouge",
+  "date": "2026-04-21",
+  "meta": {
+    "dealer": "Mercedes-Benz of Baton Rouge",
+    "scraped_at": "2026-04-21T14:59:50.794887",
+    "source": "meta_ad_library",
+    "active_ads": [
+      {
+        "index": 0,
+        "text": "United States\n\u200b"
+      },
+      {
+        "index": 1,
+        "text": "United States"
+      },
+      {
+        "index": 2,
+        "text": "All"
+      },
+      {
+        "index": 3,
+        "text": "Afghanistan"
+      },
+      {
+        "index": 4,
+        "text": "Aland Islands"
+      },
+      {
+        "index": 5,
+        "text": "Albania"
+      },
+      {
+        "index": 6,
+        "text": "Algeria"
+      },
+      {
+        "index": 7,
+        "text": "American Samoa"
+      },
+      {
+        "index": 8,
+        "text": "Andorra"
+      },
+      {
+        "index": 9,
+        "text": "Angola"
+      }
+    ],
+    "ad_count": 258,
+    "error": null,
+    "page_text_sample": "Meta Ad Library\nAd Library\nAd Library Report\nAd Library API\nBranded Content\n\u200b\nUnited States\n\u200b\n\u200b\n\u200b\nAll ads\n\u200b\nSearch by keyword or advertiser\n\u200b\n\u200b\nLog in\nAd Library\nAd Library Report\nAd Library API\nBranded Content\nSystem status\nSubscribe to email updates\nFAQ\nAbout ads and data use\nPrivacy\nTerms\nCookies\n~250 results\nThese results include ads that match your keyword search.\nFilters\nSort\n\u200b\nSort by\nActive status: Active ads\nRemove\n\u200b\n\u200b\nActive\nLibrary ID: 1190440318780228\nStarted running on Apr 15, 2025\nPlatforms\n\u200b\n\u200b\nCategories\n\u200b\nThis ad has multiple versions\n\u200b\nOpen Dropdown\n\u200b\nSee ad details\nMercedes-Benz of Baton Rouge, LA\nSponsored\nOnly the best for you.  Our selection of Certified pre-owned Mercedes-Benz has your name on it.  \n\nWith our 3/30 guarantee (3 day return, 30 day exchange), you won't find a safer offer.\n\nLike this 2024 Mercedes-Benz GLC 300 .\n\nand a few other options you know you want.  :)\nMBOBR.COM\n2024 Mercedes-Benz GLC 300\n4,288 miles\nShop Now\n\u200b\nActive\nLibrary ID: 1424649712284535\nStarted running on Apr 15, 2025\nPlatforms\n\u200b\n\u200b\nCategories\n\u200b\nThis ad has multiple versions\n\u200b\nOpen Dropdown\n\u200b\nSee ad details\nMercedes-Benz of Baton Rouge, LA\nSponsored\nCan't keep your eyes off the 2024 Mercedes-Benz CLE 300? It's on our lot, along with an extensive inventory of quality Mercedes-Benz vehicles.\n\nExperience the open road like never before. Click \"Shop Now\" or swipe through our selection of brand new Mercedes-Benz models today.\nMBOBR.COM\n2024 Mercedes-Benz CLE 300\nAt Mercedes-Benz of Baton Rouge we treat the needs of each individual from sales to service. We will ensure that your expectations are exceeded! Visit us today!\nShop Now\n\u200b\nActive\nLibrary ID: 962475583006725\nStarted running on Feb 12, 2026\nPlatforms\n\u200b\n\u200b\nCategories\n\u200b\nThis ad has multiple versions\n\u200b\nOpen Dropdown\n\u200b\nSee ad details\nMercedes-Benz of Baton Rouge, LA\nSponsored\nEverything that makes it a Mercedes-Benz makes it better than any alternative. \ud83d\ude0e Why shop Certified Pre-Owned with us? Here's just a few great rea"
+  },
+  "google": {
+    "dealer": "Mercedes-Benz of Baton Rouge",
+    "scraped_at": "2026-04-21T14:59:58.817863",
+    "source": "google_ads_transparency",
+    "active_ads": [],
+    "ad_count": 0,
+    "error": null,
+    "page_text_sample": "Ads Transparency Center\nSign in\nFAQ\nAll topics\nPolitical ads\nsearch\ncheck\nAds In United States\narrow_drop_down\nAds transparency for a safe and open internet\nFind active ads published through Google\nDiscover more on related sites\nAnalyze political ad campaigns on Google\nSee extra transparency about election ads from around the world, including who paid for them and who they were aiming to reach.\nExplore political advertising on Google\nAssess how brands use paid content on Youtube\nFind paid product placements, sponsorships and endorsements shown on YouTube.\nExplore paid promotions on YouTube\narrow_outward\nMake your ads more useful to you\nEasily customize the ads you see on Google Search, YouTube, and Discover - and control the info used to personalize them.\nGo to My Ad Center\narrow_outward\nSee how Google helps keep users safe online\nLearn about our commitments to responsible advertising and find out more about our approach to keeping the internet open, private, and safe.\nVisit the Safety Center to learn more\narrow_outward\nPrivacyTermsAds PoliciesFAQ\nPrinciplesAds Blog",
+    "note": "Check /tmp screenshot \u2014 selectors may need updating"
+  },
+  "summary": {
+    "meta_ad_count": 258,
+    "google_ad_count": 0,
+    "meta_error": null,
+    "google_error": null
+  }
+}
