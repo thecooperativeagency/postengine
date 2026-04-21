@@ -4,6 +4,7 @@ import {
   PlusCircle,
   ClipboardCheck,
   CalendarDays,
+  BookOpen,
   Settings,
   Building2,
 } from "lucide-react";
@@ -38,6 +39,7 @@ const navItems = [
   { title: "New Post", url: "/posts/new", icon: PlusCircle },
   { title: "Review Queue", url: "/queue", icon: ClipboardCheck },
   { title: "Calendar", url: "/calendar", icon: CalendarDays },
+  { title: "Content Engine", url: "/content-engine", icon: BookOpen },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 

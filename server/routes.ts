@@ -235,6 +235,27 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+  // ── CONTENT ENGINE ──────────────────────────────────────────
+  app.get("/api/content-engine/cadence", (_req, res) => {
+    const settings = storage.getCadenceSettings();
+    const dealerships = storage.getDealerships();
+    const enriched = settings
+      .filter((s: any) => s.isActive)
+      .map((s: any) => {
+        const dealer = dealerships.find((d: any) => d.id === s.dealershipId);
+        return {
+          dealershipName: dealer?.name ?? "Unknown",
+          postType: s.postType,
+          postsPerDay: s.postsPerDay,
+          daysOfWeek: s.daysOfWeek,
+          platforms: s.platforms,
+          isActive: s.isActive,
+        };
+      })
+      .sort((a: any, b: any) => a.dealershipName.localeCompare(b.dealershipName));
+    res.json(enriched);
+  });
+
   // ── CADENCE SETTINGS ─────────────────────────────────────────
   app.get("/api/cadence", (req, res) => {
     const { dealershipId } = req.query;
