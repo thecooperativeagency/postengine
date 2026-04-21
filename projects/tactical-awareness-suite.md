@@ -234,6 +234,30 @@ For each client dealership, identify the **2-3 direct competitors inside their P
 5. **Pricing** — where they're aggressive, where they're soft
 6. **Promotions** — flash sales, lease specials, service events
 
+---
+
+## Two Intel Modes
+
+### Mode 1 — Competitive Intel (in-PMA)
+Watch the direct competitors inside each client's market. Find the gaps. Tell Lance exactly where and how to hit them for market share.
+
+### Mode 2 — Benchmark Intel (out-of-PMA)
+Watch the best-performing stores in the brand nationally — regardless of geography — and reverse-engineer what they're doing right. "Cheating" as a compliment: learn from winners, adapt it locally.
+
+**Key benchmark targets:**
+- **Galleria BMW** (Mississippi Gulf Coast) — outperforming other BMW stores in the region. Why? Inventory mix? Pricing? Ads? Listings quality? Digital presence?
+- Other top-performing BMW, Audi, Porsche stores TBD (Galpin, Jim Ellis, Fletcher Jones, Hendrick, Park Place from original brief)
+
+**Benchmark questions per store:**
+- How many new cars stocked vs. regional peers?
+- How many used cars? What's the CPO mix?
+- Are they pulling buyers from outside their own market? Why?
+- What's their listing quality (photos, descriptions, pricing)?
+- What marketing is visibly driving their volume?
+- What's their review velocity and sentiment vs. our clients?
+
+---
+
 ### The Output Lance Needs:
 - "Here's everything Lexus BR is doing right now — and here's where BHBMW can hit them"
 - Actionable, not just informational. Tell him WHERE the gap is and HOW to exploit it.
