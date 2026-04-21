@@ -201,4 +201,43 @@ Uniquely defensible because most agencies can't execute: Cooperative has the tec
 
 ---
 
+## Lance's Core Use Cases (April 21, 2026)
+
+### What this actually IS at its core:
+For each client dealership, identify the **2-3 direct competitors inside their PMA** and build a complete picture of everything those competitors are doing — so Lance can out-maneuver them and take market share.
+
+### Client PMA Competitive Maps
+
+**Brian Harris BMW — Baton Rouge, LA**
+- vs. Lexus of Baton Rouge
+- vs. Mercedes-Benz of Baton Rouge
+- Intel needed: pricing, inventory depth, Meta ads, Google ads, SEO, social
+
+**BMW of Jackson — Jackson, MS**
+- vs. Audi of Jackson
+- vs. Mercedes-Benz of Jackson
+- Intel needed: same full picture
+
+**Audi Baton Rouge — Baton Rouge, LA**
+- vs. Lexus of Baton Rouge
+- vs. Mercedes-Benz of Baton Rouge
+- (Different angle than BHBMW — Audi's segment vs. lux imports)
+
+**Harris Porsche — Baton Rouge, LA**
+- TBD competitors (likely Mercedes, Lexus — to confirm)
+
+### What "full picture" means per competitor:
+1. **Inventory** — what they have, how long it's been sitting, pricing vs. market
+2. **Paid ads** — Meta Ad Library (what creatives, what offers), Google Ads Transparency
+3. **SEO** — new pages, comparison pages targeting our clients' models, GBP activity
+4. **Social** — what's working for them (engagement, formats, frequency)
+5. **Pricing** — where they're aggressive, where they're soft
+6. **Promotions** — flash sales, lease specials, service events
+
+### The Output Lance Needs:
+- "Here's everything Lexus BR is doing right now — and here's where BHBMW can hit them"
+- Actionable, not just informational. Tell him WHERE the gap is and HOW to exploit it.
+
+---
+
 *This doc is the master reference. Edits here override prior conversation notes.*
