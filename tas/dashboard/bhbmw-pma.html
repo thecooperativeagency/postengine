@@ -165,6 +165,112 @@
   .tag-theme { background: rgba(63, 185, 80, 0.12); color: var(--green); }
   .tag-weakness { background: rgba(248, 81, 73, 0.12); color: var(--red); }
 
+  /* ---- Benchmark Card ---- */
+  .benchmark {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-top: 3px solid #F59E0B;
+    border-radius: 10px;
+    padding: 1.75rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .benchmark:hover { border-color: #F59E0B; }
+
+  .benchmark-header { text-align: center; margin-bottom: 1.5rem; }
+
+  .benchmark-header h3 {
+    font-size: 1.15rem;
+    color: #F59E0B;
+    margin-bottom: 0.25rem;
+  }
+
+  .benchmark-header p {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+
+  .benchmark-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .benchmark-col h4 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #F59E0B;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+  }
+
+  .benchmark-col ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .benchmark-col li {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .benchmark-col li strong { color: var(--text-primary); font-weight: 600; }
+
+  .benchmark-steal {
+    background: rgba(245, 158, 11, 0.06);
+    border: 1px solid rgba(245, 158, 11, 0.15);
+    border-radius: 8px;
+    padding: 1.25rem;
+  }
+
+  .benchmark-steal h4 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #F59E0B;
+    margin-bottom: 0.75rem;
+  }
+
+  .benchmark-steal ol {
+    list-style: none;
+    counter-reset: steal;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .benchmark-steal li {
+    counter-increment: steal;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    padding-left: 1.75rem;
+    position: relative;
+  }
+
+  .benchmark-steal li::before {
+    content: counter(steal);
+    position: absolute;
+    left: 0;
+    background: #F59E0B;
+    color: #000;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.7rem;
+    top: 0;
+  }
+
+  @media (max-width: 960px) {
+    .benchmark-columns { grid-template-columns: 1fr; }
+  }
+
   /* ---- Recommendations ---- */
   .recs {
     background: var(--card-bg);
@@ -413,6 +519,53 @@
 
 </div>
 
+<!-- Benchmark Store -->
+<p class="section-label">Benchmark Store</p>
+
+<div class="benchmark">
+  <div class="benchmark-header">
+    <h3>&#127942; Benchmark Intelligence — Galleria BMW (D'Iberville, MS)</h3>
+    <p>Top-performing BMW store in the Gulf South. Reverse-engineering their playbook.</p>
+  </div>
+
+  <div class="benchmark-columns">
+    <div class="benchmark-col">
+      <h4>Ad Intelligence</h4>
+      <ul>
+        <li><strong>Google Ads:</strong> ~300 active (in-house, under dealer name)</li>
+        <li><strong>Meta Ads:</strong> ~258 variants | Longest-running: 18 months active</li>
+        <li><strong>Platforms:</strong> FB + IG + Messenger + Audience Network + Google Display + Video</li>
+        <li><strong>Top models:</strong> 2026 X3, 2026 X5, 2025 X1, used non-BMW inventory (RAM 1500)</li>
+        <li><strong>Creative style:</strong> Consistent "Galleria BMW | [roundel]" branding header on every ad</li>
+        <li><strong>Ad strategy:</strong> A/B testing every set, price callouts in creative (VDP-style)</li>
+      </ul>
+    </div>
+    <div class="benchmark-col">
+      <h4>Who's Running It</h4>
+      <ul>
+        <li><strong>Agency:</strong> NONE — 100% in-house</li>
+        <li><strong>Group:</strong> Mandal Automotive Group (3 stores, D'Iberville MS)</li>
+        <li><strong>Owner:</strong> Bo Mandal (President/CEO)</li>
+        <li><strong>Key player:</strong> Michelle Ladner (GSM/Finance Director) — personally manages campaigns</li>
+        <li><strong>Website platform:</strong> space.auto</li>
+        <li><strong>Funding:</strong> BMW OEM co-op dollars + direct Google Ads</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="benchmark-steal">
+    <h4>What BHBMW &amp; BMW Jackson Should Steal</h4>
+    <ol>
+      <li>Launch Meta immediately — 0 active ads vs Galleria's 258 variants is unacceptable</li>
+      <li>Add video creative to Google — Galleria runs multiple video ads, most dealers skip this</li>
+      <li>A/B test every ad set — find a winner and let it run for months, not weeks</li>
+      <li>Put prices in the creative — VDP-style ads with real sticker prices pre-qualify buyers</li>
+      <li>Push new 2026 inventory — Galleria leads with NEW models, not just used/CPO</li>
+      <li>Maximize BMW co-op — Galleria funds this with OEM money, BHBMW should too</li>
+    </ol>
+  </div>
+</div>
+
 <!-- Strategic Recommendations -->
 <p class="section-label">Action Items</p>
 
@@ -446,7 +599,7 @@
 </main>
 
 <footer>
-  Last updated: April 21, 2026 &nbsp;&middot;&nbsp; <strong>TAS</strong> — Tactical Awareness Suite &nbsp;&middot;&nbsp; The Cooperative Agency
+  Last updated: April 21, 2026 &nbsp;&middot;&nbsp; <strong>TAS</strong> — Tactical Awareness Suite &nbsp;&middot;&nbsp; The Cooperative Agency &nbsp;&middot;&nbsp; Recon: BHBMW PMA + Galleria Benchmark
 </footer>
 
 </body>
