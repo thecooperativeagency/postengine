@@ -1,4 +1,4 @@
-# BMW of Jackson — Vendor & Services Summary
+# BMW of Jackson — GM Brief
 **Prepared by:** The Cooperative Agency  
 **Contact:** Lance Faucheux | lance@thecoopbrla.com  
 **Last Updated:** April 2026
@@ -66,25 +66,6 @@
 
 ---
 
-## 🚨 Who to Call When Something Breaks
-
-| Issue | Contact | Phone |
-|-------|---------|-------|
-| Website is down | Dessrae Edison (Motive) | 📞 [(601) 550-2972](tel:+16015502972) |
-| CRM not working | Reynolds & Reynolds Support | TBD |
-| Chat not responding | Tyler Barnes (Podium) | 📞 [(385) 485-6773](tel:+13854856773) |
-| Inventory pricing issues | Dwayne Hearl (Vauto) | 📞 [(813) 215-3632](tel:+18132153632) |
-| Autotrader listing issues | Josh Gwin | 📞 [(225) 954-1627](tel:+12259541627) |
-| Digital marketing (Epsilon) | Adam Nicholas | 📞 [(213) 509-0888](tel:+12135090888) |
-| Direct mail / campaign issues | Michael Dorsey (J&L) | 📞 [(513) 703-1151](tel:+15137031151) |
-| Social media / content | Lance Faucheux | ✉️ [lance@thecoopbrla.com](mailto:lance@thecoopbrla.com) |
-
----
-
-*Maintained by The Cooperative Agency · [thecoopbrla.com](https://thecoopbrla.com) · lance@thecoopbrla.com*
-
----
-
 ## 📝 Meeting Notes
 
 ### April 16, 2026 — Rick McCary Sit Down
@@ -94,3 +75,17 @@
 - **Semi-fixed operational** = Website (Motive), Podium, and similar platform/SaaS tools that support operations but aren't "advertising" in the traditional sense.
 - Action: Audit full vendor list, finish GM brief with costs itemized under the correct categories.
 - *(More takeaways TBD — Lance to add)*
+
+### April 22, 2026 — AutoHub Demo with Becky Squyres
+- **Product:** AutoHub — automated vehicle acquisition platform (service drive + online trade-in + in-store appraisal)
+- **Rep:** Becky Squyres, AutoHub Sales | 📞 TBD | ✉️ TBD
+- **Key use case for BMW Jackson:** Used car acquisition is a major pain point — can't buy affordably at auctions. AutoHub texts service drive customers within 5–7 min of check-in, offering a vehicle valuation. ~20% opt-in rate, ~7% lead-to-purchase.
+- **Pricing:** $1,125–$1,395/store/mo for service-drive product; online tool +$299; group of 8+ drops to $995.
+- **Integration:** Pushes to vAuto and CRM. Uses KBB + MMR + open market listings for pricing. Full guardrails/blacklists (e.g., exclude bad Carfax, max mileage, specific models).
+- **Results:** Porsche Marin paid for 6 months of service in their first month.
+- **Lance's take:** Strong fit for Jackson's used inventory needs. Recommends Rick McCary take a demo.
+- **Next step:** Lance to intro Rick to Becky for a follow-up demo (Zoom or in-person when Lance is in Jackson).
+
+---
+
+## 🚨 Who to Call When Something Breaks

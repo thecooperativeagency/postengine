@@ -1,4 +1,4 @@
-# Harris Porsche — Vendor & Services Summary
+# Audi Baton Rouge — GM Brief
 **Prepared by:** The Cooperative Agency  
 **Contact:** Lance Faucheux | lance@thecoopbrla.com  
 **Last Updated:** April 2026
@@ -6,8 +6,8 @@
 ---
 
 ## General Manager
-**Adam Terrebonne**  
-📞 [(504) 810-1049](tel:+15048101049) | ✉️ [Adam.Terrebonne@harrisporsche.com](mailto:Adam.Terrebonne@harrisporsche.com)
+**Hedrick Wood**  
+📞 [(225) 978-9305](tel:+12259789305) | ✉️ [hedrick.wood@brianharrisaudi.com](mailto:hedrick.wood@brianharrisaudi.com)
 
 ---
 
@@ -25,10 +25,9 @@
 
 | Service | Vendor | What It Does | Rep | Contact | Monthly Cost |
 |---------|--------|-------------|-----|---------|-------------|
-| Dealership Website | Porsche OEM Platform | OEM-mandated website (Porsche franchise requirement) | Cody Vander Veen | ✉️ [cody.vanderveen@porsche.us](mailto:cody.vanderveen@porsche.us) · [Add to Contacts](https://thecooperativeagency.github.io/contacts/cody-vanderveen.vcf) | TBD |
+| Dealership Website | Motive | Dealership website platform | Dessrae Edison | 📞 [(601) 550-2972](tel:+16015502972) · ✉️ [dessrae.edison@motivehq.com](mailto:dessrae.edison@motivehq.com) · [Add to Contacts](https://thecooperativeagency.github.io/contacts/dessrae-edison.vcf) | TBD |
 | Listings & Marketplace | Autotrader / KBB | Vehicle listings on Autotrader and Kelley Blue Book | Josh Gwin | 📞 [(225) 954-1627](tel:+12259541627) · ✉️ [josh.gwin@autotrader.com](mailto:josh.gwin@autotrader.com) · [Add to Contacts](https://thecooperativeagency.github.io/contacts/josh-gwin.vcf) | TBD |
 | AI Chat / BDC / WebChat | Podium | AI-powered customer messaging, web chat, review management | Tyler Barnes | 📞 [(385) 485-6773](tel:+13854856773) · ✉️ [tyler.barnes@podium.com](mailto:tyler.barnes@podium.com) · [Add to Contacts](https://thecooperativeagency.github.io/contacts/tyler-barnes.vcf) | TBD |
-| Direct Mail & Events | J&L Marketing | Sales event mailers, conquest campaigns, direct mail | Michael Dorsey | 📞 [(513) 703-1151](tel:+15137031151) · ✉️ [mdorsey@jandlmarketing.com](mailto:mdorsey@jandlmarketing.com) · [Add to Contacts](https://thecooperativeagency.github.io/contacts/michael-dorsey.vcf) | TBD |
 | SEM / Google Ads | TBD | Paid search advertising | TBD | TBD | TBD |
 
 ### 📱 Social Media & Content
@@ -46,12 +45,24 @@
 | DMS (CDK) | TBD |
 | CRM (VinSolutions) | TBD |
 | Inventory (Vauto) | TBD |
-| Website (Porsche OEM) | TBD |
+| Website (Motive) | TBD |
 | Listings (Autotrader/KBB) | TBD |
 | AI/Chat (Podium) | TBD |
-| Direct Mail (J&L) | TBD |
 | SEM / Google Ads | TBD |
 | **Estimated Total** | **TBD** |
+
+---
+
+## 📝 Meeting Notes
+
+### April 22, 2026 — AutoHub Demo with Becky Squyres
+- **Product:** AutoHub — automated vehicle acquisition platform
+- **Rep:** Becky Squyres, AutoHub Sales
+- **Current state:** Same group as BHBMW — no dedicated service-drive acquisition tool currently in place (unlike BHBMW which has AMP).
+- **Pricing:** $1,125–$1,395/store/mo; online tool +$299.
+- **Key features:** AI copilot texts service customers, KBB/MMR pricing engine, OBD device, push to vAuto/CRM, guardrails/blacklists.
+- **Lance's take:** Potentially strong fit for Audi BR — used inventory is critical and there's no existing automated acquisition tool. Recommend Hedrick evaluate.
+- **Next step:** TBD — schedule demo for Hedrick if interested.
 
 ---
 
@@ -59,12 +70,11 @@
 
 | Issue | Contact | Phone |
 |-------|---------|-------|
-| Website is down | Cody Vander Veen (Porsche OEM) | ✉️ [cody.vanderveen@porsche.us](mailto:cody.vanderveen@porsche.us) |
+| Website is down | Dessrae Edison (Motive) | 📞 [(601) 550-2972](tel:+16015502972) |
 | CRM not working | Royce Lee (VinSolutions) | 📞 [(309) 997-8009](tel:+13099978009) |
 | Chat not responding | Tyler Barnes (Podium) | 📞 [(385) 485-6773](tel:+13854856773) |
 | Inventory pricing issues | Dwayne Hearl (Vauto) | 📞 [(813) 215-3632](tel:+18132153632) |
 | Autotrader listing issues | Josh Gwin | 📞 [(225) 954-1627](tel:+12259541627) |
-| Direct mail / campaign issues | Michael Dorsey (J&L) | 📞 [(513) 703-1151](tel:+15137031151) |
 | Social media / content | Lance Faucheux | ✉️ [lance@thecoopbrla.com](mailto:lance@thecoopbrla.com) |
 
 ---

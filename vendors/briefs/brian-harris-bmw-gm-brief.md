@@ -1,4 +1,4 @@
-# Brian Harris BMW — Vendor & Services Summary
+# Brian Harris BMW — GM Brief
 **Prepared by:** The Cooperative Agency  
 **Contact:** Lance Faucheux | lance@thecoopbrla.com  
 **Last Updated:** April 2026
@@ -52,6 +52,19 @@
 | Direct Mail (J&L) | TBD |
 | SEM / Google Ads | TBD |
 | **Estimated Total** | **TBD** |
+
+---
+
+## 📝 Meeting Notes
+
+### April 22, 2026 — AutoHub Demo with Becky Squyres
+- **Product:** AutoHub — automated vehicle acquisition platform
+- **Rep:** Becky Squyres, AutoHub Sales
+- **Current state:** BHBMW already has AMP (VinSolutions) doing light service-drive outreach manually. AutoHub would automate and scale this significantly.
+- **Pricing:** $1,125–$1,395/store/mo; online tool +$299.
+- **Key features:** AI copilot texts service customers, KBB/MMR pricing engine, OBD in-store appraisal device, push to vAuto/CRM, guardrails/blacklists, targeted pricing rules.
+- **Lance's take:** Good product, but lower priority than BMW Jackson since BHBMW already has AMP campaigns. Worth evaluating if AMP isn't delivering enough volume.
+- **Next step:** TBD — evaluate against AMP performance first.
 
 ---
 
