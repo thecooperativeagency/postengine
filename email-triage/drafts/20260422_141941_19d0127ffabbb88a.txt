@@ -1,0 +1,14 @@
+FROM: "Smith Bill, C4-US-V-S-1" <Bill.Smith@bmwna.com>
+SUBJECT: Re: Sales Summary
+MESSAGE_ID: 19d0127ffabbb88a
+DATE: 2026-04-22 08:03
+---
+DRAFT:
+Hi,
+
+Thanks for the email. Let me review this and get back to you.
+
+Best,
+Lance
+---
+SNIPPET: 

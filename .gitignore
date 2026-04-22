@@ -6,3 +6,7 @@ data.db
 dist/
 pepper/pepper_tokens.env
 *.env
+
+# Nested git repos (not submodules)
+claude/
+
