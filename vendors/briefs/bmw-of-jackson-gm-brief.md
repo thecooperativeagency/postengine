@@ -66,6 +66,13 @@
 
 ---
 
+---
+
+**Prepared for:** Rick McCary, General Manager, BMW of Jackson  
+**Date:** April 2026
+
+---
+
 ## 📝 Meeting Notes
 
 ### April 16, 2026 — Rick McCary Sit Down

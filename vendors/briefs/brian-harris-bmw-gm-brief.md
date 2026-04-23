@@ -55,6 +55,13 @@
 
 ---
 
+---
+
+**Prepared for:** Brett Bagley, General Manager, Brian Harris BMW  
+**Date:** April 2026
+
+---
+
 ## 📝 Meeting Notes
 
 ### April 22, 2026 — AutoHub Demo with Becky Squyres

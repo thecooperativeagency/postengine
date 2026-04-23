@@ -53,6 +53,13 @@
 
 ---
 
+---
+
+**Prepared for:** Hedrick Wood, General Manager, Audi Baton Rouge  
+**Date:** April 2026
+
+---
+
 ## 📝 Meeting Notes
 
 ### April 22, 2026 — AutoHub Demo with Becky Squyres

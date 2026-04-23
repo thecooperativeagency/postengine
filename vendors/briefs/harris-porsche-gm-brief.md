@@ -55,6 +55,13 @@
 
 ---
 
+---
+
+**Prepared for:** Adam Terrebonne, General Manager, Harris Porsche  
+**Date:** April 2026
+
+---
+
 ## 📝 Meeting Notes
 
 ### April 22, 2026 — AutoHub Demo with Becky Squyres
