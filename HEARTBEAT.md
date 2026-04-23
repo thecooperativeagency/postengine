@@ -5,7 +5,7 @@ Check calendar every heartbeat for meetings starting in the next 60-90 minutes.
 If one is found AND a brief hasn't been sent yet today for that meeting:
 1. Pull meeting details (title, attendees, time, location/link)
 2. Check MEMORY.md + contacts/ for context on attendees
-3. Check open-tasks.md for open items related to that meeting/person
+3. Check Todoist Operations project for open items related to that meeting/person
 4. Send Lance a Telegram brief with: context, open action items, talking points, any prep needed
 5. Log that brief was sent in memory/YYYY-MM-DD.md
 
@@ -14,10 +14,11 @@ If one is found AND a brief hasn't been sent yet today for that meeting:
 
 1. **Needle Mover** — one sentence, single most important thing today
 2. **Calendar** — Google + La Familia iCloud next 48h
-3. **Decision Queue** — things waiting on Lance's call (from open-tasks.md)
-4. **Waiting On** — sent items awaiting responses (email + Drive shared files)
-5. **Client Pulse** — GA4 yesterday vs prior day (BMW Jackson, BH BMW, Audi BR)
-6. **Stalled Items** — open-tasks.md items >3 days no progress
+3. **Decision Queue** — pull P1+P2 tasks from Todoist Operations project (project_id: 6gJvwpWCF49wj57r) — surface anything needing Lance's call or decision
+4. **Luc Tasks** — pull open items from 🦞 Luc Tasks section (section_id: 6gP6gRmgvJrrqqxr) — flag anything overdue or blocked
+5. **Waiting On** — sent items awaiting responses (email + Drive shared files)
+6. **Client Pulse** — GA4 yesterday vs prior day (BMW Jackson, BH BMW, Audi BR)
+7. **Stalled Items** — Todoist Operations tasks with no recent activity (>3 days old, still open)
 7. **Email** — unread/important last 24h (lance@coopbrla)
 8. **Social/Content** — PostEngine queue, failures, engagement (Zernio)
 9. **X Monitor** — client mentions + industry news (x_search)
@@ -26,7 +27,7 @@ If one is found AND a brief hasn't been sent yet today for that meeting:
 12. **Tomorrow Preview** — next 24h highlights
 
 ## Evening Sweep (5–7 PM CDT)
-1. Update open-tasks.md (status changes, new items)
+1. Review Todoist Operations + Luc Tasks for status changes
 2. Flag anything due tomorrow
 3. Scan calendar + La Familia for prep needed
 4. Telegram summary if urgent (skip quiet)
