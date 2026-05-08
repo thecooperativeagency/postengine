@@ -246,3 +246,23 @@ export const insertOfferReviewDownstreamUseSchema = createInsertSchema(offerRevi
 });
 export type InsertOfferReviewDownstreamUse = z.infer<typeof insertOfferReviewDownstreamUseSchema>;
 export type OfferReviewDownstreamUse = typeof offerReviewDownstreamUses.$inferSelect;
+
+export const contentEngineBuildManifestEntries = sqliteTable("content_engine_build_manifest_entries", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  offerReviewId: integer("offer_review_id").notNull(),
+  dealershipId: integer("dealership_id").notNull(),
+  channel: text("channel").notNull(),
+  placement: text("placement").notNull().default("supporting"),
+  moduleKey: text("module_key").notNull().default("content-engine"),
+  reviewStatus: text("review_status").notNull().default("approved"),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const insertContentEngineBuildManifestEntrySchema = createInsertSchema(contentEngineBuildManifestEntries).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertContentEngineBuildManifestEntry = z.infer<typeof insertContentEngineBuildManifestEntrySchema>;
+export type ContentEngineBuildManifestEntry = typeof contentEngineBuildManifestEntries.$inferSelect;

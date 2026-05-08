@@ -10,6 +10,7 @@ import {
   offerReviews,
   offerReviewTargets,
   offerReviewDownstreamUses,
+  contentEngineBuildManifestEntries,
   type Dealership,
   type InsertDealership,
   type Post,
@@ -32,6 +33,8 @@ import {
   type InsertOfferReviewTarget,
   type OfferReviewDownstreamUse,
   type InsertOfferReviewDownstreamUse,
+  type ContentEngineBuildManifestEntry,
+  type InsertContentEngineBuildManifestEntry,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -83,6 +86,11 @@ export interface IStorage {
   upsertOfferReviewTarget(data: InsertOfferReviewTarget): OfferReviewTarget;
   getOfferReviewDownstreamUses(offerReviewId?: number, dealershipId?: number): OfferReviewDownstreamUse[];
   replaceOfferReviewDownstreamUses(offerReviewId: number, dealershipId: number, uses: Array<{ channel: string; placement: string }>): OfferReviewDownstreamUse[];
+  getContentEngineBuildManifestEntries(offerReviewId?: number): ContentEngineBuildManifestEntry[];
+  replaceContentEngineBuildManifestEntriesForOfferReview(
+    offerReviewId: number,
+    entries: InsertContentEngineBuildManifestEntry[],
+  ): ContentEngineBuildManifestEntry[];
   getOfferReviewStats(): {
     total: number;
     detected: number;
@@ -275,6 +283,19 @@ export class DatabaseStorage implements IStorage {
         updated_at TEXT NOT NULL,
         UNIQUE(offer_review_id, dealership_id, channel)
       );
+
+      CREATE TABLE IF NOT EXISTS content_engine_build_manifest_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        offer_review_id INTEGER NOT NULL,
+        dealership_id INTEGER NOT NULL,
+        channel TEXT NOT NULL,
+        placement TEXT NOT NULL DEFAULT 'supporting',
+        module_key TEXT NOT NULL DEFAULT 'content-engine',
+        review_status TEXT NOT NULL DEFAULT 'approved',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(offer_review_id, dealership_id, channel)
+      );
     `);
 
     const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;
@@ -336,6 +357,11 @@ export class DatabaseStorage implements IStorage {
     sqlite.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_offer_review_downstream_uses_offer_dealer_channel
       ON offer_review_downstream_uses (offer_review_id, dealership_id, channel);
+    `);
+
+    sqlite.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_content_engine_build_manifest_offer_dealer_channel
+      ON content_engine_build_manifest_entries (offer_review_id, dealership_id, channel);
     `);
 
     this.sanitizeLegacyPosts();
@@ -1107,6 +1133,43 @@ export class DatabaseStorage implements IStorage {
       createdAt: now,
       updatedAt: now,
     }).returning().get());
+  }
+
+  getContentEngineBuildManifestEntries(offerReviewId?: number): ContentEngineBuildManifestEntry[] {
+    if (offerReviewId) {
+      return db.select()
+        .from(contentEngineBuildManifestEntries)
+        .where(eq(contentEngineBuildManifestEntries.offerReviewId, offerReviewId))
+        .orderBy(contentEngineBuildManifestEntries.dealershipId, contentEngineBuildManifestEntries.channel)
+        .all();
+    }
+
+    return db.select()
+      .from(contentEngineBuildManifestEntries)
+      .orderBy(contentEngineBuildManifestEntries.dealershipId, contentEngineBuildManifestEntries.channel, contentEngineBuildManifestEntries.offerReviewId)
+      .all();
+  }
+
+  replaceContentEngineBuildManifestEntriesForOfferReview(
+    offerReviewId: number,
+    entries: InsertContentEngineBuildManifestEntry[],
+  ): ContentEngineBuildManifestEntry[] {
+    const now = new Date().toISOString();
+    return sqlite.transaction(() => {
+      db.delete(contentEngineBuildManifestEntries)
+        .where(eq(contentEngineBuildManifestEntries.offerReviewId, offerReviewId))
+        .run();
+
+      if (entries.length === 0) {
+        return [];
+      }
+
+      return entries.map((entry) => db.insert(contentEngineBuildManifestEntries).values({
+        ...entry,
+        createdAt: now,
+        updatedAt: now,
+      }).returning().get());
+    })();
   }
 
   getOfferReviewStats() {

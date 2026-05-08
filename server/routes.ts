@@ -16,6 +16,11 @@ import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
 import { composePostContent } from "./post-composer";
 import { runBmwOfferDetection } from "./bmw-offers-detector";
 import { runAudiOfferDetection } from "./audi-offers-detector";
+import {
+  buildContentEngineBuildPlan,
+  getOfferReviewTransitionError,
+  syncContentEngineBuildManifest,
+} from "./content-engine-build-manifest";
 
 export async function registerRoutes(server: Server, app: Express) {
   // ---- Dealerships ----
@@ -569,6 +574,20 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.status(404).json({ error: "No matching offer reviews found" });
     }
 
+    const blockedReview = nextStatus === "published"
+      ? reviews.find((review: OfferReview) => getOfferReviewTransitionError(
+          review,
+          nextStatus,
+          storage.getContentEngineBuildManifestEntries(review.id),
+        ))
+      : undefined;
+
+    if (blockedReview) {
+      return res.status(400).json({
+        error: getOfferReviewTransitionError(blockedReview, nextStatus, storage.getContentEngineBuildManifestEntries(blockedReview.id)),
+      });
+    }
+
     const now = new Date().toISOString();
     const job = storage.createEngineJob({
       moduleKey: "content-engine",
@@ -589,6 +608,8 @@ export async function registerRoutes(server: Server, app: Express) {
         jobId: job.id,
       }))
       .filter((review: OfferReview | undefined): review is OfferReview => Boolean(review));
+
+    updatedReviews.forEach((review: OfferReview) => syncContentEngineBuildManifest(storage, review.id));
 
     storage.updateEngineJob(job.id, {
       status: "completed",
@@ -614,6 +635,15 @@ export async function registerRoutes(server: Server, app: Express) {
     }
 
     const nextStatus = req.body.status ?? review.status;
+    const transitionError = getOfferReviewTransitionError(
+      review,
+      nextStatus,
+      storage.getContentEngineBuildManifestEntries(review.id),
+    );
+    if (transitionError) {
+      return res.status(400).json({ error: transitionError });
+    }
+
     const updateJob = storage.createEngineJob({
       moduleKey: review.moduleKey,
       jobType: "offer-review-status-change",
@@ -645,6 +675,10 @@ export async function registerRoutes(server: Server, app: Express) {
       jobId: req.body.jobId ?? updateJob.id,
       dealershipId: req.body.dealershipId ?? review.dealershipId,
     });
+
+    if (updated) {
+      syncContentEngineBuildManifest(storage, updated.id);
+    }
 
     storage.updateEngineJob(updateJob.id, {
       status: "completed",
@@ -831,6 +865,7 @@ export async function registerRoutes(server: Server, app: Express) {
     });
 
     const updatedTargets = storage.replaceOfferReviewTargets(review.id, dealershipIds);
+    syncContentEngineBuildManifest(storage, review.id);
     storage.updateEngineJob(job.id, {
       status: "completed",
       completedAt: new Date().toISOString(),
@@ -885,6 +920,7 @@ export async function registerRoutes(server: Server, app: Express) {
     });
 
     const updatedUses = storage.replaceOfferReviewDownstreamUses(review.id, dealershipId, uses);
+    syncContentEngineBuildManifest(storage, review.id);
     storage.updateEngineJob(job.id, {
       status: "completed",
       completedAt: new Date().toISOString(),
@@ -905,65 +941,13 @@ export async function registerRoutes(server: Server, app: Express) {
     const reviews = storage.getOfferReviews({ moduleKey: "content-engine", limit: 300 })
       .filter((review) => ["approved", "published"].includes(review.status));
     const dealerships = storage.getDealerships().filter((dealership) => ["BMW", "Audi"].includes(dealership.brand));
-    const targets = storage.getOfferReviewTargets();
-    const downstreamUses = storage.getOfferReviewDownstreamUses();
-    const reviewMap = new Map(reviews.map((review) => [review.id, review]));
-    const targetMap = new Map<string, typeof downstreamUses>();
+    const manifests = storage.getContentEngineBuildManifestEntries();
 
-    for (const downstreamUse of downstreamUses) {
-      const key = `${downstreamUse.offerReviewId}:${downstreamUse.dealershipId}`;
-      const existing = targetMap.get(key) ?? [];
-      existing.push(downstreamUse);
-      targetMap.set(key, existing);
-    }
-
-    const placementOrder = { hero: 0, primary: 1, supporting: 2 } as Record<string, number>;
-    const channelLabels = {
-      "specials-page": "Specials page",
-      "sales-email": "Sales email",
-    } as Record<string, string>;
-
-    const dealershipsPlan = dealerships.map((dealership) => {
-      const dealershipTargets = targets.filter((target) => target.dealershipId === dealership.id && reviewMap.has(target.offerReviewId));
-      const channels = ["specials-page", "sales-email"].map((channel) => {
-        const offers = dealershipTargets
-          .flatMap((target) => {
-            const review = reviewMap.get(target.offerReviewId);
-            const uses = (targetMap.get(`${target.offerReviewId}:${dealership.id}`) ?? []).filter((use) => use.channel === channel);
-            if (!review || uses.length === 0) return [];
-            return uses.map((use) => ({
-              offerReviewId: review.id,
-              offerTitle: review.offerTitle,
-              offerModel: review.offerModel,
-              offerType: review.offerType,
-              placement: use.placement,
-              sourceUrl: review.sourceUrl,
-              expirationDate: review.expirationDate,
-              notes: review.notes,
-            }));
-          })
-          .sort((a, b) => (placementOrder[a.placement] ?? 99) - (placementOrder[b.placement] ?? 99) || a.offerTitle.localeCompare(b.offerTitle));
-
-        return {
-          channel,
-          channelLabel: channelLabels[channel],
-          offerCount: offers.length,
-          offers,
-        };
-      });
-
-      return {
-        dealershipId: dealership.id,
-        dealershipName: dealership.name,
-        readyOfferCount: channels.reduce((sum, channel) => sum + channel.offerCount, 0),
-        channels,
-      };
-    });
-
-    res.json({
-      generatedAt: new Date().toISOString(),
-      dealerships: dealershipsPlan,
-    });
+    res.json(buildContentEngineBuildPlan({
+      dealerships,
+      manifests,
+      reviews,
+    }));
   });
 
   // ── CADENCE SETTINGS ─────────────────────────────────────────
