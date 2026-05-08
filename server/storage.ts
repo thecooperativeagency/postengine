@@ -7,6 +7,7 @@ import {
   accountModules,
   engineJobs,
   engineSources,
+  offerReviews,
   type Dealership,
   type InsertDealership,
   type Post,
@@ -23,6 +24,8 @@ import {
   type InsertEngineJob,
   type EngineSource,
   type InsertEngineSource,
+  type OfferReview,
+  type InsertOfferReview,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -62,6 +65,18 @@ export interface IStorage {
   getEngineSources(): EngineSource[];
   createEngineSource(data: InsertEngineSource): EngineSource;
   updateEngineSourceByKey(key: string, data: Partial<InsertEngineSource>): EngineSource | undefined;
+  getOfferReviews(filters?: { status?: string; moduleKey?: string; sourceKey?: string; limit?: number }): OfferReview[];
+  getOfferReview(id: number): OfferReview | undefined;
+  createOfferReview(data: InsertOfferReview): OfferReview;
+  updateOfferReview(id: number, data: Partial<InsertOfferReview>): OfferReview | undefined;
+  getOfferReviewStats(): {
+    total: number;
+    detected: number;
+    reviewing: number;
+    approved: number;
+    rejected: number;
+    published: number;
+  };
 
   // Activity
   getActivityLog(limit?: number): ActivityLog[];
@@ -190,6 +205,29 @@ export class DatabaseStorage implements IStorage {
         last_checked_at TEXT,
         last_result_summary TEXT,
         metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS offer_reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id INTEGER,
+        source_key TEXT NOT NULL,
+        module_key TEXT NOT NULL,
+        job_id INTEGER,
+        dealership_id INTEGER,
+        brand TEXT,
+        account_name TEXT,
+        offer_title TEXT NOT NULL,
+        offer_model TEXT,
+        offer_type TEXT,
+        status TEXT NOT NULL DEFAULT 'detected',
+        source_url TEXT,
+        source_payload TEXT NOT NULL DEFAULT '{}',
+        normalized_payload TEXT NOT NULL DEFAULT '{}',
+        effective_date TEXT,
+        expiration_date TEXT,
+        notes TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -733,6 +771,60 @@ export class DatabaseStorage implements IStorage {
       ...data,
       updatedAt: new Date().toISOString(),
     }).where(eq(engineSources.key, key)).returning().get();
+  }
+
+  getOfferReviews(filters?: { status?: string; moduleKey?: string; sourceKey?: string; limit?: number }): OfferReview[] {
+    const conditions = [];
+    if (filters?.status) conditions.push(eq(offerReviews.status, filters.status));
+    if (filters?.moduleKey) conditions.push(eq(offerReviews.moduleKey, filters.moduleKey));
+    if (filters?.sourceKey) conditions.push(eq(offerReviews.sourceKey, filters.sourceKey));
+
+    if (conditions.length > 0) {
+      return db.select()
+        .from(offerReviews)
+        .where(and(...conditions))
+        .orderBy(desc(offerReviews.updatedAt), desc(offerReviews.createdAt))
+        .limit(filters?.limit ?? 50)
+        .all();
+    }
+
+    return db.select()
+      .from(offerReviews)
+      .orderBy(desc(offerReviews.updatedAt), desc(offerReviews.createdAt))
+      .limit(filters?.limit ?? 50)
+      .all();
+  }
+
+  getOfferReview(id: number): OfferReview | undefined {
+    return db.select().from(offerReviews).where(eq(offerReviews.id, id)).get();
+  }
+
+  createOfferReview(data: InsertOfferReview): OfferReview {
+    const now = new Date().toISOString();
+    return db.insert(offerReviews).values({
+      ...data,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+  }
+
+  updateOfferReview(id: number, data: Partial<InsertOfferReview>): OfferReview | undefined {
+    return db.update(offerReviews).set({
+      ...data,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(offerReviews.id, id)).returning().get();
+  }
+
+  getOfferReviewStats() {
+    const all = db.select().from(offerReviews).all();
+    return {
+      total: all.length,
+      detected: all.filter((review) => review.status === "detected").length,
+      reviewing: all.filter((review) => review.status === "reviewing").length,
+      approved: all.filter((review) => review.status === "approved").length,
+      rejected: all.filter((review) => review.status === "rejected").length,
+      published: all.filter((review) => review.status === "published").length,
+    };
   }
 
   // App settings

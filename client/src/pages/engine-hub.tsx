@@ -53,6 +53,29 @@ interface EngineHubData {
     lastCheckedAt: string | null;
     lastResultSummary: string | null;
   }>;
+  offerReviewStats: {
+    total: number;
+    detected: number;
+    reviewing: number;
+    approved: number;
+    rejected: number;
+    published: number;
+  };
+  offerReviews: Array<{
+    id: number;
+    sourceKey: string;
+    moduleKey: string;
+    brand: string | null;
+    accountName: string | null;
+    offerTitle: string;
+    offerModel: string | null;
+    offerType: string | null;
+    status: string;
+    sourceUrl: string | null;
+    effectiveDate: string | null;
+    expirationDate: string | null;
+    updatedAt: string;
+  }>;
 }
 
 function formatDateTime(value: string | null) {
@@ -82,6 +105,8 @@ export default function EngineHub() {
       queryClient.invalidateQueries({ queryKey: ["/api/engine/hub"] }),
       queryClient.invalidateQueries({ queryKey: ["/api/engine/status"] }),
       queryClient.invalidateQueries({ queryKey: ["/api/engine/jobs"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/engine/offer-reviews"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/content-engine/offers"] }),
     ]);
   };
 
@@ -125,6 +150,20 @@ export default function EngineHub() {
     },
   });
 
+  const offerReviewMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: number; status: string }) => {
+      const res = await apiRequest("PATCH", `/api/engine/offer-reviews/${id}`, { status });
+      return res.json();
+    },
+    onSuccess: async (_result, variables) => {
+      await refreshEngineData();
+      toast({ title: `Offer marked ${variables.status}` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Unable to update offer review", description: error.message, variant: "destructive" });
+    },
+  });
+
   if (isLoading || !data) {
     return (
       <div className="p-6 space-y-4 max-w-[1200px]">
@@ -164,7 +203,7 @@ export default function EngineHub() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Import Status</CardTitle>
@@ -195,6 +234,14 @@ export default function EngineHub() {
           </CardHeader>
           <CardContent className="text-2xl font-semibold">{data.modules.length}</CardContent>
         </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Offer Review Queue</CardTitle>
+            <CardDescription>Additive scaffolding on top of engine_sources + engine_jobs.</CardDescription>
+          </CardHeader>
+          <CardContent className="text-2xl font-semibold">{data.offerReviewStats.total}</CardContent>
+        </Card>
       </div>
 
       <Card>
@@ -224,6 +271,60 @@ export default function EngineHub() {
               </div>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <BookOpen className="h-4 w-4" /> Offer Review Queue
+          </CardTitle>
+          <CardDescription>Lightweight review state for incoming offer detections before any full watcher/importer ships.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">Detected {data.offerReviewStats.detected}</Badge>
+            <Badge variant="outline">Reviewing {data.offerReviewStats.reviewing}</Badge>
+            <Badge variant="outline">Approved {data.offerReviewStats.approved}</Badge>
+            <Badge variant="outline">Rejected {data.offerReviewStats.rejected}</Badge>
+            <Badge variant="outline">Published {data.offerReviewStats.published}</Badge>
+          </div>
+
+          {data.offerReviews.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No offer review records yet. Sources and routes are ready when watchers start writing rows.</div>
+          ) : (
+            <div className="space-y-3">
+              {data.offerReviews.map((review) => (
+                <div key={review.id} className="rounded-lg border p-3 space-y-2">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <div className="font-medium">{review.offerTitle}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {[review.brand, review.accountName, review.offerModel, review.offerType].filter(Boolean).join(" • ") || review.sourceKey}
+                      </div>
+                    </div>
+                    <Badge variant={statusVariant(review.status)}>{review.status}</Badge>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {review.moduleKey} • Updated {formatDateTime(review.updatedAt)}
+                    {review.effectiveDate ? ` • Starts ${formatDateTime(review.effectiveDate)}` : ""}
+                    {review.expirationDate ? ` • Ends ${formatDateTime(review.expirationDate)}` : ""}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "reviewing" })} disabled={offerReviewMutation.isPending || review.status === "reviewing"}>Mark Reviewing</Button>
+                    <Button size="sm" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "approved" })} disabled={offerReviewMutation.isPending || review.status === "approved"}>Approve</Button>
+                    <Button size="sm" variant="secondary" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "published" })} disabled={offerReviewMutation.isPending || review.status === "published"}>Published</Button>
+                    <Button size="sm" variant="destructive" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "rejected" })} disabled={offerReviewMutation.isPending || review.status === "rejected"}>Reject</Button>
+                    {review.sourceUrl ? (
+                      <Button size="sm" variant="ghost" asChild>
+                        <a href={review.sourceUrl} target="_blank" rel="noreferrer">Open Source</a>
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

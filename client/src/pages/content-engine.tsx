@@ -16,6 +16,30 @@ interface CadenceRow {
   isActive: boolean;
 }
 
+interface OfferQueueData {
+  stats: {
+    total: number;
+    detected: number;
+    reviewing: number;
+    approved: number;
+    rejected: number;
+    published: number;
+  };
+  queue: Array<{
+    id: number;
+    sourceKey: string;
+    brand: string | null;
+    accountName: string | null;
+    offerTitle: string;
+    offerModel: string | null;
+    offerType: string | null;
+    status: string;
+    sourceUrl: string | null;
+    expirationDate: string | null;
+    updatedAt: string;
+  }>;
+}
+
 // ── A. Content Cadence ──────────────────────────────────
 function ContentCadence() {
   const { data: cadence, isLoading } = useQuery<CadenceRow[]>({
@@ -74,6 +98,61 @@ function ContentCadence() {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+function OfferQueue() {
+  const { data, isLoading } = useQuery<OfferQueueData>({
+    queryKey: ["/api/content-engine/offers"],
+  });
+
+  if (isLoading) return <Skeleton className="h-32 rounded-lg" />;
+
+  return (
+    <div className="space-y-3">
+      <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+        <BookOpen className="h-4 w-4" /> Offer Review Queue
+      </h2>
+      <Card>
+        <CardContent className="space-y-4 pt-6">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">Total {data?.stats.total ?? 0}</Badge>
+            <Badge variant="outline">Detected {data?.stats.detected ?? 0}</Badge>
+            <Badge variant="outline">Reviewing {data?.stats.reviewing ?? 0}</Badge>
+            <Badge variant="outline">Approved {data?.stats.approved ?? 0}</Badge>
+          </div>
+
+          {!data || data.queue.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No offer detections have been written yet. This surface is ready for future BMW/Audi watcher output.</p>
+          ) : (
+            <div className="space-y-3">
+              {data.queue.map((offer) => (
+                <div key={offer.id} className="rounded-lg border p-3 space-y-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-medium text-sm">{offer.offerTitle}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="capitalize">{offer.status}</Badge>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Updated {new Date(offer.updatedAt).toLocaleString()}
+                    {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
+                  </div>
+                  {offer.sourceUrl ? (
+                    <a href={offer.sourceUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-block">
+                      Open source
+                    </a>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -322,6 +401,8 @@ export default function ContentEngine() {
       </div>
 
       <ContentCadence />
+      <Separator />
+      <OfferQueue />
       <Separator />
       <ActiveShoots />
       <Separator />

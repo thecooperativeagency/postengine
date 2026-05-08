@@ -7,6 +7,7 @@ import {
   insertEngineModuleSchema,
   insertAccountModuleSchema,
   insertEngineSourceSchema,
+  insertOfferReviewSchema,
 } from "@shared/schema";
 import { scanDriveFolders, archiveFile, loadFolders } from "./drive-scanner";
 import { publishPost } from "./zernio-publisher";
@@ -287,6 +288,8 @@ export async function registerRoutes(server: Server, app: Express) {
     const accountModules = storage.getAccountModules();
     const jobs = storage.getEngineJobs(12);
     const sources = storage.getEngineSources();
+    const offerReviewStats = storage.getOfferReviewStats();
+    const offerReviews = storage.getOfferReviews({ limit: 8 });
     const paused = storage.getAppSetting("imports_paused") === "true";
     const lastRunAt = storage.getAppSetting("last_scan_at") || null;
     const lastRunCount = storage.getAppSetting("last_scan_count") || null;
@@ -314,6 +317,8 @@ export async function registerRoutes(server: Server, app: Express) {
       accounts,
       jobs,
       sources,
+      offerReviewStats,
+      offerReviews,
     });
   });
 
@@ -363,6 +368,81 @@ export async function registerRoutes(server: Server, app: Express) {
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
+  });
+
+  app.get("/api/engine/offer-reviews", (req, res) => {
+    const filters = {
+      status: typeof req.query.status === "string" ? req.query.status : undefined,
+      moduleKey: typeof req.query.moduleKey === "string" ? req.query.moduleKey : undefined,
+      sourceKey: typeof req.query.sourceKey === "string" ? req.query.sourceKey : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    };
+    res.json(storage.getOfferReviews(filters));
+  });
+
+  app.get("/api/engine/offer-reviews/stats", (_req, res) => {
+    res.json(storage.getOfferReviewStats());
+  });
+
+  app.post("/api/engine/offer-reviews", (req, res) => {
+    try {
+      const data = insertOfferReviewSchema.parse(req.body);
+      const review = storage.createOfferReview(data);
+      res.status(201).json(review);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/engine/offer-reviews/:id", (req, res) => {
+    const review = storage.getOfferReview(Number(req.params.id));
+    if (!review) return res.status(404).json({ error: "Not found" });
+
+    const allowedStatuses = new Set(["detected", "reviewing", "approved", "rejected", "published"]);
+    if (req.body.status && !allowedStatuses.has(req.body.status)) {
+      return res.status(400).json({ error: "Invalid offer review status" });
+    }
+
+    const nextStatus = req.body.status ?? review.status;
+    const updateJob = storage.createEngineJob({
+      moduleKey: review.moduleKey,
+      jobType: "offer-review-status-change",
+      status: "running",
+      dealershipId: review.dealershipId,
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      summary: `Offer review ${review.id} moving to ${nextStatus}`,
+      payload: JSON.stringify({ reviewId: review.id, sourceKey: review.sourceKey, fromStatus: review.status, toStatus: nextStatus }),
+      errorMessage: null,
+    });
+
+    const updated = storage.updateOfferReview(review.id, {
+      status: nextStatus,
+      notes: req.body.notes ?? review.notes,
+      effectiveDate: req.body.effectiveDate ?? review.effectiveDate,
+      expirationDate: req.body.expirationDate ?? review.expirationDate,
+      normalizedPayload: req.body.normalizedPayload ?? review.normalizedPayload,
+      sourcePayload: req.body.sourcePayload ?? review.sourcePayload,
+      sourceUrl: req.body.sourceUrl ?? review.sourceUrl,
+      brand: req.body.brand ?? review.brand,
+      accountName: req.body.accountName ?? review.accountName,
+      offerTitle: req.body.offerTitle ?? review.offerTitle,
+      offerModel: req.body.offerModel ?? review.offerModel,
+      offerType: req.body.offerType ?? review.offerType,
+      sourceId: req.body.sourceId ?? review.sourceId,
+      sourceKey: req.body.sourceKey ?? review.sourceKey,
+      moduleKey: req.body.moduleKey ?? review.moduleKey,
+      jobId: req.body.jobId ?? updateJob.id,
+      dealershipId: req.body.dealershipId ?? review.dealershipId,
+    });
+
+    storage.updateEngineJob(updateJob.id, {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      summary: `Offer review ${review.id} set to ${nextStatus}`,
+    });
+
+    res.json(updated);
   });
 
   app.post("/api/engine/pause", (req, res) => {
@@ -447,6 +527,13 @@ export async function registerRoutes(server: Server, app: Express) {
       })
       .sort((a: any, b: any) => a.dealershipName.localeCompare(b.dealershipName));
     res.json(enriched);
+  });
+
+  app.get("/api/content-engine/offers", (_req, res) => {
+    res.json({
+      stats: storage.getOfferReviewStats(),
+      queue: storage.getOfferReviews({ moduleKey: "content-engine", limit: 12 }),
+    });
   });
 
   // ── CADENCE SETTINGS ─────────────────────────────────────────

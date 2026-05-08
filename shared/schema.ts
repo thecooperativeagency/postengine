@@ -171,3 +171,34 @@ export const insertEngineSourceSchema = createInsertSchema(engineSources).omit({
 });
 export type InsertEngineSource = z.infer<typeof insertEngineSourceSchema>;
 export type EngineSource = typeof engineSources.$inferSelect;
+
+export const offerReviews = sqliteTable("offer_reviews", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sourceId: integer("source_id"),
+  sourceKey: text("source_key").notNull(),
+  moduleKey: text("module_key").notNull(),
+  jobId: integer("job_id"),
+  dealershipId: integer("dealership_id"),
+  brand: text("brand"),
+  accountName: text("account_name"),
+  offerTitle: text("offer_title").notNull(),
+  offerModel: text("offer_model"),
+  offerType: text("offer_type"),
+  status: text("status").notNull().default("detected"),
+  sourceUrl: text("source_url"),
+  sourcePayload: text("source_payload").notNull().default("{}"),
+  normalizedPayload: text("normalized_payload").notNull().default("{}"),
+  effectiveDate: text("effective_date"),
+  expirationDate: text("expiration_date"),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const insertOfferReviewSchema = createInsertSchema(offerReviews).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertOfferReview = z.infer<typeof insertOfferReviewSchema>;
+export type OfferReview = typeof offerReviews.$inferSelect;
