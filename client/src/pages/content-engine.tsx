@@ -93,6 +93,30 @@ interface OfferQueueData {
   }>;
 }
 
+interface BuildPlanData {
+  generatedAt: string;
+  dealerships: Array<{
+    dealershipId: number;
+    dealershipName: string;
+    readyOfferCount: number;
+    channels: Array<{
+      channel: string;
+      channelLabel: string;
+      offerCount: number;
+      offers: Array<{
+        offerReviewId: number;
+        offerTitle: string;
+        offerModel: string | null;
+        offerType: string | null;
+        placement: string;
+        sourceUrl: string | null;
+        expirationDate: string | null;
+        notes: string | null;
+      }>;
+    }>;
+  }>;
+}
+
 interface EngineSourceRow {
   id: number;
   key: string;
@@ -186,6 +210,9 @@ function OfferQueue() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const { data, isLoading } = useQuery<OfferQueueData>({
     queryKey: ["/api/content-engine/offers"],
+  });
+  const { data: buildPlan } = useQuery<BuildPlanData>({
+    queryKey: ["/api/content-engine/build-plan"],
   });
 
   const candidates = data?.candidates ?? [];
@@ -584,6 +611,60 @@ function OfferQueue() {
                       ))}
                     </div>
                   )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="font-medium text-sm">Build-ready BMW manifests</div>
+                <div className="text-xs text-muted-foreground">
+                  This is the final handoff shape for specials-page and sales-email builds.
+                </div>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {buildPlan?.generatedAt ? `Generated ${new Date(buildPlan.generatedAt).toLocaleString()}` : "Waiting for build plan"}
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              {(buildPlan?.dealerships ?? []).map((dealership) => (
+                <div key={dealership.dealershipId} className="rounded-md border p-3 space-y-3">
+                  <div>
+                    <div className="font-medium text-sm">{dealership.dealershipName}</div>
+                    <div className="text-xs text-muted-foreground">{dealership.readyOfferCount} downstream placements ready to build.</div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {dealership.channels.map((channel) => (
+                      <div key={`${dealership.dealershipId}-${channel.channel}`} className="rounded-md border bg-muted/20 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-medium text-sm">{channel.channelLabel}</div>
+                          <Badge variant="outline">{channel.offerCount}</Badge>
+                        </div>
+                        {channel.offerCount === 0 ? (
+                          <div className="text-xs text-muted-foreground">No approved offers assigned here yet.</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {channel.offers.map((offer) => (
+                              <div key={`${channel.channel}-${offer.offerReviewId}-${offer.placement}`} className="rounded-md border bg-background p-2">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="text-sm font-medium">{offer.offerTitle}</div>
+                                  <Badge className="capitalize" variant="secondary">{offer.placement}</Badge>
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {[offer.offerModel, offer.offerType].filter(Boolean).join(" • ")}
+                                  {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
