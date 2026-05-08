@@ -226,3 +226,23 @@ export const insertOfferReviewTargetSchema = createInsertSchema(offerReviewTarge
 });
 export type InsertOfferReviewTarget = z.infer<typeof insertOfferReviewTargetSchema>;
 export type OfferReviewTarget = typeof offerReviewTargets.$inferSelect;
+
+export const offerReviewDownstreamUses = sqliteTable("offer_review_downstream_uses", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  offerReviewId: integer("offer_review_id").notNull(),
+  dealershipId: integer("dealership_id").notNull(),
+  channel: text("channel").notNull(),
+  placement: text("placement").notNull().default("supporting"),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const insertOfferReviewDownstreamUseSchema = createInsertSchema(offerReviewDownstreamUses).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertOfferReviewDownstreamUse = z.infer<typeof insertOfferReviewDownstreamUseSchema>;
+export type OfferReviewDownstreamUse = typeof offerReviewDownstreamUses.$inferSelect;

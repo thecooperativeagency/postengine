@@ -9,6 +9,7 @@ import {
   engineSources,
   offerReviews,
   offerReviewTargets,
+  offerReviewDownstreamUses,
   type Dealership,
   type InsertDealership,
   type Post,
@@ -29,6 +30,8 @@ import {
   type InsertOfferReview,
   type OfferReviewTarget,
   type InsertOfferReviewTarget,
+  type OfferReviewDownstreamUse,
+  type InsertOfferReviewDownstreamUse,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -78,6 +81,8 @@ export interface IStorage {
   getOfferReviewTargets(offerReviewId?: number): OfferReviewTarget[];
   replaceOfferReviewTargets(offerReviewId: number, dealershipIds: number[]): OfferReviewTarget[];
   upsertOfferReviewTarget(data: InsertOfferReviewTarget): OfferReviewTarget;
+  getOfferReviewDownstreamUses(offerReviewId?: number, dealershipId?: number): OfferReviewDownstreamUse[];
+  replaceOfferReviewDownstreamUses(offerReviewId: number, dealershipId: number, uses: Array<{ channel: string; placement: string }>): OfferReviewDownstreamUse[];
   getOfferReviewStats(): {
     total: number;
     detected: number;
@@ -257,6 +262,19 @@ export class DatabaseStorage implements IStorage {
         updated_at TEXT NOT NULL,
         UNIQUE(offer_review_id, dealership_id)
       );
+
+      CREATE TABLE IF NOT EXISTS offer_review_downstream_uses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        offer_review_id INTEGER NOT NULL,
+        dealership_id INTEGER NOT NULL,
+        channel TEXT NOT NULL,
+        placement TEXT NOT NULL DEFAULT 'supporting',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(offer_review_id, dealership_id, channel)
+      );
     `);
 
     const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;
@@ -313,6 +331,11 @@ export class DatabaseStorage implements IStorage {
     sqlite.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_offer_review_targets_offer_dealer
       ON offer_review_targets (offer_review_id, dealership_id);
+    `);
+
+    sqlite.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_offer_review_downstream_uses_offer_dealer_channel
+      ON offer_review_downstream_uses (offer_review_id, dealership_id, channel);
     `);
 
     this.sanitizeLegacyPosts();
@@ -1035,6 +1058,55 @@ export class DatabaseStorage implements IStorage {
       selectionStatus: "selected",
       notes: null,
     }));
+  }
+
+  getOfferReviewDownstreamUses(offerReviewId?: number, dealershipId?: number): OfferReviewDownstreamUse[] {
+    if (offerReviewId && dealershipId) {
+      return db.select()
+        .from(offerReviewDownstreamUses)
+        .where(and(
+          eq(offerReviewDownstreamUses.offerReviewId, offerReviewId),
+          eq(offerReviewDownstreamUses.dealershipId, dealershipId),
+        ))
+        .orderBy(offerReviewDownstreamUses.channel)
+        .all();
+    }
+
+    if (offerReviewId) {
+      return db.select()
+        .from(offerReviewDownstreamUses)
+        .where(eq(offerReviewDownstreamUses.offerReviewId, offerReviewId))
+        .orderBy(offerReviewDownstreamUses.dealershipId, offerReviewDownstreamUses.channel)
+        .all();
+    }
+
+    return db.select()
+      .from(offerReviewDownstreamUses)
+      .orderBy(offerReviewDownstreamUses.offerReviewId, offerReviewDownstreamUses.dealershipId, offerReviewDownstreamUses.channel)
+      .all();
+  }
+
+  replaceOfferReviewDownstreamUses(offerReviewId: number, dealershipId: number, uses: Array<{ channel: string; placement: string }>): OfferReviewDownstreamUse[] {
+    db.delete(offerReviewDownstreamUses).where(and(
+      eq(offerReviewDownstreamUses.offerReviewId, offerReviewId),
+      eq(offerReviewDownstreamUses.dealershipId, dealershipId),
+    )).run();
+
+    const now = new Date().toISOString();
+    const uniqueUses = uses.filter((use, index, array) =>
+      Boolean(use.channel) && Boolean(use.placement) && array.findIndex((entry) => entry.channel === use.channel) === index,
+    );
+
+    return uniqueUses.map((use) => db.insert(offerReviewDownstreamUses).values({
+      offerReviewId,
+      dealershipId,
+      channel: use.channel,
+      placement: use.placement,
+      isActive: true,
+      notes: null,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get());
   }
 
   getOfferReviewStats() {

@@ -664,8 +664,10 @@ export async function registerRoutes(server: Server, app: Express) {
   app.get("/api/content-engine/offers", (_req, res) => {
     const reviews = storage.getOfferReviews({ moduleKey: "content-engine", limit: 150 });
     const targets = storage.getOfferReviewTargets();
+    const downstreamUses = storage.getOfferReviewDownstreamUses();
     const selectionDealerships = storage.getDealerships().filter((dealership) => dealership.brand === "BMW");
     const targetMap = new Map<number, typeof targets>();
+    const downstreamUseMap = new Map<string, typeof downstreamUses>();
 
     for (const target of targets) {
       const existing = targetMap.get(target.offerReviewId) ?? [];
@@ -673,11 +675,24 @@ export async function registerRoutes(server: Server, app: Express) {
       targetMap.set(target.offerReviewId, existing);
     }
 
+    for (const downstreamUse of downstreamUses) {
+      const key = `${downstreamUse.offerReviewId}:${downstreamUse.dealershipId}`;
+      const existing = downstreamUseMap.get(key) ?? [];
+      existing.push(downstreamUse);
+      downstreamUseMap.set(key, existing);
+    }
+
     const attachTargets = (review: OfferReview) => ({
       ...review,
       targets: (targetMap.get(review.id) ?? []).map((target) => ({
         ...target,
         dealershipName: selectionDealerships.find((dealership) => dealership.id === target.dealershipId)?.name ?? "Unknown dealership",
+        downstreamUses: (downstreamUseMap.get(`${review.id}:${target.dealershipId}`) ?? []).map((use) => ({
+          id: use.id,
+          channel: use.channel,
+          placement: use.placement,
+          isActive: use.isActive,
+        })),
       })),
     });
 
@@ -748,6 +763,60 @@ export async function registerRoutes(server: Server, app: Express) {
       targetCount: updatedTargets.length,
       dealershipIds: updatedTargets.map((target) => target.dealershipId),
       targets: updatedTargets,
+    });
+  });
+
+  app.post("/api/content-engine/offers/:id/downstream-uses/:dealershipId", (req, res) => {
+    const reviewId = Number(req.params.id);
+    const dealershipId = Number(req.params.dealershipId);
+    const review = storage.getOfferReview(reviewId);
+    if (!review) return res.status(404).json({ error: "Offer review not found" });
+
+    if (!["approved", "published"].includes(review.status)) {
+      return res.status(400).json({ error: "Downstream use is only available for approved offers" });
+    }
+
+    const targetIds = new Set(storage.getOfferReviewTargets(reviewId).map((target) => target.dealershipId));
+    if (!targetIds.has(dealershipId)) {
+      return res.status(400).json({ error: "Offer must be targeted to this dealership before downstream use is assigned" });
+    }
+
+    const uses = Array.isArray(req.body?.uses)
+      ? req.body.uses
+          .map((use: any) => ({
+            channel: typeof use?.channel === "string" ? use.channel : "",
+            placement: typeof use?.placement === "string" ? use.placement : "supporting",
+          }))
+          .filter((use: { channel: string; placement: string }) => ["specials-page", "sales-email"].includes(use.channel) && ["hero", "primary", "supporting"].includes(use.placement))
+      : [];
+
+    const now = new Date().toISOString();
+    const job = storage.createEngineJob({
+      moduleKey: "content-engine",
+      jobType: "offer-review-downstream-use-update",
+      status: "running",
+      dealershipId,
+      startedAt: now,
+      completedAt: null,
+      summary: `Updating downstream uses for offer review ${review.id}`,
+      payload: JSON.stringify({ reviewId: review.id, dealershipId, uses }),
+      errorMessage: null,
+    });
+
+    const updatedUses = storage.replaceOfferReviewDownstreamUses(review.id, dealershipId, uses);
+    storage.updateEngineJob(job.id, {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      summary: `Set ${updatedUses.length} downstream uses for offer review ${review.id}`,
+      payload: JSON.stringify({ reviewId: review.id, dealershipId, uses: updatedUses.map((use) => ({ channel: use.channel, placement: use.placement })) }),
+    });
+
+    res.json({
+      success: true,
+      reviewId: review.id,
+      dealershipId,
+      useCount: updatedUses.length,
+      uses: updatedUses,
     });
   });
 

@@ -55,6 +55,12 @@ interface OfferQueueData {
       selectionStatus: string;
       notes: string | null;
       dealershipName: string;
+      downstreamUses: Array<{
+        id: number;
+        channel: string;
+        placement: string;
+        isActive: boolean;
+      }>;
     }>;
   }>;
   approved: Array<{
@@ -77,6 +83,12 @@ interface OfferQueueData {
       selectionStatus: string;
       notes: string | null;
       dealershipName: string;
+      downstreamUses: Array<{
+        id: number;
+        channel: string;
+        placement: string;
+        isActive: boolean;
+      }>;
     }>;
   }>;
 }
@@ -181,6 +193,17 @@ function OfferQueue() {
   const selectionDealerships = data?.selectionDealerships ?? [];
 
   const candidateIds = useMemo(() => candidates.map((offer) => offer.id), [candidates]);
+  const downstreamReadyByDealership = useMemo(() => selectionDealerships.map((dealership) => ({
+    ...dealership,
+    offers: approved.flatMap((offer) => offer.targets
+      .filter((target) => target.dealershipId === dealership.id && target.downstreamUses.length > 0)
+      .map((target) => ({
+        offerId: offer.id,
+        offerTitle: offer.offerTitle,
+        offerModel: offer.offerModel,
+        uses: target.downstreamUses,
+      }))),
+  })), [approved, selectionDealerships]);
   const selectedCandidateCount = useMemo(
     () => selectedIds.filter((id) => candidateIds.includes(id)).length,
     [candidateIds, selectedIds],
@@ -225,6 +248,20 @@ function OfferQueue() {
     },
   });
 
+  const downstreamUseMutation = useMutation({
+    mutationFn: async ({ offerId, dealershipId, uses }: { offerId: number; dealershipId: number; uses: Array<{ channel: string; placement: string }> }) => {
+      const res = await apiRequest("POST", `/api/content-engine/offers/${offerId}/downstream-uses/${dealershipId}`, { uses });
+      return res.json();
+    },
+    onSuccess: async (result: { useCount: number }) => {
+      await refreshOfferData();
+      toast({ title: "Downstream plan updated", description: `${result.useCount} downstream uses saved for that dealer offer.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Unable to save downstream plan", description: error.message, variant: "destructive" });
+    },
+  });
+
   const toggleSelected = (offerId: number, checked: boolean) => {
     setSelectedIds((current) => {
       if (checked) {
@@ -251,6 +288,20 @@ function OfferQueue() {
 
   const clearDealershipTargets = (offerId: number) => {
     targetMutation.mutate({ offerId, dealershipIds: [] });
+  };
+
+  const toggleDownstreamUse = (
+    offerId: number,
+    dealershipId: number,
+    currentUses: Array<{ channel: string; placement: string }>,
+    nextUse: { channel: string; placement: string },
+  ) => {
+    const exists = currentUses.some((use) => use.channel === nextUse.channel);
+    const nextUses = exists
+      ? currentUses.filter((use) => use.channel !== nextUse.channel)
+      : [...currentUses.filter((use) => use.channel !== nextUse.channel), nextUse];
+
+    downstreamUseMutation.mutate({ offerId, dealershipId, uses: nextUses });
   };
 
   if (isLoading) return <Skeleton className="h-32 rounded-lg" />;
@@ -445,6 +496,44 @@ function OfferQueue() {
                             ? `Selected for: ${offer.targets.map((target) => target.dealershipName).join(", ")}`
                             : "No dealership targets selected yet. This offer is approved, but not routed to a specific BMW store yet."}
                         </div>
+
+                        {offer.targets.length > 0 ? (
+                          <div className="space-y-2 pt-1">
+                            {offer.targets.map((target) => {
+                              const currentUses = target.downstreamUses.map((use) => ({ channel: use.channel, placement: use.placement }));
+                              const specialsUse = currentUses.find((use) => use.channel === "specials-page");
+                              const emailUse = currentUses.find((use) => use.channel === "sales-email");
+                              return (
+                                <div key={target.id} className="rounded-md border bg-background p-3 space-y-2">
+                                  <div className="font-medium text-xs uppercase tracking-wide text-muted-foreground">{target.dealershipName} downstream plan</div>
+                                  <div className="flex flex-wrap gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant={specialsUse ? "default" : "outline"}
+                                      onClick={() => toggleDownstreamUse(offer.id, target.dealershipId, currentUses, { channel: "specials-page", placement: specialsUse?.placement === "hero" ? "supporting" : "hero" })}
+                                      disabled={downstreamUseMutation.isPending}
+                                    >
+                                      {specialsUse ? `Specials page: ${specialsUse.placement}` : "Use on specials page"}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant={emailUse ? "default" : "outline"}
+                                      onClick={() => toggleDownstreamUse(offer.id, target.dealershipId, currentUses, { channel: "sales-email", placement: emailUse?.placement === "hero" ? "primary" : "hero" })}
+                                      disabled={downstreamUseMutation.isPending}
+                                    >
+                                      {emailUse ? `Sales email: ${emailUse.placement}` : "Use in sales email"}
+                                    </Button>
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {target.downstreamUses.length > 0
+                                      ? target.downstreamUses.map((use) => `${use.channel === "specials-page" ? "specials page" : "sales email"} as ${use.placement}`).join(" • ")
+                                      : "Not yet assigned to a specials page or sales email slot."}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
                       </div>
 
                       <div className="flex flex-wrap gap-2 pt-1">
@@ -467,6 +556,37 @@ function OfferQueue() {
                 })}
               </div>
             )}
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <div>
+              <div className="font-medium text-sm">Downstream build queue</div>
+              <div className="text-xs text-muted-foreground">
+                This is the dealer-by-dealer handoff state for specials pages and sales emails.
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              {downstreamReadyByDealership.map((dealership) => (
+                <div key={dealership.id} className="rounded-md border p-3 space-y-2">
+                  <div className="font-medium text-sm">{dealership.name}</div>
+                  {dealership.offers.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">No approved offers are routed into downstream builds for this store yet.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {dealership.offers.map((offer) => (
+                        <div key={`${dealership.id}-${offer.offerId}`} className="rounded-md border bg-muted/20 p-2">
+                          <div className="text-sm font-medium">{offer.offerTitle}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {offer.uses.map((use) => `${use.channel === "specials-page" ? "specials page" : "sales email"} as ${use.placement}`).join(" • ")}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </CardContent>
       </Card>
