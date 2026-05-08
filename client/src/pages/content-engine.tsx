@@ -309,8 +309,8 @@ function OfferQueue() {
     targetMutation.mutate({ offerId, dealershipIds: nextDealershipIds });
   };
 
-  const setAllDealershipTargets = (offerId: number) => {
-    targetMutation.mutate({ offerId, dealershipIds: selectionDealerships.map((dealership) => dealership.id) });
+  const setAllDealershipTargets = (offerId: number, dealershipIds: number[]) => {
+    targetMutation.mutate({ offerId, dealershipIds });
   };
 
   const clearDealershipTargets = (offerId: number) => {
@@ -465,6 +465,7 @@ function OfferQueue() {
             ) : (
               <div className="space-y-3">
                 {approved.map((offer) => {
+                  const brandDealerships = selectionDealerships.filter((dealership) => !offer.brand || dealership.brand === offer.brand);
                   const selectedDealershipIds = offer.targets.map((target) => target.dealershipId);
                   return (
                     <div key={offer.id} className="rounded-lg border p-3 space-y-3">
@@ -487,12 +488,12 @@ function OfferQueue() {
                           <div>
                             <div className="font-medium text-sm">Dealer selection</div>
                             <div className="text-xs text-muted-foreground">
-                              Pick which BMW stores should use this approved offer downstream.
+                              Pick which {offer.brand || "approved"} stores should use this offer downstream.
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            <Button size="sm" variant="outline" onClick={() => setAllDealershipTargets(offer.id)} disabled={targetMutation.isPending}>
-                              All BMW stores
+                            <Button size="sm" variant="outline" onClick={() => setAllDealershipTargets(offer.id, brandDealerships.map((dealership) => dealership.id))} disabled={targetMutation.isPending || brandDealerships.length === 0}>
+                              All {offer.brand || "selected"} stores
                             </Button>
                             <Button size="sm" variant="ghost" onClick={() => clearDealershipTargets(offer.id)} disabled={targetMutation.isPending || selectedDealershipIds.length === 0}>
                               Clear targets
@@ -501,7 +502,7 @@ function OfferQueue() {
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                          {selectionDealerships.map((dealership) => {
+                          {brandDealerships.map((dealership) => {
                             const isSelected = selectedDealershipIds.includes(dealership.id);
                             return (
                               <Button
@@ -521,7 +522,7 @@ function OfferQueue() {
                         <div className="text-xs text-muted-foreground">
                           {offer.targets.length > 0
                             ? `Selected for: ${offer.targets.map((target) => target.dealershipName).join(", ")}`
-                            : "No dealership targets selected yet. This offer is approved, but not routed to a specific BMW store yet."}
+                            : `No dealership targets selected yet. This ${offer.brand || "approved"} offer is approved, but not routed to a store yet.`}
                         </div>
 
                         {offer.targets.length > 0 ? (
@@ -619,7 +620,7 @@ function OfferQueue() {
           <div className="rounded-lg border p-3 space-y-3">
             <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
               <div>
-                <div className="font-medium text-sm">Build-ready BMW manifests</div>
+                <div className="font-medium text-sm">Build-ready dealership manifests</div>
                 <div className="text-xs text-muted-foreground">
                   This is the final handoff shape for specials-page and sales-email builds.
                 </div>

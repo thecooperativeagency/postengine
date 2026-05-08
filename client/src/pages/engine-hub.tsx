@@ -193,6 +193,20 @@ export default function EngineHub() {
     },
   });
 
+  const audiDetectionMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/engine/detect/audi-offers");
+      return res.json();
+    },
+    onSuccess: async (result: { summary?: string }) => {
+      await refreshEngineData();
+      toast({ title: "Audi detection complete", description: result.summary || "Audi offers imported into review queue." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Audi detection failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   if (isLoading || !data) {
     return (
       <div className="p-6 space-y-4 max-w-[1200px]">
@@ -228,6 +242,9 @@ export default function EngineHub() {
           )}
           <Button variant="outline" onClick={() => bmwDetectionMutation.mutate()} disabled={bmwDetectionMutation.isPending || data.status.paused} data-testid="button-engine-detect-bmw-offers">
             <BookOpen className="h-4 w-4 mr-2" /> Detect BMW Offers
+          </Button>
+          <Button variant="outline" onClick={() => audiDetectionMutation.mutate()} disabled={audiDetectionMutation.isPending || data.status.paused} data-testid="button-engine-detect-audi-offers">
+            <BookOpen className="h-4 w-4 mr-2" /> Detect Audi Offers
           </Button>
           <Button onClick={() => scanMutation.mutate()} disabled={scanMutation.isPending || data.status.paused} data-testid="button-engine-scan">
             <ScanSearch className="h-4 w-4 mr-2" /> Run Drive Scan

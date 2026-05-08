@@ -15,6 +15,7 @@ import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
 import { composePostContent } from "./post-composer";
 import { runBmwOfferDetection } from "./bmw-offers-detector";
+import { runAudiOfferDetection } from "./audi-offers-detector";
 
 export async function registerRoutes(server: Server, app: Express) {
   // ---- Dealerships ----
@@ -458,6 +459,83 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+  app.post("/api/engine/detect/audi-offers", async (_req, res) => {
+    const paused = storage.getAppSetting("imports_paused") === "true";
+    if (paused) {
+      return res.status(409).json({ error: "Imports are paused" });
+    }
+
+    const source = storage.getEngineSourceByKey("audi-offers-page");
+    if (!source) {
+      return res.status(404).json({ error: "Audi offers source is not configured" });
+    }
+
+    const startedAt = new Date().toISOString();
+    const detectionJob = storage.createEngineJob({
+      moduleKey: source.moduleKey,
+      jobType: "audi-offers-detect",
+      status: "running",
+      dealershipId: null,
+      startedAt,
+      completedAt: null,
+      summary: "Audi offer detection started",
+      payload: JSON.stringify({ sourceKey: source.key, sourceUrl: source.sourceUrl }),
+      errorMessage: null,
+    });
+
+    try {
+      const result = await runAudiOfferDetection(storage, source, detectionJob.id);
+      const completedAt = new Date().toISOString();
+      const summary = `Audi detection found ${result.detectedCount} offers (${result.insertedCount} new, ${result.updatedCount} refreshed)`;
+
+      storage.updateEngineSourceByKey(source.key, {
+        status: "active",
+        watcherType: "mirrored-page",
+        accessStatus: "mirrored-text",
+        evidenceNotes: "Direct Audi USA requests remain blocked in this environment, but the r.jina.ai mirrored text path is currently parseable and usable for first-pass ingestion.",
+        lastCheckedAt: completedAt,
+        lastResultSummary: summary,
+        metadata: JSON.stringify({
+          ...(source.metadata ? JSON.parse(source.metadata) : {}),
+          lastDetectionAt: completedAt,
+          mirroredSourceUrl: "https://r.jina.ai/http://https://www.audiusa.com/en/offers/",
+          detectedCount: result.detectedCount,
+          insertedCount: result.insertedCount,
+          updatedCount: result.updatedCount,
+        }),
+      });
+
+      storage.updateEngineJob(detectionJob.id, {
+        status: "completed",
+        completedAt,
+        summary,
+        payload: JSON.stringify({
+          sourceKey: source.key,
+          detectedCount: result.detectedCount,
+          insertedCount: result.insertedCount,
+          updatedCount: result.updatedCount,
+          skippedCount: result.skippedCount,
+        }),
+      });
+
+      res.json({ success: true, sourceKey: source.key, ...result, summary });
+    } catch (error: any) {
+      const completedAt = new Date().toISOString();
+      const message = error instanceof Error ? error.message : String(error);
+      storage.updateEngineSourceByKey(source.key, {
+        lastCheckedAt: completedAt,
+        lastResultSummary: `Audi detection failed: ${message}`,
+      });
+      storage.updateEngineJob(detectionJob.id, {
+        status: "failed",
+        completedAt,
+        summary: "Audi offer detection failed",
+        errorMessage: message,
+      });
+      res.status(500).json({ error: message });
+    }
+  });
+
   app.post("/api/engine/offer-reviews", (req, res) => {
     try {
       const data = insertOfferReviewSchema.parse(req.body);
@@ -665,7 +743,7 @@ export async function registerRoutes(server: Server, app: Express) {
     const reviews = storage.getOfferReviews({ moduleKey: "content-engine", limit: 150 });
     const targets = storage.getOfferReviewTargets();
     const downstreamUses = storage.getOfferReviewDownstreamUses();
-    const selectionDealerships = storage.getDealerships().filter((dealership) => dealership.brand === "BMW");
+    const selectionDealerships = storage.getDealerships().filter((dealership) => ["BMW", "Audi"].includes(dealership.brand));
     const targetMap = new Map<number, typeof targets>();
     const downstreamUseMap = new Map<string, typeof downstreamUses>();
 
@@ -729,11 +807,14 @@ export async function registerRoutes(server: Server, app: Express) {
       ? req.body.dealershipIds.map((id: unknown) => Number(id)).filter((id: number) => Number.isInteger(id) && id > 0)
       : [];
 
-    const allowedDealerships = storage.getDealerships().filter((dealership) => dealership.brand === "BMW");
+    const allowedDealerships = storage.getDealerships().filter((dealership) => {
+      if (!review.brand) return ["BMW", "Audi"].includes(dealership.brand);
+      return dealership.brand === review.brand;
+    });
     const allowedDealershipIds = new Set(allowedDealerships.map((dealership) => dealership.id));
     const invalidDealershipId = dealershipIds.find((id) => !allowedDealershipIds.has(id));
     if (invalidDealershipId) {
-      return res.status(400).json({ error: `Invalid BMW dealership id: ${invalidDealershipId}` });
+      return res.status(400).json({ error: `Invalid ${review.brand || "content-engine"} dealership id: ${invalidDealershipId}` });
     }
 
     const now = new Date().toISOString();
@@ -823,7 +904,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.get("/api/content-engine/build-plan", (_req, res) => {
     const reviews = storage.getOfferReviews({ moduleKey: "content-engine", limit: 300 })
       .filter((review) => ["approved", "published"].includes(review.status));
-    const dealerships = storage.getDealerships().filter((dealership) => dealership.brand === "BMW");
+    const dealerships = storage.getDealerships().filter((dealership) => ["BMW", "Audi"].includes(dealership.brand));
     const targets = storage.getOfferReviewTargets();
     const downstreamUses = storage.getOfferReviewDownstreamUses();
     const reviewMap = new Map(reviews.map((review) => [review.id, review]));
