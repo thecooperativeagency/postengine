@@ -49,6 +49,11 @@ interface EngineHubData {
     sourceType: string;
     status: string;
     target: string;
+    sourceUrl: string | null;
+    accessStatus: string;
+    preferredRank: number | null;
+    updateWindowDays: string;
+    evidenceNotes: string | null;
     cadenceMinutes: number | null;
     lastCheckedAt: string | null;
     lastResultSummary: string | null;
@@ -92,6 +97,16 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
   if (["running", "active", "completed"].includes(status)) return "default";
   if (["paused", "inactive"].includes(status)) return "secondary";
   return "outline";
+}
+
+function formatUpdateWindowDays(value: string) {
+  try {
+    const days = JSON.parse(value) as number[];
+    if (!Array.isArray(days) || days.length === 0) return "No observed window yet";
+    return `Observed refresh window: days ${days.join(", ")}`;
+  } catch {
+    return value;
+  }
 }
 
 export default function EngineHub() {
@@ -164,6 +179,20 @@ export default function EngineHub() {
     },
   });
 
+  const bmwDetectionMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/engine/detect/bmw-offers");
+      return res.json();
+    },
+    onSuccess: async (result: { summary?: string }) => {
+      await refreshEngineData();
+      toast({ title: "BMW detection complete", description: result.summary || "BMW offers imported into review queue." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "BMW detection failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   if (isLoading || !data) {
     return (
       <div className="p-6 space-y-4 max-w-[1200px]">
@@ -197,6 +226,9 @@ export default function EngineHub() {
               <PauseCircle className="h-4 w-4 mr-2" /> Pause Imports
             </Button>
           )}
+          <Button variant="outline" onClick={() => bmwDetectionMutation.mutate()} disabled={bmwDetectionMutation.isPending || data.status.paused} data-testid="button-engine-detect-bmw-offers">
+            <BookOpen className="h-4 w-4 mr-2" /> Detect BMW Offers
+          </Button>
           <Button onClick={() => scanMutation.mutate()} disabled={scanMutation.isPending || data.status.paused} data-testid="button-engine-scan">
             <ScanSearch className="h-4 w-4 mr-2" /> Run Drive Scan
           </Button>
@@ -265,6 +297,17 @@ export default function EngineHub() {
                 </div>
               </div>
               <div className="text-sm">{source.target}</div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <Badge variant="outline">Access: {source.accessStatus}</Badge>
+                <Badge variant="outline">{source.preferredRank ? `Priority ${source.preferredRank}` : "Unranked"}</Badge>
+              </div>
+              {source.sourceUrl ? (
+                <a href={source.sourceUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-block break-all">
+                  {source.sourceUrl}
+                </a>
+              ) : null}
+              <div className="text-xs text-muted-foreground">{formatUpdateWindowDays(source.updateWindowDays)}</div>
+              {source.evidenceNotes ? <div className="text-xs text-muted-foreground">{source.evidenceNotes}</div> : null}
               <div className="text-xs text-muted-foreground">
                 Last checked: {formatDateTime(source.lastCheckedAt)}
                 {source.lastResultSummary ? ` • ${source.lastResultSummary}` : ""}

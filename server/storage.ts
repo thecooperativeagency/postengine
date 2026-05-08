@@ -63,11 +63,14 @@ export interface IStorage {
   createEngineJob(data: InsertEngineJob): EngineJob;
   updateEngineJob(id: number, data: Partial<InsertEngineJob>): EngineJob | undefined;
   getEngineSources(): EngineSource[];
+  getEngineSourceByKey(key: string): EngineSource | undefined;
   createEngineSource(data: InsertEngineSource): EngineSource;
   updateEngineSourceByKey(key: string, data: Partial<InsertEngineSource>): EngineSource | undefined;
   getOfferReviews(filters?: { status?: string; moduleKey?: string; sourceKey?: string; limit?: number }): OfferReview[];
   getOfferReview(id: number): OfferReview | undefined;
+  getOfferReviewBySourceItemKey(sourceItemKey: string): OfferReview | undefined;
   createOfferReview(data: InsertOfferReview): OfferReview;
+  upsertOfferReviewBySourceItemKey(sourceItemKey: string, data: InsertOfferReview): OfferReview;
   updateOfferReview(id: number, data: Partial<InsertOfferReview>): OfferReview | undefined;
   getOfferReviewStats(): {
     total: number;
@@ -201,6 +204,11 @@ export class DatabaseStorage implements IStorage {
         source_type TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'active',
         target TEXT NOT NULL,
+        source_url TEXT,
+        access_status TEXT NOT NULL DEFAULT 'unknown',
+        preferred_rank INTEGER,
+        update_window_days TEXT NOT NULL DEFAULT '[]',
+        evidence_notes TEXT,
         cadence_minutes INTEGER,
         last_checked_at TEXT,
         last_result_summary TEXT,
@@ -213,6 +221,7 @@ export class DatabaseStorage implements IStorage {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         source_id INTEGER,
         source_key TEXT NOT NULL,
+        source_item_key TEXT,
         module_key TEXT NOT NULL,
         job_id INTEGER,
         dealership_id INTEGER,
@@ -258,6 +267,30 @@ export class DatabaseStorage implements IStorage {
     }
     if (!dealershipColumnNames.has("gmb_link")) {
       sqlite.exec(`ALTER TABLE dealerships ADD COLUMN gmb_link TEXT;`);
+    }
+
+    const engineSourceColumns = sqlite.prepare(`PRAGMA table_info(engine_sources)`).all() as Array<{ name: string }>;
+    const engineSourceColumnNames = new Set(engineSourceColumns.map((col) => col.name));
+    if (!engineSourceColumnNames.has("source_url")) {
+      sqlite.exec(`ALTER TABLE engine_sources ADD COLUMN source_url TEXT;`);
+    }
+    if (!engineSourceColumnNames.has("access_status")) {
+      sqlite.exec(`ALTER TABLE engine_sources ADD COLUMN access_status TEXT NOT NULL DEFAULT 'unknown';`);
+    }
+    if (!engineSourceColumnNames.has("preferred_rank")) {
+      sqlite.exec(`ALTER TABLE engine_sources ADD COLUMN preferred_rank INTEGER;`);
+    }
+    if (!engineSourceColumnNames.has("update_window_days")) {
+      sqlite.exec(`ALTER TABLE engine_sources ADD COLUMN update_window_days TEXT NOT NULL DEFAULT '[]';`);
+    }
+    if (!engineSourceColumnNames.has("evidence_notes")) {
+      sqlite.exec(`ALTER TABLE engine_sources ADD COLUMN evidence_notes TEXT;`);
+    }
+
+    const offerReviewColumns = sqlite.prepare(`PRAGMA table_info(offer_reviews)`).all() as Array<{ name: string }>;
+    const offerReviewColumnNames = new Set(offerReviewColumns.map((col) => col.name));
+    if (!offerReviewColumnNames.has("source_item_key")) {
+      sqlite.exec(`ALTER TABLE offer_reviews ADD COLUMN source_item_key TEXT;`);
     }
 
     this.sanitizeLegacyPosts();
@@ -490,11 +523,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   private seedEngineSources() {
-    const count = db.select({ count: sql<number>`count(*)` }).from(engineSources).get();
-    if (count && count.count > 0) return;
-
     const now = new Date().toISOString();
-    db.insert(engineSources).values([
+    const seededSources: InsertEngineSource[] = [
       {
         key: "post-engine-drive-ingestion",
         moduleKey: "post-engine",
@@ -503,44 +533,140 @@ export class DatabaseStorage implements IStorage {
         sourceType: "google-drive",
         status: "active",
         target: "Shared dealership Drive roots",
+        sourceUrl: null,
+        accessStatus: "internal",
+        preferredRank: 1,
+        updateWindowDays: JSON.stringify([]),
+        evidenceNotes: "Existing live ingestion path for dealership creative assets; retained as-is.",
         cadenceMinutes: 30,
         lastCheckedAt: null,
         lastResultSummary: "Ready for manual scans via /api/drive/scan",
         metadata: JSON.stringify({ route: "/api/drive/scan", notes: "Preserves existing Post Engine ingestion flow." }),
-        createdAt: now,
-        updatedAt: now,
       },
       {
-        key: "bmw-offers-watcher",
+        key: "bmw-offers-api",
         moduleKey: "content-engine",
-        name: "BMW Offers Watcher",
-        watcherType: "scaffold",
-        sourceType: "offers-feed",
-        status: "planned",
-        target: "BMW regional / dealer offers inputs",
+        name: "BMW Offers API",
+        watcherType: "api-poll",
+        sourceType: "offers-api",
+        status: "active",
+        target: "BMW USA national new-vehicle offers structured feed",
+        sourceUrl: "https://www.bmwusa.com/offers-api/current-offers/v2?bySeries=true",
+        accessStatus: "reliable",
+        preferredRank: 1,
+        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5]),
+        evidenceNotes: "Preferred structured source. Wayback sampling suggests offer refreshes usually appear near the start of the month, commonly days 1-5; API had a 2026-05-02 snapshot.",
         cadenceMinutes: 1440,
         lastCheckedAt: null,
-        lastResultSummary: "Scaffold only — no live runner yet",
-        metadata: JSON.stringify({ brand: "BMW", intent: "Future offer-change detection for content planning." }),
-        createdAt: now,
-        updatedAt: now,
+        lastResultSummary: "Vetted preferred BMW source; watcher not built yet",
+        metadata: JSON.stringify({
+          brand: "BMW",
+          preferred: true,
+          observedOn: "2026-05-08",
+          observedValidity: "Live offers page said offers valid through June 01, 2026.",
+          firstSeenSnapshotDays: [4, 3, 2, 1, 5, 1, 3, 5, 2],
+        }),
       },
       {
-        key: "audi-offers-watcher",
+        key: "bmw-offers-page",
         moduleKey: "content-engine",
-        name: "Audi Offers Watcher",
-        watcherType: "scaffold",
-        sourceType: "offers-feed",
-        status: "planned",
-        target: "Audi regional / dealer offers inputs",
+        name: "BMW Offers Landing Page",
+        watcherType: "page-reference",
+        sourceType: "offers-page",
+        status: "active",
+        target: "BMW USA public specials/offers page",
+        sourceUrl: "https://www.bmwusa.com/special-offers-new.html",
+        accessStatus: "reference",
+        preferredRank: 2,
+        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5]),
+        evidenceNotes: "Secondary public reference page for verifying live offer windows. Observed on 2026-05-08 with page copy stating offers valid through June 01, 2026.",
         cadenceMinutes: 1440,
         lastCheckedAt: null,
-        lastResultSummary: "Scaffold only — no live runner yet",
-        metadata: JSON.stringify({ brand: "Audi", intent: "Future offer-change detection for content planning." }),
+        lastResultSummary: "Vetted BMW reference page; watcher not built yet",
+        metadata: JSON.stringify({
+          brand: "BMW",
+          preferred: false,
+          observedOn: "2026-05-08",
+          observedValidity: "Offers valid through June 01, 2026.",
+        }),
+      },
+      {
+        key: "audi-offers-page",
+        moduleKey: "content-engine",
+        name: "Audi Offers Page",
+        watcherType: "browser-needed",
+        sourceType: "offers-page",
+        status: "blocked",
+        target: "Audi USA consumer offers landing page",
+        sourceUrl: "https://www.audiusa.com/en/offers/",
+        accessStatus: "blocked-403",
+        preferredRank: 1,
+        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5, 6]),
+        evidenceNotes: "Likely primary consumer offers page, but direct requests from this environment are currently blocked (403 Access Denied). Treat as browser-required / conditional until a browser fetch path exists.",
+        cadenceMinutes: 1440,
+        lastCheckedAt: null,
+        lastResultSummary: "Vetted as likely source, but blocked in current environment",
+        metadata: JSON.stringify({
+          brand: "Audi",
+          preferred: true,
+          observedOn: "2026-05-08",
+          blocker: "403 Access Denied from current environment",
+          archiveUpdateWindow: "Wayback appearances often around days 1-6 with more noise than BMW.",
+        }),
+      },
+      {
+        key: "audi-financial-hub",
+        moduleKey: "content-engine",
+        name: "Audi Financial Services Offers Hub",
+        watcherType: "page-reference",
+        sourceType: "finance-program-page",
+        status: "conditional",
+        target: "Audi USA finance/program offers reference hub",
+        sourceUrl: "https://www.audiusa.com/en/shopping-tools/financial-services-hub/offers-special-programs/",
+        accessStatus: "conditional",
+        preferredRank: 2,
+        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5, 6]),
+        evidenceNotes: "Secondary/reference path for Audi offers and special programs. Useful fallback context, but not yet validated as a stable structured source in this environment.",
+        cadenceMinutes: 1440,
+        lastCheckedAt: null,
+        lastResultSummary: "Reference source only; no watcher built yet",
+        metadata: JSON.stringify({
+          brand: "Audi",
+          preferred: false,
+          observedOn: "2026-05-08",
+          notes: "Use as reference alongside browser-based checks for /en/offers/.",
+        }),
+      },
+    ];
+
+    for (const source of seededSources) {
+      db.insert(engineSources).values({
+        ...source,
         createdAt: now,
         updatedAt: now,
-      },
-    ]).run();
+      }).onConflictDoUpdate({
+        target: engineSources.key,
+        set: {
+          moduleKey: source.moduleKey,
+          name: source.name,
+          watcherType: source.watcherType,
+          sourceType: source.sourceType,
+          status: source.status,
+          target: source.target,
+          sourceUrl: source.sourceUrl ?? null,
+          accessStatus: source.accessStatus,
+          preferredRank: source.preferredRank ?? null,
+          updateWindowDays: source.updateWindowDays,
+          evidenceNotes: source.evidenceNotes ?? null,
+          cadenceMinutes: source.cadenceMinutes ?? null,
+          lastResultSummary: source.lastResultSummary ?? null,
+          metadata: source.metadata,
+          updatedAt: now,
+        },
+      }).run();
+    }
+
+    db.delete(engineSources).where(sql`${engineSources.key} in ('bmw-offers-watcher', 'audi-offers-watcher')`).run();
   }
 
   // Dealerships
@@ -754,7 +880,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   getEngineSources(): EngineSource[] {
-    return db.select().from(engineSources).orderBy(engineSources.moduleKey, engineSources.name).all();
+    return db.select().from(engineSources).orderBy(engineSources.moduleKey, engineSources.preferredRank, engineSources.name).all();
+  }
+
+  getEngineSourceByKey(key: string): EngineSource | undefined {
+    return db.select().from(engineSources).where(eq(engineSources.key, key)).get();
   }
 
   createEngineSource(data: InsertEngineSource): EngineSource {
@@ -799,6 +929,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(offerReviews).where(eq(offerReviews.id, id)).get();
   }
 
+  getOfferReviewBySourceItemKey(sourceItemKey: string): OfferReview | undefined {
+    return db.select().from(offerReviews).where(eq(offerReviews.sourceItemKey, sourceItemKey)).get();
+  }
+
   createOfferReview(data: InsertOfferReview): OfferReview {
     const now = new Date().toISOString();
     return db.insert(offerReviews).values({
@@ -806,6 +940,23 @@ export class DatabaseStorage implements IStorage {
       createdAt: now,
       updatedAt: now,
     }).returning().get();
+  }
+
+  upsertOfferReviewBySourceItemKey(sourceItemKey: string, data: InsertOfferReview): OfferReview {
+    const existing = this.getOfferReviewBySourceItemKey(sourceItemKey);
+    if (existing) {
+      return db.update(offerReviews).set({
+        ...data,
+        sourceItemKey,
+        status: existing.status === "published" ? existing.status : data.status,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(offerReviews.id, existing.id)).returning().get();
+    }
+
+    return this.createOfferReview({
+      ...data,
+      sourceItemKey,
+    });
   }
 
   updateOfferReview(id: number, data: Partial<InsertOfferReview>): OfferReview | undefined {

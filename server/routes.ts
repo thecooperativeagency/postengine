@@ -9,10 +9,12 @@ import {
   insertEngineSourceSchema,
   insertOfferReviewSchema,
 } from "@shared/schema";
+import type { OfferReview } from "@shared/schema";
 import { scanDriveFolders, archiveFile, loadFolders } from "./drive-scanner";
 import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
 import { composePostContent } from "./post-composer";
+import { runBmwOfferDetection } from "./bmw-offers-detector";
 
 export async function registerRoutes(server: Server, app: Express) {
   // ---- Dealerships ----
@@ -384,6 +386,78 @@ export async function registerRoutes(server: Server, app: Express) {
     res.json(storage.getOfferReviewStats());
   });
 
+  app.post("/api/engine/detect/bmw-offers", async (_req, res) => {
+    const paused = storage.getAppSetting("imports_paused") === "true";
+    if (paused) {
+      return res.status(409).json({ error: "Imports are paused" });
+    }
+
+    const source = storage.getEngineSourceByKey("bmw-offers-api");
+    if (!source) {
+      return res.status(404).json({ error: "BMW offers source is not configured" });
+    }
+
+    const startedAt = new Date().toISOString();
+    const detectionJob = storage.createEngineJob({
+      moduleKey: source.moduleKey,
+      jobType: "bmw-offers-detect",
+      status: "running",
+      dealershipId: null,
+      startedAt,
+      completedAt: null,
+      summary: "BMW offer detection started",
+      payload: JSON.stringify({ sourceKey: source.key, sourceUrl: source.sourceUrl }),
+      errorMessage: null,
+    });
+
+    try {
+      const result = await runBmwOfferDetection(storage, source, detectionJob.id);
+      const completedAt = new Date().toISOString();
+      const summary = `BMW detection found ${result.detectedCount} offers (${result.insertedCount} new, ${result.updatedCount} refreshed)`;
+
+      storage.updateEngineSourceByKey(source.key, {
+        lastCheckedAt: completedAt,
+        lastResultSummary: summary,
+        metadata: JSON.stringify({
+          ...(source.metadata ? JSON.parse(source.metadata) : {}),
+          lastDetectionAt: completedAt,
+          detectedCount: result.detectedCount,
+          insertedCount: result.insertedCount,
+          updatedCount: result.updatedCount,
+        }),
+      });
+
+      storage.updateEngineJob(detectionJob.id, {
+        status: "completed",
+        completedAt,
+        summary,
+        payload: JSON.stringify({
+          sourceKey: source.key,
+          detectedCount: result.detectedCount,
+          insertedCount: result.insertedCount,
+          updatedCount: result.updatedCount,
+          skippedCount: result.skippedCount,
+        }),
+      });
+
+      res.json({ success: true, sourceKey: source.key, ...result, summary });
+    } catch (error: any) {
+      const completedAt = new Date().toISOString();
+      const message = error instanceof Error ? error.message : String(error);
+      storage.updateEngineSourceByKey(source.key, {
+        lastCheckedAt: completedAt,
+        lastResultSummary: `BMW detection failed: ${message}`,
+      });
+      storage.updateEngineJob(detectionJob.id, {
+        status: "failed",
+        completedAt,
+        summary: "BMW offer detection failed",
+        errorMessage: message,
+      });
+      res.status(500).json({ error: message });
+    }
+  });
+
   app.post("/api/engine/offer-reviews", (req, res) => {
     try {
       const data = insertOfferReviewSchema.parse(req.body);
@@ -394,12 +468,70 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+  const allowedOfferReviewStatuses = new Set(["detected", "reviewing", "approved", "rejected", "published"]);
+
+  app.post("/api/engine/offer-reviews/bulk-status", (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isInteger(id) && id > 0) : [];
+    const nextStatus = typeof req.body?.status === "string" ? req.body.status : "";
+    const notes = typeof req.body?.notes === "string" ? req.body.notes : undefined;
+
+    if (ids.length === 0) {
+      return res.status(400).json({ error: "At least one offer review id is required" });
+    }
+
+    if (!allowedOfferReviewStatuses.has(nextStatus)) {
+      return res.status(400).json({ error: "Invalid offer review status" });
+    }
+
+    const reviews = ids
+      .map((id: number) => storage.getOfferReview(id))
+      .filter((review: OfferReview | undefined): review is OfferReview => Boolean(review));
+
+    if (reviews.length === 0) {
+      return res.status(404).json({ error: "No matching offer reviews found" });
+    }
+
+    const now = new Date().toISOString();
+    const job = storage.createEngineJob({
+      moduleKey: "content-engine",
+      jobType: "offer-review-bulk-status-change",
+      status: "running",
+      dealershipId: null,
+      startedAt: now,
+      completedAt: null,
+      summary: `Updating ${reviews.length} offer reviews to ${nextStatus}`,
+      payload: JSON.stringify({ ids: reviews.map((review: OfferReview) => review.id), toStatus: nextStatus, notes }),
+      errorMessage: null,
+    });
+
+    const updatedReviews = reviews
+      .map((review: OfferReview) => storage.updateOfferReview(review.id, {
+        status: nextStatus,
+        notes: notes ?? review.notes,
+        jobId: job.id,
+      }))
+      .filter((review: OfferReview | undefined): review is OfferReview => Boolean(review));
+
+    storage.updateEngineJob(job.id, {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      summary: `Set ${updatedReviews.length} offer reviews to ${nextStatus}`,
+      payload: JSON.stringify({ ids: updatedReviews.map((review: OfferReview) => review.id), toStatus: nextStatus, notes }),
+    });
+
+    res.json({
+      success: true,
+      updatedCount: updatedReviews.length,
+      status: nextStatus,
+      reviews: updatedReviews,
+    });
+  });
+
   app.patch("/api/engine/offer-reviews/:id", (req, res) => {
     const review = storage.getOfferReview(Number(req.params.id));
     if (!review) return res.status(404).json({ error: "Not found" });
 
-    const allowedStatuses = new Set(["detected", "reviewing", "approved", "rejected", "published"]);
-    if (req.body.status && !allowedStatuses.has(req.body.status)) {
+    if (req.body.status && !allowedOfferReviewStatuses.has(req.body.status)) {
       return res.status(400).json({ error: "Invalid offer review status" });
     }
 
@@ -530,9 +662,14 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.get("/api/content-engine/offers", (_req, res) => {
+    const reviews = storage.getOfferReviews({ moduleKey: "content-engine", limit: 150 });
+    const candidates = reviews.filter((review) => ["detected", "reviewing"].includes(review.status));
+    const approved = reviews.filter((review) => ["approved", "published"].includes(review.status));
+
     res.json({
       stats: storage.getOfferReviewStats(),
-      queue: storage.getOfferReviews({ moduleKey: "content-engine", limit: 12 }),
+      candidates,
+      approved,
     });
   });
 

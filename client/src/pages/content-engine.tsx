@@ -1,11 +1,15 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   BookOpen, Clock, Camera, Users, Palette, Type, Download, ExternalLink,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface CadenceRow {
   dealershipName: string;
@@ -25,7 +29,7 @@ interface OfferQueueData {
     rejected: number;
     published: number;
   };
-  queue: Array<{
+  candidates: Array<{
     id: number;
     sourceKey: string;
     brand: string | null;
@@ -35,9 +39,50 @@ interface OfferQueueData {
     offerType: string | null;
     status: string;
     sourceUrl: string | null;
+    effectiveDate: string | null;
     expirationDate: string | null;
     updatedAt: string;
   }>;
+  approved: Array<{
+    id: number;
+    sourceKey: string;
+    brand: string | null;
+    accountName: string | null;
+    offerTitle: string;
+    offerModel: string | null;
+    offerType: string | null;
+    status: string;
+    sourceUrl: string | null;
+    effectiveDate: string | null;
+    expirationDate: string | null;
+    updatedAt: string;
+  }>;
+}
+
+interface EngineSourceRow {
+  id: number;
+  key: string;
+  moduleKey: string;
+  name: string;
+  watcherType: string;
+  sourceType: string;
+  status: string;
+  target: string;
+  sourceUrl: string | null;
+  accessStatus: string;
+  preferredRank: number | null;
+  updateWindowDays: string;
+  evidenceNotes: string | null;
+}
+
+function formatUpdateWindowDays(value: string) {
+  try {
+    const days = JSON.parse(value) as number[];
+    if (!Array.isArray(days) || days.length === 0) return "No observed monthly update window yet";
+    return `Observed monthly refresh window: days ${days.join(", ")}`;
+  } catch {
+    return value;
+  }
 }
 
 // ── A. Content Cadence ──────────────────────────────────
@@ -103,54 +148,274 @@ function ContentCadence() {
 }
 
 function OfferQueue() {
+  const { toast } = useToast();
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const { data, isLoading } = useQuery<OfferQueueData>({
     queryKey: ["/api/content-engine/offers"],
   });
+
+  const candidates = data?.candidates ?? [];
+  const approved = data?.approved ?? [];
+
+  const candidateIds = useMemo(() => candidates.map((offer) => offer.id), [candidates]);
+  const selectedCandidateCount = useMemo(
+    () => selectedIds.filter((id) => candidateIds.includes(id)).length,
+    [candidateIds, selectedIds],
+  );
+
+  const refreshOfferData = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["/api/content-engine/offers"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/engine/hub"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/engine/offer-reviews"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/engine/offer-reviews/stats"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/engine/jobs"] }),
+    ]);
+  };
+
+  const bulkStatusMutation = useMutation({
+    mutationFn: async ({ ids, status }: { ids: number[]; status: string }) => {
+      const res = await apiRequest("POST", "/api/engine/offer-reviews/bulk-status", { ids, status });
+      return res.json();
+    },
+    onSuccess: async (result: { updatedCount: number; status: string }) => {
+      setSelectedIds([]);
+      await refreshOfferData();
+      toast({ title: `Updated ${result.updatedCount} offers`, description: `Moved selected offers to ${result.status}.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Unable to update offer approvals", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const toggleSelected = (offerId: number, checked: boolean) => {
+    setSelectedIds((current) => {
+      if (checked) {
+        return current.includes(offerId) ? current : [...current, offerId];
+      }
+      return current.filter((id) => id !== offerId);
+    });
+  };
+
+  const selectAllCandidates = () => setSelectedIds(candidateIds);
+  const clearSelection = () => setSelectedIds([]);
 
   if (isLoading) return <Skeleton className="h-32 rounded-lg" />;
 
   return (
     <div className="space-y-3">
       <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
-        <BookOpen className="h-4 w-4" /> Offer Review Queue
+        <BookOpen className="h-4 w-4" /> Offer Approval Layer
       </h2>
       <Card>
-        <CardContent className="space-y-4 pt-6">
+        <CardHeader>
+          <CardTitle className="text-base">Approve the offers we actually want to run</CardTitle>
+          <CardDescription>
+            Candidates stay here until you check and approve them. Approved offers become the shared downstream pool for specials pages, emails, and related content.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline">Total {data?.stats.total ?? 0}</Badge>
-            <Badge variant="outline">Detected {data?.stats.detected ?? 0}</Badge>
-            <Badge variant="outline">Reviewing {data?.stats.reviewing ?? 0}</Badge>
+            <Badge variant="outline">Awaiting approval {(data?.stats.detected ?? 0) + (data?.stats.reviewing ?? 0)}</Badge>
             <Badge variant="outline">Approved {data?.stats.approved ?? 0}</Badge>
+            <Badge variant="outline">Published {data?.stats.published ?? 0}</Badge>
+            <Badge variant="outline">Rejected {data?.stats.rejected ?? 0}</Badge>
           </div>
 
-          {!data || data.queue.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No offer detections have been written yet. This surface is ready for future BMW/Audi watcher output.</p>
-          ) : (
-            <div className="space-y-3">
-              {data.queue.map((offer) => (
-                <div key={offer.id} className="rounded-lg border p-3 space-y-1">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="font-medium text-sm">{offer.offerTitle}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
-                      </div>
-                    </div>
-                    <Badge variant="outline" className="capitalize">{offer.status}</Badge>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Updated {new Date(offer.updatedAt).toLocaleString()}
-                    {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
-                  </div>
-                  {offer.sourceUrl ? (
-                    <a href={offer.sourceUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-block">
-                      Open source
-                    </a>
-                  ) : null}
+          <div className="rounded-lg border p-3 space-y-3">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="font-medium text-sm">Approval queue</div>
+                <div className="text-xs text-muted-foreground">
+                  {selectedCandidateCount} selected from {candidates.length} current candidates.
                 </div>
-              ))}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={selectAllCandidates} disabled={candidates.length === 0 || bulkStatusMutation.isPending}>
+                  Select all
+                </Button>
+                <Button size="sm" variant="ghost" onClick={clearSelection} disabled={selectedCandidateCount === 0 || bulkStatusMutation.isPending}>
+                  Clear
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => bulkStatusMutation.mutate({ ids: selectedIds, status: "reviewing" })}
+                  disabled={selectedCandidateCount === 0 || bulkStatusMutation.isPending}
+                >
+                  Mark reviewing
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => bulkStatusMutation.mutate({ ids: selectedIds, status: "approved" })}
+                  disabled={selectedCandidateCount === 0 || bulkStatusMutation.isPending}
+                  data-testid="button-content-engine-approve-selected"
+                >
+                  Approve selected
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => bulkStatusMutation.mutate({ ids: selectedIds, status: "rejected" })}
+                  disabled={selectedCandidateCount === 0 || bulkStatusMutation.isPending}
+                >
+                  Reject selected
+                </Button>
+              </div>
             </div>
-          )}
+
+            {candidates.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No offers are waiting for approval right now.</p>
+            ) : (
+              <div className="space-y-3">
+                {candidates.map((offer) => {
+                  const checked = selectedIds.includes(offer.id);
+                  return (
+                    <label key={offer.id} className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-1 h-4 w-4"
+                        checked={checked}
+                        onChange={(event) => toggleSelected(offer.id, event.target.checked)}
+                        data-testid={`checkbox-offer-${offer.id}`}
+                      />
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-medium text-sm">{offer.offerTitle}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
+                            </div>
+                          </div>
+                          <Badge variant="outline" className="capitalize">{offer.status}</Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Updated {new Date(offer.updatedAt).toLocaleString()}
+                          {offer.effectiveDate ? ` • Starts ${new Date(offer.effectiveDate).toLocaleDateString()}` : ""}
+                          {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
+                        </div>
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          <Button size="sm" variant="outline" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "reviewing" }); }} disabled={bulkStatusMutation.isPending || offer.status === "reviewing"}>
+                            Reviewing
+                          </Button>
+                          <Button size="sm" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "approved" }); }} disabled={bulkStatusMutation.isPending || offer.status === "approved"}>
+                            Approve
+                          </Button>
+                          <Button size="sm" variant="destructive" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "rejected" }); }} disabled={bulkStatusMutation.isPending || offer.status === "rejected"}>
+                            Reject
+                          </Button>
+                          {offer.sourceUrl ? (
+                            <Button size="sm" variant="ghost" asChild>
+                              <a href={offer.sourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                                Open source
+                              </a>
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <div>
+              <div className="font-medium text-sm">Approved downstream pool</div>
+              <div className="text-xs text-muted-foreground">
+                These are the offers cleared for use across downstream content.
+              </div>
+            </div>
+
+            {approved.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No offers have been approved yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {approved.map((offer) => (
+                  <div key={offer.id} className="rounded-lg border p-3 space-y-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-sm">{offer.offerTitle}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
+                        </div>
+                      </div>
+                      <Badge variant="outline" className="capitalize">{offer.status}</Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Approved pool updated {new Date(offer.updatedAt).toLocaleString()}
+                      {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <Button size="sm" variant="outline" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "detected" })} disabled={bulkStatusMutation.isPending}>
+                        Move back to queue
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "published" })} disabled={bulkStatusMutation.isPending || offer.status === "published"}>
+                        Mark published
+                      </Button>
+                      {offer.sourceUrl ? (
+                        <Button size="sm" variant="ghost" asChild>
+                          <a href={offer.sourceUrl} target="_blank" rel="noreferrer">
+                            Open source
+                          </a>
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function OfferSources() {
+  const { data, isLoading } = useQuery<EngineSourceRow[]>({
+    queryKey: ["/api/engine/sources"],
+  });
+
+  if (isLoading) return <Skeleton className="h-32 rounded-lg" />;
+
+  const sources = (data ?? []).filter((source) => source.moduleKey === "content-engine");
+
+  return (
+    <div className="space-y-3">
+      <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+        <BookOpen className="h-4 w-4" /> Vetted Offer Sources
+      </h2>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">BMW / Audi source reality</CardTitle>
+          <CardDescription>Read-only vetting metadata for the real offer inputs the future watcher should use.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {sources.map((source) => (
+            <div key={source.id} className="rounded-lg border p-3 space-y-2">
+              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <div className="font-medium text-sm">{source.name}</div>
+                  <div className="text-xs text-muted-foreground">{source.sourceType} • {source.watcherType} • {source.target}</div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline">{source.status}</Badge>
+                  <Badge variant="outline">Access: {source.accessStatus}</Badge>
+                  <Badge variant="outline">{source.preferredRank ? `Priority ${source.preferredRank}` : "Unranked"}</Badge>
+                </div>
+              </div>
+              {source.sourceUrl ? (
+                <a href={source.sourceUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-block break-all">
+                  {source.sourceUrl}
+                </a>
+              ) : null}
+              <div className="text-xs text-muted-foreground">{formatUpdateWindowDays(source.updateWindowDays)}</div>
+              {source.evidenceNotes ? <div className="text-xs text-muted-foreground">{source.evidenceNotes}</div> : null}
+            </div>
+          ))}
         </CardContent>
       </Card>
     </div>
@@ -403,6 +668,8 @@ export default function ContentEngine() {
       <ContentCadence />
       <Separator />
       <OfferQueue />
+      <Separator />
+      <OfferSources />
       <Separator />
       <ActiveShoots />
       <Separator />
