@@ -37,8 +37,10 @@ interface EngineHubData {
     jobType: string;
     status: string;
     summary: string | null;
+    startedAt: string | null;
     createdAt: string;
     completedAt: string | null;
+    errorMessage: string | null;
   }>;
   sources: Array<{
     id: number;
@@ -373,7 +375,6 @@ export default function EngineHub() {
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "reviewing" })} disabled={offerReviewMutation.isPending || review.status === "reviewing"}>Mark Reviewing</Button>
                     <Button size="sm" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "approved" })} disabled={offerReviewMutation.isPending || review.status === "approved"}>Approve</Button>
-                    <Button size="sm" variant="secondary" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "published" })} disabled={offerReviewMutation.isPending || review.status === "published"}>Published</Button>
                     <Button size="sm" variant="destructive" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "rejected" })} disabled={offerReviewMutation.isPending || review.status === "rejected"}>Reject</Button>
                     {review.sourceUrl ? (
                       <Button size="sm" variant="ghost" asChild>
@@ -448,7 +449,11 @@ export default function EngineHub() {
                     <Badge variant={statusVariant(job.status)}>{job.status}</Badge>
                   </div>
                   <div className="text-xs text-muted-foreground">{job.summary || job.moduleKey}</div>
-                  <div className="text-xs text-muted-foreground">Started {formatDateTime(job.createdAt)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    Started {formatDateTime(job.startedAt || job.createdAt)}
+                    {job.completedAt ? ` • Finished ${formatDateTime(job.completedAt)}` : ""}
+                  </div>
+                  {job.errorMessage ? <div className="text-xs text-destructive">{job.errorMessage}</div> : null}
                 </div>
               ))
             )}
