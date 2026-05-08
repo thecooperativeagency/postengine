@@ -663,13 +663,91 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.get("/api/content-engine/offers", (_req, res) => {
     const reviews = storage.getOfferReviews({ moduleKey: "content-engine", limit: 150 });
-    const candidates = reviews.filter((review) => ["detected", "reviewing"].includes(review.status));
-    const approved = reviews.filter((review) => ["approved", "published"].includes(review.status));
+    const targets = storage.getOfferReviewTargets();
+    const selectionDealerships = storage.getDealerships().filter((dealership) => dealership.brand === "BMW");
+    const targetMap = new Map<number, typeof targets>();
+
+    for (const target of targets) {
+      const existing = targetMap.get(target.offerReviewId) ?? [];
+      existing.push(target);
+      targetMap.set(target.offerReviewId, existing);
+    }
+
+    const attachTargets = (review: OfferReview) => ({
+      ...review,
+      targets: (targetMap.get(review.id) ?? []).map((target) => ({
+        ...target,
+        dealershipName: selectionDealerships.find((dealership) => dealership.id === target.dealershipId)?.name ?? "Unknown dealership",
+      })),
+    });
+
+    const candidates = reviews
+      .filter((review) => ["detected", "reviewing"].includes(review.status))
+      .map(attachTargets);
+    const approved = reviews
+      .filter((review) => ["approved", "published"].includes(review.status))
+      .map(attachTargets);
 
     res.json({
       stats: storage.getOfferReviewStats(),
+      selectionDealerships: selectionDealerships.map((dealership) => ({
+        id: dealership.id,
+        name: dealership.name,
+        brand: dealership.brand,
+        location: dealership.location,
+      })),
       candidates,
       approved,
+    });
+  });
+
+  app.post("/api/content-engine/offers/:id/targets", (req, res) => {
+    const reviewId = Number(req.params.id);
+    const review = storage.getOfferReview(reviewId);
+    if (!review) return res.status(404).json({ error: "Offer review not found" });
+
+    if (!["approved", "published"].includes(review.status)) {
+      return res.status(400).json({ error: "Dealer selection is only available for approved offers" });
+    }
+
+    const dealershipIds: number[] = Array.isArray(req.body?.dealershipIds)
+      ? req.body.dealershipIds.map((id: unknown) => Number(id)).filter((id: number) => Number.isInteger(id) && id > 0)
+      : [];
+
+    const allowedDealerships = storage.getDealerships().filter((dealership) => dealership.brand === "BMW");
+    const allowedDealershipIds = new Set(allowedDealerships.map((dealership) => dealership.id));
+    const invalidDealershipId = dealershipIds.find((id) => !allowedDealershipIds.has(id));
+    if (invalidDealershipId) {
+      return res.status(400).json({ error: `Invalid BMW dealership id: ${invalidDealershipId}` });
+    }
+
+    const now = new Date().toISOString();
+    const job = storage.createEngineJob({
+      moduleKey: "content-engine",
+      jobType: "offer-review-target-update",
+      status: "running",
+      dealershipId: null,
+      startedAt: now,
+      completedAt: null,
+      summary: `Updating dealer targets for offer review ${review.id}`,
+      payload: JSON.stringify({ reviewId: review.id, dealershipIds }),
+      errorMessage: null,
+    });
+
+    const updatedTargets = storage.replaceOfferReviewTargets(review.id, dealershipIds);
+    storage.updateEngineJob(job.id, {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      summary: `Set ${updatedTargets.length} dealer targets for offer review ${review.id}`,
+      payload: JSON.stringify({ reviewId: review.id, dealershipIds: updatedTargets.map((target) => target.dealershipId) }),
+    });
+
+    res.json({
+      success: true,
+      reviewId: review.id,
+      targetCount: updatedTargets.length,
+      dealershipIds: updatedTargets.map((target) => target.dealershipId),
+      targets: updatedTargets,
     });
   });
 

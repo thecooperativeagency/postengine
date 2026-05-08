@@ -29,6 +29,12 @@ interface OfferQueueData {
     rejected: number;
     published: number;
   };
+  selectionDealerships: Array<{
+    id: number;
+    name: string;
+    brand: string;
+    location: string;
+  }>;
   candidates: Array<{
     id: number;
     sourceKey: string;
@@ -42,6 +48,14 @@ interface OfferQueueData {
     effectiveDate: string | null;
     expirationDate: string | null;
     updatedAt: string;
+    targets: Array<{
+      id: number;
+      offerReviewId: number;
+      dealershipId: number;
+      selectionStatus: string;
+      notes: string | null;
+      dealershipName: string;
+    }>;
   }>;
   approved: Array<{
     id: number;
@@ -56,6 +70,14 @@ interface OfferQueueData {
     effectiveDate: string | null;
     expirationDate: string | null;
     updatedAt: string;
+    targets: Array<{
+      id: number;
+      offerReviewId: number;
+      dealershipId: number;
+      selectionStatus: string;
+      notes: string | null;
+      dealershipName: string;
+    }>;
   }>;
 }
 
@@ -156,6 +178,7 @@ function OfferQueue() {
 
   const candidates = data?.candidates ?? [];
   const approved = data?.approved ?? [];
+  const selectionDealerships = data?.selectionDealerships ?? [];
 
   const candidateIds = useMemo(() => candidates.map((offer) => offer.id), [candidates]);
   const selectedCandidateCount = useMemo(
@@ -188,6 +211,20 @@ function OfferQueue() {
     },
   });
 
+  const targetMutation = useMutation({
+    mutationFn: async ({ offerId, dealershipIds }: { offerId: number; dealershipIds: number[] }) => {
+      const res = await apiRequest("POST", `/api/content-engine/offers/${offerId}/targets`, { dealershipIds });
+      return res.json();
+    },
+    onSuccess: async (result: { targetCount: number }) => {
+      await refreshOfferData();
+      toast({ title: "Dealer targets updated", description: `${result.targetCount} dealership targets saved for this approved offer.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Unable to save dealer targets", description: error.message, variant: "destructive" });
+    },
+  });
+
   const toggleSelected = (offerId: number, checked: boolean) => {
     setSelectedIds((current) => {
       if (checked) {
@@ -199,6 +236,22 @@ function OfferQueue() {
 
   const selectAllCandidates = () => setSelectedIds(candidateIds);
   const clearSelection = () => setSelectedIds([]);
+
+  const toggleDealershipTarget = (offerId: number, dealershipId: number, selectedDealershipIds: number[]) => {
+    const nextDealershipIds = selectedDealershipIds.includes(dealershipId)
+      ? selectedDealershipIds.filter((id) => id !== dealershipId)
+      : [...selectedDealershipIds, dealershipId];
+
+    targetMutation.mutate({ offerId, dealershipIds: nextDealershipIds });
+  };
+
+  const setAllDealershipTargets = (offerId: number) => {
+    targetMutation.mutate({ offerId, dealershipIds: selectionDealerships.map((dealership) => dealership.id) });
+  };
+
+  const clearDealershipTargets = (offerId: number) => {
+    targetMutation.mutate({ offerId, dealershipIds: [] });
+  };
 
   if (isLoading) return <Skeleton className="h-32 rounded-lg" />;
 
@@ -333,38 +386,85 @@ function OfferQueue() {
               <p className="text-sm text-muted-foreground">No offers have been approved yet.</p>
             ) : (
               <div className="space-y-3">
-                {approved.map((offer) => (
-                  <div key={offer.id} className="rounded-lg border p-3 space-y-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-medium text-sm">{offer.offerTitle}</div>
+                {approved.map((offer) => {
+                  const selectedDealershipIds = offer.targets.map((target) => target.dealershipId);
+                  return (
+                    <div key={offer.id} className="rounded-lg border p-3 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-sm">{offer.offerTitle}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
+                          </div>
+                        </div>
+                        <Badge variant="outline" className="capitalize">{offer.status}</Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Approved pool updated {new Date(offer.updatedAt).toLocaleString()}
+                        {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
+                      </div>
+
+                      <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div className="font-medium text-sm">Dealer selection</div>
+                            <div className="text-xs text-muted-foreground">
+                              Pick which BMW stores should use this approved offer downstream.
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button size="sm" variant="outline" onClick={() => setAllDealershipTargets(offer.id)} disabled={targetMutation.isPending}>
+                              All BMW stores
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => clearDealershipTargets(offer.id)} disabled={targetMutation.isPending || selectedDealershipIds.length === 0}>
+                              Clear targets
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          {selectionDealerships.map((dealership) => {
+                            const isSelected = selectedDealershipIds.includes(dealership.id);
+                            return (
+                              <Button
+                                key={dealership.id}
+                                size="sm"
+                                variant={isSelected ? "default" : "outline"}
+                                onClick={() => toggleDealershipTarget(offer.id, dealership.id, selectedDealershipIds)}
+                                disabled={targetMutation.isPending}
+                                data-testid={`button-offer-${offer.id}-dealer-${dealership.id}`}
+                              >
+                                {dealership.name}
+                              </Button>
+                            );
+                          })}
+                        </div>
+
                         <div className="text-xs text-muted-foreground">
-                          {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
+                          {offer.targets.length > 0
+                            ? `Selected for: ${offer.targets.map((target) => target.dealershipName).join(", ")}`
+                            : "No dealership targets selected yet. This offer is approved, but not routed to a specific BMW store yet."}
                         </div>
                       </div>
-                      <Badge variant="outline" className="capitalize">{offer.status}</Badge>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Approved pool updated {new Date(offer.updatedAt).toLocaleString()}
-                      {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
-                    </div>
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      <Button size="sm" variant="outline" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "detected" })} disabled={bulkStatusMutation.isPending}>
-                        Move back to queue
-                      </Button>
-                      <Button size="sm" variant="secondary" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "published" })} disabled={bulkStatusMutation.isPending || offer.status === "published"}>
-                        Mark published
-                      </Button>
-                      {offer.sourceUrl ? (
-                        <Button size="sm" variant="ghost" asChild>
-                          <a href={offer.sourceUrl} target="_blank" rel="noreferrer">
-                            Open source
-                          </a>
+
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <Button size="sm" variant="outline" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "detected" })} disabled={bulkStatusMutation.isPending || targetMutation.isPending}>
+                          Move back to queue
                         </Button>
-                      ) : null}
+                        <Button size="sm" variant="secondary" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "published" })} disabled={bulkStatusMutation.isPending || targetMutation.isPending || offer.status === "published"}>
+                          Mark published
+                        </Button>
+                        {offer.sourceUrl ? (
+                          <Button size="sm" variant="ghost" asChild>
+                            <a href={offer.sourceUrl} target="_blank" rel="noreferrer">
+                              Open source
+                            </a>
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

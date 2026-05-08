@@ -8,6 +8,7 @@ import {
   engineJobs,
   engineSources,
   offerReviews,
+  offerReviewTargets,
   type Dealership,
   type InsertDealership,
   type Post,
@@ -26,6 +27,8 @@ import {
   type InsertEngineSource,
   type OfferReview,
   type InsertOfferReview,
+  type OfferReviewTarget,
+  type InsertOfferReviewTarget,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -72,6 +75,9 @@ export interface IStorage {
   createOfferReview(data: InsertOfferReview): OfferReview;
   upsertOfferReviewBySourceItemKey(sourceItemKey: string, data: InsertOfferReview): OfferReview;
   updateOfferReview(id: number, data: Partial<InsertOfferReview>): OfferReview | undefined;
+  getOfferReviewTargets(offerReviewId?: number): OfferReviewTarget[];
+  replaceOfferReviewTargets(offerReviewId: number, dealershipIds: number[]): OfferReviewTarget[];
+  upsertOfferReviewTarget(data: InsertOfferReviewTarget): OfferReviewTarget;
   getOfferReviewStats(): {
     total: number;
     detected: number;
@@ -240,6 +246,17 @@ export class DatabaseStorage implements IStorage {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS offer_review_targets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        offer_review_id INTEGER NOT NULL,
+        dealership_id INTEGER NOT NULL,
+        selection_status TEXT NOT NULL DEFAULT 'selected',
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(offer_review_id, dealership_id)
+      );
     `);
 
     const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;
@@ -292,6 +309,11 @@ export class DatabaseStorage implements IStorage {
     if (!offerReviewColumnNames.has("source_item_key")) {
       sqlite.exec(`ALTER TABLE offer_reviews ADD COLUMN source_item_key TEXT;`);
     }
+
+    sqlite.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_offer_review_targets_offer_dealer
+      ON offer_review_targets (offer_review_id, dealership_id);
+    `);
 
     this.sanitizeLegacyPosts();
     this.seedEngineModules();
@@ -964,6 +986,55 @@ export class DatabaseStorage implements IStorage {
       ...data,
       updatedAt: new Date().toISOString(),
     }).where(eq(offerReviews.id, id)).returning().get();
+  }
+
+  getOfferReviewTargets(offerReviewId?: number): OfferReviewTarget[] {
+    if (offerReviewId) {
+      return db.select()
+        .from(offerReviewTargets)
+        .where(eq(offerReviewTargets.offerReviewId, offerReviewId))
+        .orderBy(offerReviewTargets.dealershipId)
+        .all();
+    }
+
+    return db.select()
+      .from(offerReviewTargets)
+      .orderBy(offerReviewTargets.offerReviewId, offerReviewTargets.dealershipId)
+      .all();
+  }
+
+  upsertOfferReviewTarget(data: InsertOfferReviewTarget): OfferReviewTarget {
+    const now = new Date().toISOString();
+    const existing = db.select().from(offerReviewTargets).where(and(
+      eq(offerReviewTargets.offerReviewId, data.offerReviewId),
+      eq(offerReviewTargets.dealershipId, data.dealershipId),
+    )).get();
+
+    if (existing) {
+      return db.update(offerReviewTargets).set({
+        selectionStatus: data.selectionStatus,
+        notes: data.notes,
+        updatedAt: now,
+      }).where(eq(offerReviewTargets.id, existing.id)).returning().get();
+    }
+
+    return db.insert(offerReviewTargets).values({
+      ...data,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+  }
+
+  replaceOfferReviewTargets(offerReviewId: number, dealershipIds: number[]): OfferReviewTarget[] {
+    db.delete(offerReviewTargets).where(eq(offerReviewTargets.offerReviewId, offerReviewId)).run();
+
+    const uniqueDealershipIds = Array.from(new Set(dealershipIds.filter((id) => Number.isInteger(id) && id > 0)));
+    return uniqueDealershipIds.map((dealershipId) => this.upsertOfferReviewTarget({
+      offerReviewId,
+      dealershipId,
+      selectionStatus: "selected",
+      notes: null,
+    }));
   }
 
   getOfferReviewStats() {
