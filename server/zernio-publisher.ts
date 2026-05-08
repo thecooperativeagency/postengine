@@ -5,6 +5,7 @@
  */
 
 import { storage } from "./storage";
+import { composePostContent } from "./post-composer";
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
@@ -302,6 +303,7 @@ export async function publishPost(postId: number): Promise<{ success: boolean; r
   const accountMap = getAccountMap();
   const dealershipKey = getDealershipKey(post.dealershipId);
   const accounts = accountMap[dealershipKey];
+  const dealership = storage.getDealership(post.dealershipId);
 
   if (!accounts) {
     console.error(`[Zernio] No account mapping for dealership ${post.dealershipId}`);
@@ -328,12 +330,13 @@ export async function publishPost(postId: number): Promise<{ success: boolean; r
       continue;
     }
 
-    // Use platform-specific caption
-    let caption = post.caption || "";
-    if (platform === "googlebusiness" && (post as any).captionGmb) {
-      caption = (post as any).captionGmb;
-    } else if (platform === "facebook" && (post as any).captionFacebook) {
-      caption = (post as any).captionFacebook;
+    const composed = composePostContent(post, dealership);
+
+    let caption = composed.instagram;
+    if (platform === "googlebusiness") {
+      caption = composed.googlebusiness;
+    } else if (platform === "facebook") {
+      caption = composed.facebook;
     }
 
     console.log(`[Zernio] Publishing to ${platform} (${accountId})...`);

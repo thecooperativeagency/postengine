@@ -56,7 +56,7 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
     queryKey: ["/api/dealerships"],
   });
 
-  const queryParams = new URLSearchParams({ status: "pending_review" });
+  const queryParams = new URLSearchParams({ status: "queued" });
   if (dealershipFilter) queryParams.set("dealershipId", dealershipFilter.toString());
 
   const { data: posts, isLoading } = useQuery<Post[]>({
@@ -122,7 +122,7 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
             Review Queue
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Posts awaiting approval
+            Imported posts awaiting review before scheduling
           </p>
         </div>
         {selectedIds.length > 0 && (
@@ -189,9 +189,6 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
                   <p className="text-sm text-foreground/80 leading-relaxed line-clamp-4">
                     {post.caption}
                   </p>
-                )}
-                {post.hashtags && (
-                  <p className="text-xs text-primary">{post.hashtags}</p>
                 )}
 
                 {/* Meta */}

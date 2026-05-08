@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   FileText,
@@ -8,11 +8,16 @@ import {
   CheckCircle2,
   PlusCircle,
   Activity,
+  Play,
+  Pause,
+  RefreshCw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Dealership, ActivityLog } from "@shared/schema";
 
 interface DashboardData {
@@ -29,6 +34,12 @@ interface DashboardData {
     draftCount: number;
   })[];
   recentActivity: ActivityLog[];
+}
+
+interface EngineStatus {
+  paused: boolean;
+  lastRunAt: string | null;
+  lastRunCount: string | null;
 }
 
 const kpiItems = [
@@ -61,8 +72,56 @@ function getActionBadgeVariant(action: string): "default" | "secondary" | "destr
 }
 
 export default function Dashboard({ dealershipFilter }: { dealershipFilter: number | null }) {
+  const { toast } = useToast();
   const { data, isLoading } = useQuery<DashboardData>({
     queryKey: ["/api/dashboard"],
+  });
+
+  const { data: engineStatus } = useQuery<EngineStatus>({
+    queryKey: ["/api/engine/status"],
+  });
+
+  const refreshAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/engine/status"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/posts"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/dealerships"] });
+  };
+
+  const runFreshMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/drive/scan");
+      return res.json();
+    },
+    onSuccess: (result: any) => {
+      refreshAll();
+      toast({ title: "Fresh run complete", description: result?.message || "Scan finished" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Run failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const pauseMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/engine/pause");
+      return res.json();
+    },
+    onSuccess: () => {
+      refreshAll();
+      toast({ title: "Imports paused" });
+    },
+  });
+
+  const resumeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/engine/resume");
+      return res.json();
+    },
+    onSuccess: () => {
+      refreshAll();
+      toast({ title: "Imports resumed" });
+    },
   });
 
   if (isLoading) {
@@ -115,6 +174,65 @@ export default function Dashboard({ dealershipFilter }: { dealershipFilter: numb
           </Link>
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium">Switchboard</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-xs text-muted-foreground space-y-1">
+            <p>
+              Status: {engineStatus?.paused ? "Paused" : "Ready"}
+            </p>
+            <p>
+              Last run: {engineStatus?.lastRunAt ? `${formatTimeAgo(engineStatus.lastRunAt)} • ${engineStatus.lastRunCount ?? "0"} imported` : "No recent run"}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              onClick={() => runFreshMutation.mutate()}
+              disabled={!!engineStatus?.paused || runFreshMutation.isPending}
+              data-testid="button-run-fresh"
+            >
+              <Play className="h-4 w-4 mr-1.5" />
+              Run Fresh
+            </Button>
+            {engineStatus?.paused ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => resumeMutation.mutate()}
+                disabled={resumeMutation.isPending}
+                data-testid="button-resume-imports"
+              >
+                <Play className="h-4 w-4 mr-1.5" />
+                Resume
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => pauseMutation.mutate()}
+                disabled={pauseMutation.isPending}
+                data-testid="button-pause-imports"
+              >
+                <Pause className="h-4 w-4 mr-1.5" />
+                Pause
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={refreshAll}
+              data-testid="button-refresh-dashboard"
+            >
+              <RefreshCw className="h-4 w-4 mr-1.5" />
+              Refresh
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">

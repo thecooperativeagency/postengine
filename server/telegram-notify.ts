@@ -6,6 +6,7 @@
 
 import fs from "fs";
 import path from "path";
+import { composePostContent } from "./post-composer";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "8767648441";
@@ -27,7 +28,8 @@ export async function sendApprovalRequest(post: any, dealershipName: string): Pr
     return false;
   }
 
-  const caption = post.caption?.substring(0, 800) || "";
+  const composed = composePostContent(post);
+  const caption = composed.instagram.substring(0, 800) || "";
   const scheduledDate = post.scheduledFor
     ? new Date(post.scheduledFor).toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : "ASAP";

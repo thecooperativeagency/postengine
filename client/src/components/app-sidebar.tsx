@@ -4,6 +4,7 @@ import {
   PlusCircle,
   ClipboardCheck,
   CalendarDays,
+  Boxes,
   BookOpen,
   Settings,
   Building2,
@@ -39,6 +40,7 @@ const navItems = [
   { title: "New Post", url: "/posts/new", icon: PlusCircle },
   { title: "Review Queue", url: "/queue", icon: ClipboardCheck },
   { title: "Calendar", url: "/calendar", icon: CalendarDays },
+  { title: "Engine Hub", url: "/engine", icon: Boxes },
   { title: "Content Engine", url: "/content-engine", icon: BookOpen },
   { title: "Settings", url: "/settings", icon: Settings },
 ];

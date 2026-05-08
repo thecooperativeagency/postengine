@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Save, Building2, Key, FolderOpen, Instagram, Facebook, Video,
   Calendar, Plus, Trash2, Clock, CheckSquare, Camera, AlertCircle,
@@ -23,6 +23,19 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Dealership, CadenceSetting } from "@shared/schema";
+
+type DriveConfig = {
+  account: string;
+  parentFolderId: string | null;
+  parentFolderName: string | null;
+  dealerships: Array<{
+    id: number;
+    name: string;
+    brand: string | null;
+    rootFolderId: string;
+    folders: Record<string, string>;
+  }>;
+};
 
 const POST_TYPES = ["New Cars", "Pre-Owned Cars", "Service", "Parts & Accessories"];
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
@@ -333,9 +346,35 @@ function DealershipCard({ dealership }: { dealership: Dealership }) {
       instagramHandle: dealership.instagramHandle || "",
       facebookPage: dealership.facebookPage || "",
       tiktokHandle: dealership.tiktokHandle || "",
-      captionTemplate: dealership.captionTemplate || "",
+      instagramCta: (dealership as any).instagramCta || (dealership as any).captionTemplate || "",
+      facebookCta: (dealership as any).facebookCta || "",
+      gmbCta: (dealership as any).gmbCta || "",
+      captionSpec: (dealership as any).captionSpec || "",
+      hashtagTemplate: (dealership as any).hashtagTemplate || "",
+      gmbSpec: (dealership as any).gmbSpec || "",
+      facebookLink: (dealership as any).facebookLink || "",
+      gmbLink: (dealership as any).gmbLink || "",
     },
   });
+
+  useEffect(() => {
+    form.reset({
+      name: dealership.name,
+      domain: dealership.domain,
+      location: dealership.location,
+      instagramHandle: dealership.instagramHandle || "",
+      facebookPage: dealership.facebookPage || "",
+      tiktokHandle: dealership.tiktokHandle || "",
+      instagramCta: (dealership as any).instagramCta || (dealership as any).captionTemplate || "",
+      facebookCta: (dealership as any).facebookCta || "",
+      gmbCta: (dealership as any).gmbCta || "",
+      captionSpec: (dealership as any).captionSpec || "",
+      hashtagTemplate: (dealership as any).hashtagTemplate || "",
+      gmbSpec: (dealership as any).gmbSpec || "",
+      facebookLink: (dealership as any).facebookLink || "",
+      gmbLink: (dealership as any).gmbLink || "",
+    });
+  }, [dealership, form]);
 
   const updateMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -418,12 +457,58 @@ function DealershipCard({ dealership }: { dealership: Dealership }) {
                   </FormItem>
                 )} />
               </div>
-              <FormField control={form.control} name="captionTemplate" render={({ field }) => (
+              <div className="grid grid-cols-1 gap-3">
+                <FormField control={form.control} name="instagramCta" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">Instagram CTA</FormLabel>
+                    <FormControl><Textarea {...field} className="min-h-[60px] text-sm" /></FormControl>
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="facebookCta" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">Facebook CTA</FormLabel>
+                    <FormControl><Textarea {...field} className="min-h-[60px] text-sm" /></FormControl>
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="gmbCta" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">GMB CTA</FormLabel>
+                    <FormControl><Textarea {...field} className="min-h-[60px] text-sm" /></FormControl>
+                  </FormItem>
+                )} />
+              </div>
+              <FormField control={form.control} name="captionSpec" render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-xs">CTA Template</FormLabel>
-                  <FormControl><Textarea {...field} className="min-h-[60px] text-sm" /></FormControl>
+                  <FormLabel className="text-xs">Caption Spec</FormLabel>
+                  <FormControl><Textarea {...field} className="min-h-[90px] text-sm" /></FormControl>
                 </FormItem>
               )} />
+              <FormField control={form.control} name="hashtagTemplate" render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-xs">Hashtag Rules / Default Hashtags</FormLabel>
+                  <FormControl><Textarea {...field} className="min-h-[70px] text-sm" /></FormControl>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="gmbSpec" render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-xs">GMB Spec</FormLabel>
+                  <FormControl><Textarea {...field} className="min-h-[80px] text-sm" /></FormControl>
+                </FormItem>
+              )} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <FormField control={form.control} name="facebookLink" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">Facebook Link</FormLabel>
+                    <FormControl><Input {...field} className="h-8 text-sm" /></FormControl>
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="gmbLink" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">GMB Link</FormLabel>
+                    <FormControl><Input {...field} className="h-8 text-sm" /></FormControl>
+                  </FormItem>
+                )} />
+              </div>
             </form>
           </Form>
         </CardContent>
@@ -435,6 +520,10 @@ function DealershipCard({ dealership }: { dealership: Dealership }) {
 export default function Settings() {
   const { data: dealerships, isLoading } = useQuery<Dealership[]>({
     queryKey: ["/api/dealerships"],
+  });
+
+  const { data: driveConfig } = useQuery<DriveConfig>({
+    queryKey: ["/api/drive/config"],
   });
 
   if (isLoading) {
@@ -517,11 +606,25 @@ export default function Settings() {
             <CardDescription className="text-xs">Content source folders configured</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-1 text-xs text-muted-foreground">
-              <p>📁 Brian Harris BMW — New Cars, Pre-Owned, Service, Parts</p>
-              <p>📁 BMW of Jackson — New Cars, Pre-Owned, Service, Parts</p>
-              <p>📁 Audi Baton Rouge — New Cars, Pre-Owned, Service, Parts</p>
-              <p>📁 Harris Porsche — New Cars, Pre-Owned, Service, Parts</p>
+            <div className="space-y-3 text-xs text-muted-foreground">
+              <div className="space-y-1">
+                <p><span className="font-medium text-foreground">Account:</span> {driveConfig?.account ?? "lance@thecoopbrla.com"}</p>
+                <p><span className="font-medium text-foreground">Parent folder:</span> {driveConfig?.parentFolderName ?? "Postengine"}</p>
+                {driveConfig?.parentFolderId && (
+                  <p className="font-mono text-[11px]">ID: {driveConfig.parentFolderId}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                {driveConfig?.dealerships.map((dealer) => {
+                  const folderNames = Object.keys(dealer.folders).filter((name) => name !== "Customer Media");
+                  return (
+                    <div key={dealer.id} className="rounded-md border border-border/60 p-2">
+                      <p className="font-medium text-foreground">📁 {dealer.name}</p>
+                      <p>{folderNames.join(", ")}</p>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </CardContent>
         </Card>

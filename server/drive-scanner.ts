@@ -23,10 +23,12 @@ interface DealershipFolders {
 
 interface DriveFolders {
   account: string;
+  parentFolderId?: string;
+  parentFolderName?: string;
   dealerships: Record<string, DealershipFolders>;
 }
 
-function loadFolders(): DriveFolders {
+export function loadFolders(): DriveFolders {
   const raw = fs.readFileSync(DRIVE_FOLDERS_PATH, "utf-8");
   return JSON.parse(raw);
 }
@@ -71,6 +73,51 @@ export function moveFile(fileId: string, targetFolderId: string): boolean {
 function parseFileName(fileName: string): string {
   const name = fileName.replace(/\.[^/.]+$/, "");
   return name.replace(/[-_]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function classifyAssetPostType(basePostType: string, vehicleInfo: string, dealershipBrand?: string): string {
+  const normalized = vehicleInfo.toLowerCase();
+
+  if (basePostType === "Parts & Accessories") {
+    const lifestyleSignals = [
+      "lifestyle",
+      "porschelifestyle",
+      "collection",
+      "1948",
+      "rexy",
+      "shirt",
+      "shirts",
+      "tee",
+      "tees",
+      "hat",
+      "hats",
+      "cap",
+      "caps",
+      "apparel",
+      "merch",
+      "hoodie",
+      "hoodies",
+      "jacket",
+      "jackets",
+      "bag",
+      "bags",
+    ];
+
+    if (lifestyleSignals.some((signal) => normalized.includes(signal))) {
+      return "Lifestyle";
+    }
+  }
+
+  return basePostType;
+}
+
+function shuffleArray<T>(items: T[]): T[] {
+  const shuffled = [...items];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
 }
 
 function buildCaption(
@@ -187,21 +234,22 @@ export async function scanDriveFolders(): Promise<number> {
         continue;
       }
 
-      // Take only what we need
-      const filesToUse = newFiles.slice(0, slotsToFill);
+      // Randomize eligible files first so imports are spread across the folder
+      const filesToUse = shuffleArray(newFiles).slice(0, slotsToFill);
 
-      // Get schedule dates
+      // Get proposed schedule dates for reviewer visibility; approval moves posts onto the actual schedule.
       const scheduleDates = getNextScheduleDates(days, filesToUse.length, rule.autoTime, rule.manualTime);
 
       for (let i = 0; i < filesToUse.length; i++) {
         const file = filesToUse[i];
         const vehicleInfo = parseFileName(file.name);
+        const resolvedPostType = classifyAssetPostType(postType, vehicleInfo, dealership.brand);
 
         // Generate captions for each platform
         const [captionIG, captionFB, captionGMB] = await Promise.all([
-          generateCaption({ dealershipName, brand: dealership.brand, postType, vehicleInfo, platform: "instagram", tone: "punchy" }),
-          generateCaption({ dealershipName, brand: dealership.brand, postType, vehicleInfo, platform: "facebook", tone: "punchy" }),
-          generateCaption({ dealershipName, brand: dealership.brand, postType, vehicleInfo, platform: "googlebusiness", tone: "professional" }),
+          generateCaption({ dealershipName, brand: dealership.brand, postType: resolvedPostType, vehicleInfo, platform: "instagram", tone: "punchy", captionSpec: (dealership as any).captionSpec, gmbSpec: (dealership as any).gmbSpec }),
+          generateCaption({ dealershipName, brand: dealership.brand, postType: resolvedPostType, vehicleInfo, platform: "facebook", tone: "punchy", captionSpec: (dealership as any).captionSpec, gmbSpec: (dealership as any).gmbSpec }),
+          generateCaption({ dealershipName, brand: dealership.brand, postType: resolvedPostType, vehicleInfo, platform: "googlebusiness", tone: "professional", captionSpec: (dealership as any).captionSpec, gmbSpec: (dealership as any).gmbSpec }),
         ]);
 
         // Upload image to GitHub for public hosting
@@ -212,27 +260,29 @@ export async function scanDriveFolders(): Promise<number> {
 
         const scheduledFor = scheduleDates[i] || null;
 
+        const instagramCta = (dealership as any).instagramCta || (dealership as any).captionTemplate || "";
+
         storage.createPost({
           dealershipId: dealership.id,
-          status: scheduledFor ? "queued" : "draft",
-          postType,
+          status: "queued",
+          postType: resolvedPostType,
           vehicleInfo,
           caption: captionIG,
           captionFacebook: captionFB,
           captionGmb: captionGMB,
           hashtags: null,
-          ctaBlock: dealership.captionTemplate,
+          ctaBlock: instagramCta,
           mediaUrls,
           mediaType: file.mimeType?.startsWith("video/") ? "video" : "image",
           platforms: rule.platforms,
           scheduledFor,
           publishedAt: null,
           folderSource: `${folderId}/${file.id}`,
-          notes: `Auto-imported: ${dealershipName} / ${postType} / ${file.name}`,
+          notes: `Auto-imported: ${dealershipName} / ${postType} → ${resolvedPostType} / ${file.name}`,
         });
 
         newPostsCreated++;
-        console.log(`[DriveScanner] Created post: ${dealershipName} / ${postType} / ${file.name} → ${scheduledFor || "draft"}`);
+        console.log(`[DriveScanner] Created review-queue post: ${dealershipName} / ${postType} → ${resolvedPostType} / ${file.name} → ${scheduledFor || "unscheduled"}`);
       }
     }
   }

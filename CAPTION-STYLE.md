@@ -2,33 +2,36 @@
 
 ## Lance's Rules
 - **Punchy and effective** — no fluff, no filler, every word earns its place
-- **Rain the day** — bold energy, confidence, not corporate-bland
-- **SEO/AIO optimized** — write for people searching social (Instagram, Facebook, TikTok search)
-  - Include the brand name (e.g. "BMW of Jackson", "Brian Harris BMW")
+- **Short wins** — most captions should feel clean, fast, and easy to read at a glance
+- **Bold, confident, modern** — premium without sounding stiff or bloated
+- **Less dealer-y** — let the visual do more of the work
+- **SEO/AIO optimized** — write for people searching social, but do it lightly
+  - Include the brand name when it matters
   - Include model names when relevant (X3, Q5, 911, etc.)
-  - Include location signals (Baton Rouge, Jackson MS, Louisiana)
-  - Use terms people actually search: "new BMW", "Audi SUV deals", "Porsche for sale"
-  - Hashtags should reinforce search, not just be decorative
+  - Include location naturally, not forcefully
+  - Hashtags should reinforce search, not weigh the caption down
 
 ## Format
-- **Hook first** — first line stops the scroll. Bold claim, question, or statement.
-- **Body** — 1-3 lines max. Say the thing. Don't explain the thing.
-- **CTA** — short and direct. "DM us." "Link in bio." "Come see it." Not "Click the link in our bio to learn more about this amazing vehicle!"
-- **Hashtags** — 5-10, mix of brand + model + location + intent
-  - Example: #BMWJackson #BMW #BMWX3 #NewBMW #JacksonMS #LuxuryCars #BMWDealer
+- **Hook first** — first line stops the scroll. Short statement beats a paragraph.
+- **Body** — usually 1-2 short lines. Rarely 3. Say it fast.
+- **CTA** — optional and minimal. Only use one when it actually helps.
+- **Hashtags** — usually 2-4, occasionally 5 max. Keep them useful.
+  - Example: #AudiBatonRouge #AudiQ5 #LuxurySUV
 
 ## Tone by Brand
-- **BMW** — performance-forward, aspirational but not pretentious. "Built for this."
-- **Audi** — sophisticated, design-conscious. "Progress looks like this."
-- **Porsche** — legacy meets fire. Emotional. "Some machines are just different."
-- **All** — Lance's voice: direct, confident, no corporate BS
+- **BMW** — performance-forward, sharp, confident. Clean swagger.
+- **Audi** — sophisticated, restrained, design-conscious. Clean statement energy.
+- **Porsche** — emotional, precise, premium. More intensity, less noise.
+- **All** — direct, confident, no corporate BS
 
 ## What to Avoid
 - "We're excited to announce..."
 - "Stop by and see us today!"
 - "This amazing vehicle..."
+- Long CTA blocks
+- Caption bloat
 - Stock photo energy (we don't use stock — captions should match)
-- Overly long captions that nobody reads
+- Over-explaining what the photo already shows
 
 ## SEO/AIO Keywords by Store
 ### Brian Harris BMW (Baton Rouge)

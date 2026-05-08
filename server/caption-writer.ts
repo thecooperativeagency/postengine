@@ -27,6 +27,8 @@ interface CaptionRequest {
   vehicleInfo: string; // parsed from file name
   platform: string; // instagram, facebook, googlebusiness
   tone?: string; // minimal, punchy, detailed (default: punchy)
+  captionSpec?: string | null;
+  gmbSpec?: string | null;
 }
 
 interface CaptionResult {
@@ -36,97 +38,94 @@ interface CaptionResult {
 }
 
 const BMW_CTA: Record<string, string> = {
-  "Brian Harris BMW": `Click here --> @brianharrisbmw then click the linkin.bio to browse and click on the link of this post.\n\nThank you for making Brian Harris BMW a 2024 Center of Excellence Dealer.`,
-  "BMW of Jackson": `Click here --> @bmwofjackson then click the linkin.bio to browse and click on the link of this post.`,
+  "Brian Harris BMW": ``,
+  "BMW of Jackson": ``,
 };
 
-const AUDI_CTA = `Click here --> @audibatonrouge then click the linkin.bio to browse and click on the link of this post.\n\nThank you for making Audi Baton Rouge your Magna Society Dealer.`;
+const AUDI_CTA = ``;
 
-const PORSCHE_CTA = `Click here --> @harris_porsche then click the linkin.bio to browse and click on the link of this post.\n\nExperience the Harris Family Difference.`;
+const PORSCHE_CTA = ``;
 
-function buildSystemPrompt(brand: string, dealershipName: string): string {
+function buildSystemPrompt(brand: string, dealershipName: string, captionSpec?: string | null, gmbSpec?: string | null): string {
   const bodyRules = `
 CAPTION BODY RULES (non-negotiable):
-- Maximum 2-3 sentences in the body. Never longer.
-- Lead with the vehicle — make, model, standout feature or emotion.
-- One strong hook: performance, lifestyle, prestige, or seasonal.
+- Keep it short. Usually 1-2 short lines.
+- Lead with the vehicle, the feeling, or a clean statement.
+- One strong hook: performance, design, lifestyle, prestige, or seasonal relevance.
 - No filler phrases. No "We are excited to" or "Stop by today to".
-- Punchy over poetic. Short sentences hit harder.
-- Professional luxury tone — sharp, confident, never try-hard.
+- Punchy over poetic. Confident over explanatory.
+- Premium tone. Clean, current, and easy to read.
+- Minimal CTA. No bloated dealer instruction blocks.
+- Return only the caption for the requested platform. Do not include Twitter/X versions, labels, separators, or alternate variants.
+- Do not invent specs unless they are explicitly provided in the prompt.
+- Do not include hashtags.
 `;
 
+  const dealershipRules = captionSpec ? `\nDEALERSHIP CAPTION SPEC:\n${captionSpec}\n` : "";
+  const gmbRules = gmbSpec ? `\nGMB-SPECIFIC RULES:\n${gmbSpec}\n` : "";
+
   if (brand === "Porsche") {
-    return `You are AutoCaption for Harris Porsche — a marketing director and luxury content strategist writing social media captions for a Porsche dealership. Your primary focus is to craft engaging, performance-driven captions that reflect the precision, heritage, and sporting spirit of Porsche. Write around 40 words per caption, highlighting standout specifications like horsepower, torque, acceleration, and engineering details when relevant. Weave in luxury, lifestyle, and seasonal references while maintaining an aspirational yet approachable tone.
-${bodyRules}
+    return `You are AutoCaption for Harris Porsche — a marketing director and luxury content strategist writing social media captions for a Porsche dealership. Your primary focus is to craft engaging, performance-driven captions that reflect the precision, heritage, and sporting spirit of Porsche. Write around 40 words per caption when appropriate, highlighting standout specifications only when they are explicitly provided. Weave in luxury, lifestyle, and seasonal references while maintaining an aspirational yet approachable tone.
+${bodyRules}${dealershipRules}${gmbRules}
 
-When given a Porsche model, reply immediately with the caption text only (no prefaces, labels, or quotes), followed by a Twitter-optimized version that's shorter, energetic, and includes a direct call-to-action. Each main caption should end with 6 trending hashtags related to Porsche, the model, and competitive marques, ensuring they're current on TikTok.
+If the prompt starts with 'GMB', write a Google My Business caption that fits update descriptions, omitting the CTA block and all hashtags.
 
-Between the caption and hashtags, insert this dealership line:
-
-${PORSCHE_CTA}
-
-If the prompt starts with 'GMB', write a Google My Business caption that fits update descriptions, omitting the 'Click here' line. Emphasize clarity, professionalism, and luxury storytelling while staying grounded in Porsche performance and prestige.
-
-Respond only with captions. No prefaces, labels, or quotation marks.`;
+Respond only with the single requested caption. No prefaces, labels, quotation marks, separators, or alternate versions.`;
   }
 
   if (brand === "Audi") {
     return `You are AutoCaption — a marketing director at a luxury auto dealer, skilled in creating high-impact social media captions for luxury cars. Caption length, tone, and style are dynamically adjusted based on the user's instruction. Captions should highlight performance, luxury features, brand prestige, and relevant lifestyle or seasonal elements when appropriate. Keep wording sharp and intentional.
-${bodyRules}
+${bodyRules}${dealershipRules}${gmbRules}
 Provide tailored messaging for Audi vehicles.
 
-End each caption with exactly 6 trending hashtags relevant to the vehicle, segment, and competitors.
+If the prompt begins with 'GMB', create a Google My Business caption without the CTA block or hashtags.
 
-Immediately follow each caption with a shorter Twitter/X version: very concise, includes 1–2 hashtags and a clear call to action.
+Only reference exact vehicle specs when they are explicitly provided in the prompt.
 
-Audi-specific requirement: Insert the following call-to-action after the main caption body and before hashtags, with spacing preserved:
-
-${AUDI_CTA}
-
-If the prompt begins with 'GMB', create a Google My Business caption without the CTA block.
-
-For the 2025 Audi Q5, incorporate key specs including 268 hp, quattro AWD, redesigned styling, OLED lighting, and advanced interior tech when relevant.
-
-Respond only with captions. No prefaces, labels, or quotation marks.`;
+Respond only with the single requested caption. No prefaces, labels, quotation marks, separators, or alternate versions.`;
   }
 
   // BMW (default)
-  const bmwCta = BMW_CTA[dealershipName] || BMW_CTA["Brian Harris BMW"];
   return `You are AutoCaption — a marketing director at a luxury auto dealer, skilled in creating high-impact social media captions for luxury cars. Caption length, tone, and style are dynamically adjusted based on the user's instruction. Captions should highlight performance, luxury features, brand prestige, and relevant lifestyle or seasonal elements when appropriate. Keep wording sharp and intentional.
-${bodyRules}
+${bodyRules}${dealershipRules}${gmbRules}
 Provide tailored messaging for BMW vehicles.
 
-End each caption with exactly 6 trending hashtags relevant to the vehicle, segment, and competitors.
+If the prompt begins with 'GMB', create a Google My Business caption without the CTA block or hashtags.
 
-Immediately follow each caption with a shorter Twitter/X version: very concise, includes 1–2 hashtags and a clear call to action.
+Only reference exact vehicle specs when they are explicitly provided in the prompt.
 
-BMW-specific requirement: Insert the following call-to-action after the main caption body and before hashtags, with spacing preserved:
-
-${bmwCta}
-
-If the prompt begins with 'GMB', create a Google My Business caption without the CTA block.
-
-Respond only with captions. No prefaces, labels, or quotation marks.`;
+Respond only with the single requested caption. No prefaces, labels, quotation marks, separators, or alternate versions.`;
 }
 
 function buildUserPrompt(req: CaptionRequest): string {
   const toneStr = req.tone || "punchy";
   const isGMB = req.platform === "googlebusiness";
+  const normalizedVehicleInfo = req.vehicleInfo.toLowerCase();
+  const isPorscheLifestyle = req.brand === "Porsche" && (
+    normalizedVehicleInfo.includes("porschelifestyle") ||
+    normalizedVehicleInfo.includes("lifestyle") ||
+    normalizedVehicleInfo.includes("rexy") ||
+    normalizedVehicleInfo.includes("1948") ||
+    normalizedVehicleInfo.includes("collection")
+  );
 
   const typeContext: Record<string, string> = {
     "New Cars": "new vehicle available now",
     "Pre-Owned Cars": "pre-owned vehicle available",
     "Service": "service department promotion",
     "Parts & Accessories": "parts and accessories",
+    "Lifestyle": "lifestyle collection, apparel, merchandise, or branded accessories",
   };
 
-  const context = typeContext[req.postType] || req.postType;
+  const context = isPorscheLifestyle
+    ? "Porsche Lifestyle collection for the owner: apparel, hats, bags, merch, and branded lifestyle accessories. This is not a car parts post. Do not mention vehicle upgrades, service parts, performance parts, OEM parts, or engineering components. Write about clothing, personal accessories, giftable merch, and brand lifestyle appeal."
+    : (typeContext[req.postType] || req.postType);
 
   if (isGMB) {
-    return `GMB ${req.vehicleInfo} — ${context}. Write a professional Google My Business update post. Max 250 characters. No hashtags. No @ mentions. No CTA link. Professional luxury tone only.`;
+    return `GMB ${req.vehicleInfo} — ${context}. Write a professional Google My Business update post. Max 250 characters. No hashtags. No @ mentions. No CTA link. Professional luxury tone only.${req.gmbSpec ? ` Follow these dealership GMB rules: ${req.gmbSpec}` : ""}`;
   }
 
-  return `${req.vehicleInfo} — ${context}. Tone: ${toneStr}.`;
+  return `${req.vehicleInfo} — ${context}. Tone: ${toneStr}.${req.captionSpec ? ` Dealership caption rules: ${req.captionSpec}` : ""}`;
 }
 
 export async function generateCaption(req: CaptionRequest): Promise<string> {
@@ -137,7 +136,7 @@ export async function generateCaption(req: CaptionRequest): Promise<string> {
   }
 
   try {
-    const systemPrompt = buildSystemPrompt(req.brand, req.dealershipName);
+    const systemPrompt = buildSystemPrompt(req.brand, req.dealershipName, req.captionSpec, req.gmbSpec);
     const userPrompt = buildUserPrompt(req);
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -167,21 +166,28 @@ function buildFallbackCaption(req: CaptionRequest): string {
   const { brand, dealershipName, vehicleInfo, postType, platform } = req;
   const isGMB = platform === "googlebusiness";
 
+  const normalizedVehicleInfo = vehicleInfo.toLowerCase();
+  const isPorscheLifestyle = brand === "Porsche" && (
+    normalizedVehicleInfo.includes("porschelifestyle") ||
+    normalizedVehicleInfo.includes("lifestyle") ||
+    normalizedVehicleInfo.includes("rexy") ||
+    normalizedVehicleInfo.includes("1948") ||
+    normalizedVehicleInfo.includes("collection")
+  );
+
   const intros: Record<string, string> = {
     "New Cars": `The ${vehicleInfo} is here.`,
     "Pre-Owned Cars": `Now available: ${vehicleInfo}.`,
     "Service": `${vehicleInfo} — trusted service at ${dealershipName}.`,
     "Parts & Accessories": `${vehicleInfo} — now in stock at ${dealershipName}.`,
+    "Lifestyle": `${vehicleInfo} — lifestyle gear now featured at ${dealershipName}.`,
   };
 
-  const intro = intros[postType] || `${vehicleInfo} at ${dealershipName}.`;
+  const intro = isPorscheLifestyle
+    ? `${vehicleInfo} — Porsche Lifestyle apparel and branded accessories for the owner.`
+    : (intros[postType] || `${vehicleInfo} at ${dealershipName}.`);
 
-  if (isGMB) return `${intro} Visit us at ${dealershipName} for more information.`; // No hashtags, no CTA link on GMB
+  if (isGMB) return `${intro} Visit ${dealershipName} for more information.`;
 
-  let cta = "";
-  if (brand === "Porsche") cta = `\n\n${PORSCHE_CTA}`;
-  else if (brand === "Audi") cta = `\n\n${AUDI_CTA}`;
-  else cta = `\n\n${BMW_CTA[dealershipName] || BMW_CTA["Brian Harris BMW"]}`;
-
-  return `${intro}${cta}`;
+  return `${intro}`;
 }

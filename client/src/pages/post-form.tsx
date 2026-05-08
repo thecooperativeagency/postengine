@@ -37,8 +37,8 @@ const formSchema = z.object({
   postType: z.string().min(1),
   vehicleInfo: z.string().optional(),
   caption: z.string().optional(),
+  captionFacebook: z.string().optional(),
   captionGmb: z.string().optional(),
-  hashtags: z.string().optional(),
   ctaBlock: z.string().optional(),
   platforms: z.array(z.string()).min(1, "Select at least one platform"),
   scheduledFor: z.string().optional(),
@@ -83,7 +83,8 @@ export default function PostForm() {
       postType: "inventory",
       vehicleInfo: "",
       caption: "",
-      hashtags: "",
+      captionFacebook: "",
+      captionGmb: "",
       ctaBlock: "",
       platforms: ["instagram", "facebook", "googlebusiness"],
       scheduledFor: "",
@@ -106,8 +107,8 @@ export default function PostForm() {
         postType: existingPost.postType,
         vehicleInfo: existingPost.vehicleInfo || "",
         caption: existingPost.caption || "",
+        captionFacebook: (existingPost as any).captionFacebook || "",
         captionGmb: (existingPost as any).captionGmb || "",
-        hashtags: existingPost.hashtags || "",
         ctaBlock: existingPost.ctaBlock || "",
         platforms,
         scheduledFor: existingPost.scheduledFor
@@ -124,8 +125,8 @@ export default function PostForm() {
   useEffect(() => {
     if (watchDealershipId && dealerships && !isEdit) {
       const d = dealerships.find((d) => d.id === watchDealershipId);
-      if (d?.captionTemplate) {
-        form.setValue("ctaBlock", d.captionTemplate);
+      if (d) {
+        form.setValue("ctaBlock", (d as any).instagramCta || (d as any).captionTemplate || "");
       }
     }
   }, [watchDealershipId, dealerships, form, isEdit]);
@@ -176,10 +177,33 @@ export default function PostForm() {
   }
 
   const watchCaption = form.watch("caption");
-  const watchHashtags = form.watch("hashtags");
+  const watchCaptionFacebook = form.watch("captionFacebook");
+  const watchCaptionGmb = form.watch("captionGmb");
   const watchCtaBlock = form.watch("ctaBlock");
   const watchVehicle = form.watch("vehicleInfo");
   const selectedDealership = dealerships?.find((d) => d.id === watchDealershipId);
+
+  const cleanText = (value?: string) => (value || "").trim();
+  const stripHashtagLines = (text: string | undefined) => {
+    if (!text) return "";
+    return text
+      .split(/\n+/)
+      .filter((part) => !part.trim().startsWith("#"))
+      .join("\n\n")
+      .trim();
+  };
+  const joinPreviewParts = (...parts: Array<string | undefined>) =>
+    parts.map((part) => cleanText(part)).filter(Boolean).join("\n\n");
+
+  const instagramCta = cleanText(watchCtaBlock || (selectedDealership as any)?.instagramCta || (selectedDealership as any)?.captionTemplate || "");
+  const facebookCta = cleanText((selectedDealership as any)?.facebookCta || instagramCta || "");
+  const gmbCta = cleanText((selectedDealership as any)?.gmbCta || instagramCta || "");
+  const facebookLink = cleanText((selectedDealership as any)?.facebookLink || "");
+  const gmbLink = cleanText((selectedDealership as any)?.gmbLink || "");
+
+  const instagramPreview = joinPreviewParts(stripHashtagLines(watchCaption), instagramCta);
+  const facebookPreview = joinPreviewParts(stripHashtagLines(watchCaptionFacebook || watchCaption), facebookLink, facebookCta);
+  const gmbPreview = joinPreviewParts(stripHashtagLines(watchCaptionGmb), gmbLink, gmbCta);
 
   return (
     <div className="p-6 space-y-4 max-w-[1200px]">
@@ -327,20 +351,6 @@ export default function PostForm() {
                             {...field}
                             data-testid="textarea-caption-gmb"
                           />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="hashtags"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Hashtags</FormLabel>
-                        <FormControl>
-                          <Input placeholder="#BMW #LuxurySUV #BatonRouge ..." {...field} data-testid="input-hashtags" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -505,10 +515,10 @@ export default function PostForm() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
                   <Eye className="h-4 w-4" />
-                  Preview
+                  Platform Previews
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-4">
                 {selectedDealership && (
                   <div className="flex items-center gap-2 pb-3 border-b">
                     <span
@@ -522,33 +532,36 @@ export default function PostForm() {
                   </div>
                 )}
 
-                {watchVehicle && (
-                  <p className="text-sm font-medium" data-testid="text-preview-vehicle">
-                    {watchVehicle}
-                  </p>
-                )}
+                {(watchCaption || watchCaptionGmb || watchVehicle) ? (
+                  <div className="space-y-4">
+                    <div className="rounded-lg border p-3 space-y-2">
+                      <div className="text-xs font-semibold">Instagram Preview</div>
+                      {instagramPreview && (
+                        <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap" data-testid="text-preview-instagram-caption">
+                          {instagramPreview}
+                        </p>
+                      )}
+                    </div>
 
-                {watchCaption && (
-                  <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap" data-testid="text-preview-caption">
-                    {watchCaption}
-                  </p>
-                )}
+                    <div className="rounded-lg border p-3 space-y-2">
+                      <div className="text-xs font-semibold">Facebook Preview</div>
+                      {facebookPreview && (
+                        <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap" data-testid="text-preview-facebook-caption">
+                          {facebookPreview}
+                        </p>
+                      )}
+                    </div>
 
-                {watchHashtags && (
-                  <p className="text-xs text-primary" data-testid="text-preview-hashtags">
-                    {watchHashtags}
-                  </p>
-                )}
-
-                {watchCtaBlock && (
-                  <div className="pt-2 border-t">
-                    <p className="text-xs text-muted-foreground whitespace-pre-wrap" data-testid="text-preview-cta">
-                      {watchCtaBlock}
-                    </p>
+                    <div className="rounded-lg border p-3 space-y-2">
+                      <div className="text-xs font-semibold">Google Business Preview</div>
+                      {gmbPreview && (
+                        <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap" data-testid="text-preview-gmb-caption">
+                          {gmbPreview}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                )}
-
-                {!watchCaption && !watchVehicle && (
+                ) : (
                   <div className="py-8 text-center text-sm text-muted-foreground">
                     Start typing to see a preview
                   </div>

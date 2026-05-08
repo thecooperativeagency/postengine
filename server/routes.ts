@@ -1,10 +1,17 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
-import { insertPostSchema, insertDealershipSchema } from "@shared/schema";
-import { scanDriveFolders, archiveFile } from "./drive-scanner";
+import {
+  insertPostSchema,
+  insertDealershipSchema,
+  insertEngineModuleSchema,
+  insertAccountModuleSchema,
+  insertEngineSourceSchema,
+} from "@shared/schema";
+import { scanDriveFolders, archiveFile, loadFolders } from "./drive-scanner";
 import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
+import { composePostContent } from "./post-composer";
 
 export async function registerRoutes(server: Server, app: Express) {
   // ---- Dealerships ----
@@ -53,7 +60,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.get("/api/posts/:id", (req, res) => {
     const post = storage.getPost(Number(req.params.id));
     if (!post) return res.status(404).json({ error: "Not found" });
-    res.json(post);
+    res.json({ ...post, composedContent: composePostContent(post) });
   });
 
   app.post("/api/posts", (req, res) => {
@@ -121,6 +128,9 @@ export async function registerRoutes(server: Server, app: Express) {
     if (!Array.isArray(ids)) return res.status(400).json({ error: "ids must be an array" });
     const results = [];
     for (const id of ids) {
+      const existing = storage.getPost(Number(id));
+      if (!existing) continue;
+
       const updated = storage.updatePost(id, { status: "scheduled" });
       if (updated) {
         storage.logActivity({
@@ -129,6 +139,16 @@ export async function registerRoutes(server: Server, app: Express) {
           action: "scheduled",
           details: `Post approved & scheduled: ${updated.vehicleInfo || updated.postType}`,
         });
+
+        if (existing.status !== "scheduled" && updated.folderSource) {
+          try {
+            archiveFile(updated.dealershipId, updated.folderSource);
+            console.log(`[Archive] Moved file to _Archive for post ${updated.id} via bulk approve`);
+          } catch (e) {
+            console.error(`[Archive] Failed to move file during bulk approve:`, e);
+          }
+        }
+
         results.push(updated);
       }
     }
@@ -226,11 +246,184 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ── DRIVE SCANNER ───────────────────────────────────────────
-  app.post("/api/drive/scan", async (req, res) => {
+  app.get("/api/drive/config", (_req, res) => {
     try {
-      const count = await scanDriveFolders();
-      res.json({ success: true, newPosts: count, message: `Created ${count} new draft post(s) from Drive` });
+      const config = loadFolders();
+      const dealerships = storage.getDealerships();
+      const items = Object.entries(config.dealerships)
+        .map(([name, folderConfig]) => {
+          const dealer = dealerships.find(d => d.id === folderConfig.id);
+          return {
+            id: folderConfig.id,
+            name,
+            brand: dealer?.brand ?? null,
+            rootFolderId: folderConfig.root,
+            folders: folderConfig.folders,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      res.json({
+        account: config.account,
+        parentFolderId: config.parentFolderId ?? null,
+        parentFolderName: config.parentFolderName ?? null,
+        dealerships: items,
+      });
     } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/engine/status", (_req, res) => {
+    const paused = storage.getAppSetting("imports_paused") === "true";
+    const lastRunAt = storage.getAppSetting("last_scan_at") || null;
+    const lastRunCount = storage.getAppSetting("last_scan_count") || null;
+    res.json({ paused, lastRunAt, lastRunCount });
+  });
+
+  app.get("/api/engine/hub", (_req, res) => {
+    const modules = storage.getEngineModules();
+    const dealerships = storage.getDealerships();
+    const accountModules = storage.getAccountModules();
+    const jobs = storage.getEngineJobs(12);
+    const sources = storage.getEngineSources();
+    const paused = storage.getAppSetting("imports_paused") === "true";
+    const lastRunAt = storage.getAppSetting("last_scan_at") || null;
+    const lastRunCount = storage.getAppSetting("last_scan_count") || null;
+
+    const accounts = dealerships.map((dealership) => ({
+      id: dealership.id,
+      name: dealership.name,
+      brand: dealership.brand,
+      modules: modules.map((module) => {
+        const accountModule = accountModules.find(
+          (item) => item.dealershipId === dealership.id && item.moduleKey === module.key,
+        );
+
+        return {
+          moduleKey: module.key,
+          isEnabled: accountModule?.isEnabled ?? false,
+          settings: accountModule?.settings ?? "{}",
+        };
+      }),
+    }));
+
+    res.json({
+      status: { paused, lastRunAt, lastRunCount },
+      modules,
+      accounts,
+      jobs,
+      sources,
+    });
+  });
+
+  app.get("/api/engine/modules", (_req, res) => {
+    res.json(storage.getEngineModules());
+  });
+
+  app.post("/api/engine/modules", (req, res) => {
+    try {
+      const data = insertEngineModuleSchema.parse(req.body);
+      const module = storage.createEngineModule(data);
+      res.status(201).json(module);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/engine/account-modules", (req, res) => {
+    const dealershipId = req.query.dealershipId ? Number(req.query.dealershipId) : undefined;
+    res.json(storage.getAccountModules(dealershipId));
+  });
+
+  app.post("/api/engine/account-modules", (req, res) => {
+    try {
+      const data = insertAccountModuleSchema.parse(req.body);
+      const accountModule = storage.upsertAccountModule(data);
+      res.json(accountModule);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/engine/jobs", (req, res) => {
+    const limit = req.query.limit ? Number(req.query.limit) : 25;
+    res.json(storage.getEngineJobs(limit));
+  });
+
+  app.get("/api/engine/sources", (_req, res) => {
+    res.json(storage.getEngineSources());
+  });
+
+  app.post("/api/engine/sources", (req, res) => {
+    try {
+      const data = insertEngineSourceSchema.parse(req.body);
+      const source = storage.createEngineSource(data);
+      res.status(201).json(source);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/engine/pause", (req, res) => {
+    storage.setAppSetting("imports_paused", "true");
+    res.json({ success: true, paused: true });
+  });
+
+  app.post("/api/engine/resume", (req, res) => {
+    storage.setAppSetting("imports_paused", "false");
+    res.json({ success: true, paused: false });
+  });
+
+  app.post("/api/drive/scan", async (req, res) => {
+    const startedAt = new Date().toISOString();
+    const scanJob = storage.createEngineJob({
+      moduleKey: "post-engine",
+      jobType: "drive-scan",
+      status: "running",
+      startedAt,
+      payload: JSON.stringify({ source: "manual-route" }),
+      summary: "Drive scan started from PostEngine route",
+      dealershipId: null,
+      completedAt: null,
+      errorMessage: null,
+    });
+
+    try {
+      const paused = storage.getAppSetting("imports_paused") === "true";
+      if (paused) {
+        storage.updateEngineJob(scanJob.id, {
+          status: "blocked",
+          completedAt: new Date().toISOString(),
+          summary: "Drive scan skipped because imports are paused",
+          errorMessage: "Imports are paused",
+        });
+        return res.status(409).json({ error: "Imports are paused" });
+      }
+
+      const count = await scanDriveFolders();
+      const completedAt = new Date().toISOString();
+      storage.setAppSetting("last_scan_at", completedAt);
+      storage.setAppSetting("last_scan_count", String(count));
+      storage.updateEngineSourceByKey("post-engine-drive-ingestion", {
+        lastCheckedAt: completedAt,
+        lastResultSummary: `Last manual scan created ${count} queued post(s)`,
+        metadata: JSON.stringify({ route: "/api/drive/scan", source: "manual-route", newPosts: count }),
+      });
+      storage.updateEngineJob(scanJob.id, {
+        status: "completed",
+        completedAt,
+        summary: `Drive scan created ${count} queued post(s)`,
+        payload: JSON.stringify({ source: "manual-route", newPosts: count }),
+      });
+      res.json({ success: true, newPosts: count, message: `Created ${count} queued post(s) from Drive` });
+    } catch (e: any) {
+      storage.updateEngineJob(scanJob.id, {
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        summary: "Drive scan failed",
+        errorMessage: e.message,
+      });
       res.status(500).json({ error: e.message });
     }
   });
