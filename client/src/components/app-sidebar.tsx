@@ -36,13 +36,13 @@ import {
 
 const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Posts", url: "/posts", icon: FileText },
-  { title: "New Post", url: "/posts/new", icon: PlusCircle },
-  { title: "Review Queue", url: "/queue", icon: ClipboardCheck },
-  { title: "Calendar", url: "/calendar", icon: CalendarDays },
   { title: "Engine Hub", url: "/engine", icon: Boxes },
   { title: "Content Engine", url: "/content-engine", icon: BookOpen },
-  { title: "Settings", url: "/settings", icon: Settings },
+  { title: "Posts", url: "/posts", icon: FileText },
+  { title: "Review Queue", url: "/queue", icon: ClipboardCheck },
+  { title: "Calendar", url: "/calendar", icon: CalendarDays },
+  { title: "New Post", url: "/posts/new", icon: PlusCircle },
+  { title: "Post Specs", url: "/settings", icon: Settings },
 ];
 
 function PostEngineLogo() {

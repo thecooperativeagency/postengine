@@ -542,8 +542,8 @@ export default function Settings() {
   return (
     <div className="p-6 space-y-6 max-w-[900px]">
       <div>
-        <h1 className="text-xl font-display font-semibold">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Manage dealerships, cadence, and integrations</p>
+        <h1 className="text-xl font-display font-semibold">Post Specs</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">Manage dealership posting specs, cadence, and integrations</p>
       </div>
 
       {/* Cadence Manager */}

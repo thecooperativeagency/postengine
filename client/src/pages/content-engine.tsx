@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -143,6 +144,117 @@ function formatUpdateWindowDays(value: string) {
   }
 }
 
+function getBrandSortValue(brand: string | null | undefined) {
+  const normalized = (brand || "Other").trim().toLowerCase();
+  if (normalized === "audi") return 0;
+  if (normalized === "bmw") return 1;
+  return 2;
+}
+
+function getBrandSectionClasses(brand: string) {
+  const normalized = brand.trim().toLowerCase();
+  if (normalized === "audi") {
+    return {
+      wrap: "border-l-4 border-l-rose-500/80 bg-rose-500/[0.06]",
+      heading: "text-rose-200",
+      badge: "border-rose-500/30 bg-rose-500/10 text-rose-100",
+      offerTypeWrap: "border-l-2 border-l-rose-500/40",
+    };
+  }
+  if (normalized === "bmw") {
+    return {
+      wrap: "border-l-4 border-l-sky-500/80 bg-sky-500/[0.06]",
+      heading: "text-sky-200",
+      badge: "border-sky-500/30 bg-sky-500/10 text-sky-100",
+      offerTypeWrap: "border-l-2 border-l-sky-500/40",
+    };
+  }
+  return {
+    wrap: "border-l-4 border-l-slate-500/70 bg-muted/20",
+    heading: "text-foreground",
+    badge: "border-border bg-background text-foreground",
+    offerTypeWrap: "border-l-2 border-l-border",
+  };
+}
+
+function getOfferTypeSortValue(offerType: string) {
+  const normalized = offerType.trim().toLowerCase();
+  if (normalized === "lease") return 0;
+  if (normalized === "apr") return 1;
+  if (normalized === "finance") return 2;
+  if (normalized === "bonus cash / customer cash") return 3;
+  if (normalized === "loyalty / conquest") return 4;
+  if (normalized === "service / maintenance") return 5;
+  return 6;
+}
+
+function getOfferTypeLabel(offerType: string | null | undefined) {
+  const normalized = offerType?.trim().toLowerCase() || "";
+  if (!normalized) return "Other Offers";
+  if (normalized.includes("lease")) return "Lease";
+  if (normalized.includes("apr")) return "APR";
+  if (normalized.includes("finance")) return "Finance";
+  if (normalized.includes("bonus") || normalized.includes("customer cash") || normalized.includes("purchase credit") || normalized.includes("cash")) return "Bonus Cash / Customer Cash";
+  if (normalized.includes("loyalty") || normalized.includes("conquest")) return "Loyalty / Conquest";
+  if (normalized.includes("service") || normalized.includes("maintenance")) return "Service / Maintenance";
+  return offerType?.trim() || "Other Offers";
+}
+
+function getOfferModelLabel(offerModel: string | null | undefined) {
+  const normalized = offerModel?.trim();
+  if (!normalized) return "General / Multi-Model";
+  if (["all models", "multiple models", "multi-model", "national", "brand-wide"].includes(normalized.toLowerCase())) {
+    return "General / Multi-Model";
+  }
+  return normalized;
+}
+
+function buildOfferGroups<T extends { brand: string | null; offerType: string | null; offerModel: string | null; updatedAt: string }>(offers: T[]) {
+  const brandMap = new Map<string, Map<string, Map<string, T[]>>>();
+
+  for (const offer of offers) {
+    const brandLabel = offer.brand?.trim() || "Other";
+    const offerTypeLabel = getOfferTypeLabel(offer.offerType);
+    const offerModelLabel = getOfferModelLabel(offer.offerModel);
+
+    if (!brandMap.has(brandLabel)) brandMap.set(brandLabel, new Map());
+    const offerTypeMap = brandMap.get(brandLabel)!;
+    if (!offerTypeMap.has(offerTypeLabel)) offerTypeMap.set(offerTypeLabel, new Map());
+    const modelMap = offerTypeMap.get(offerTypeLabel)!;
+    if (!modelMap.has(offerModelLabel)) modelMap.set(offerModelLabel, []);
+    modelMap.get(offerModelLabel)!.push(offer);
+  }
+
+  return Array.from(brandMap.entries())
+    .sort(([brandA], [brandB]) => {
+      const sortDiff = getBrandSortValue(brandA) - getBrandSortValue(brandB);
+      return sortDiff !== 0 ? sortDiff : brandA.localeCompare(brandB);
+    })
+    .map(([brandLabel, offerTypeMap]) => ({
+      brandLabel,
+      totalCount: Array.from(offerTypeMap.values()).reduce(
+        (brandTotal, modelMap) => brandTotal + Array.from(modelMap.values()).reduce((modelTotal, rows) => modelTotal + rows.length, 0),
+        0,
+      ),
+      offerTypes: Array.from(offerTypeMap.entries())
+        .sort(([typeA], [typeB]) => {
+          const sortDiff = getOfferTypeSortValue(typeA) - getOfferTypeSortValue(typeB);
+          return sortDiff !== 0 ? sortDiff : typeA.localeCompare(typeB);
+        })
+        .map(([offerTypeLabel, modelMap]) => ({
+          offerTypeLabel,
+          totalCount: Array.from(modelMap.values()).reduce((sum, rows) => sum + rows.length, 0),
+          models: Array.from(modelMap.entries())
+            .sort(([modelA], [modelB]) => modelA.localeCompare(modelB))
+            .map(([modelLabel, rows]) => ({
+              modelLabel,
+              totalCount: rows.length,
+              offers: [...rows].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+            })),
+        })),
+    }));
+}
+
 // ── A. Content Cadence ──────────────────────────────────
 function ContentCadence() {
   const { data: cadence, isLoading } = useQuery<CadenceRow[]>({
@@ -159,7 +271,7 @@ function ContentCadence() {
       {!cadence || cadence.length === 0 ? (
         <Card>
           <CardContent className="py-6 text-center text-sm text-muted-foreground">
-            No cadence configured yet — set up in PostEngine Settings.
+            No cadence configured yet — set it up in Post Specs.
           </CardContent>
         </Card>
       ) : (
@@ -220,6 +332,8 @@ function OfferQueue() {
   const selectionDealerships = data?.selectionDealerships ?? [];
 
   const candidateIds = useMemo(() => candidates.map((offer) => offer.id), [candidates]);
+  const groupedCandidates = useMemo(() => buildOfferGroups(candidates), [candidates]);
+  const groupedApproved = useMemo(() => buildOfferGroups(approved), [approved]);
   const downstreamReadyByDealership = useMemo(() => selectionDealerships.map((dealership) => ({
     ...dealership,
     offers: approved.flatMap((offer) => offer.targets
@@ -358,9 +472,9 @@ function OfferQueue() {
           <div className="rounded-lg border p-3 space-y-3">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
-                <div className="font-medium text-sm">Approval queue</div>
+                <div className="font-medium text-sm">Offers waiting for approval</div>
                 <div className="text-xs text-muted-foreground">
-                  {selectedCandidateCount} selected from {candidates.length} current candidates.
+                  {selectedCandidateCount} selected from {candidates.length} offers still in intake.
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -400,196 +514,280 @@ function OfferQueue() {
             {candidates.length === 0 ? (
               <p className="text-sm text-muted-foreground">No offers are waiting for approval right now.</p>
             ) : (
-              <div className="space-y-3">
-                {candidates.map((offer) => {
-                  const checked = selectedIds.includes(offer.id);
+              <Accordion type="multiple" defaultValue={groupedCandidates.map((brandGroup) => `candidate-${brandGroup.brandLabel}`)} className="space-y-4">
+                {groupedCandidates.map((brandGroup) => {
+                  const tone = getBrandSectionClasses(brandGroup.brandLabel);
                   return (
-                    <label key={offer.id} className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        className="mt-1 h-4 w-4"
-                        checked={checked}
-                        onChange={(event) => toggleSelected(offer.id, event.target.checked)}
-                        data-testid={`checkbox-offer-${offer.id}`}
-                      />
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="font-medium text-sm">{offer.offerTitle}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
-                            </div>
+                  <AccordionItem value={`candidate-${brandGroup.brandLabel}`} key={brandGroup.brandLabel} className={`rounded-xl border p-4 shadow-sm ${tone.wrap}`}>
+                    <AccordionTrigger className="py-0 hover:no-underline">
+                      <div className="flex w-full flex-wrap items-center justify-between gap-2 pr-3">
+                        <div className="text-left">
+                          <div className={`font-semibold text-base ${tone.heading}`}>{brandGroup.brandLabel}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {brandGroup.totalCount} offer{brandGroup.totalCount === 1 ? "" : "s"} waiting in this brand queue.
                           </div>
-                          <Badge variant="outline" className="capitalize">{offer.status}</Badge>
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          Updated {new Date(offer.updatedAt).toLocaleString()}
-                          {offer.effectiveDate ? ` • Starts ${new Date(offer.effectiveDate).toLocaleDateString()}` : ""}
-                          {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
-                        </div>
-                        <div className="flex flex-wrap gap-2 pt-1">
-                          <Button size="sm" variant="outline" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "reviewing" }); }} disabled={bulkStatusMutation.isPending || offer.status === "reviewing"}>
-                            Reviewing
-                          </Button>
-                          <Button size="sm" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "approved" }); }} disabled={bulkStatusMutation.isPending || offer.status === "approved"}>
-                            Approve
-                          </Button>
-                          <Button size="sm" variant="destructive" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "rejected" }); }} disabled={bulkStatusMutation.isPending || offer.status === "rejected"}>
-                            Reject
-                          </Button>
-                          {offer.sourceUrl ? (
-                            <Button size="sm" variant="ghost" asChild>
-                              <a href={offer.sourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
-                                Open source
-                              </a>
-                            </Button>
-                          ) : null}
-                        </div>
+                        <Badge variant="outline" className={tone.badge}>{brandGroup.totalCount}</Badge>
                       </div>
-                    </label>
-                  );
-                })}
-              </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="pt-3">
+                    <div className="space-y-3 border-t border-border/60 pt-3">
+                      {brandGroup.offerTypes.map((offerTypeGroup) => (
+                        <div key={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}`} className={`space-y-3 rounded-lg bg-background/60 p-3 ${tone.offerTypeWrap}`}>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">{offerTypeGroup.offerTypeLabel}</Badge>
+                            <span className="text-xs text-muted-foreground">{offerTypeGroup.totalCount} offer{offerTypeGroup.totalCount === 1 ? "" : "s"}</span>
+                          </div>
+
+                          <div className="space-y-3 pl-0 md:pl-3">
+                            {offerTypeGroup.models.map((modelGroup) => (
+                              <div key={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${modelGroup.modelLabel}`} className="space-y-2">
+                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  {modelGroup.modelLabel} · {modelGroup.totalCount}
+                                </div>
+                                <div className="space-y-3">
+                                  {modelGroup.offers.map((offer) => {
+                                    const checked = selectedIds.includes(offer.id);
+                                    return (
+                                      <label key={offer.id} className="flex items-start gap-3 rounded-lg border bg-background p-3 cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          className="mt-1 h-4 w-4"
+                                          checked={checked}
+                                          onChange={(event) => toggleSelected(offer.id, event.target.checked)}
+                                          data-testid={`checkbox-offer-${offer.id}`}
+                                        />
+                                        <div className="flex-1 space-y-1">
+                                          <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                              <div className="font-medium text-sm">{offer.offerTitle}</div>
+                                              <div className="text-xs text-muted-foreground">
+                                                {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
+                                              </div>
+                                            </div>
+                                            <Badge variant="outline" className="capitalize">{offer.status}</Badge>
+                                          </div>
+                                          <div className="text-xs text-muted-foreground">
+                                            Updated {new Date(offer.updatedAt).toLocaleString()}
+                                            {offer.effectiveDate ? ` • Starts ${new Date(offer.effectiveDate).toLocaleDateString()}` : ""}
+                                            {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
+                                          </div>
+                                          <div className="flex flex-wrap gap-2 pt-1">
+                                            <Button size="sm" variant="outline" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "reviewing" }); }} disabled={bulkStatusMutation.isPending || offer.status === "reviewing"}>
+                                              Reviewing
+                                            </Button>
+                                            <Button size="sm" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "approved" }); }} disabled={bulkStatusMutation.isPending || offer.status === "approved"}>
+                                              Approve
+                                            </Button>
+                                            <Button size="sm" variant="destructive" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "rejected" }); }} disabled={bulkStatusMutation.isPending || offer.status === "rejected"}>
+                                              Reject
+                                            </Button>
+                                            {offer.sourceUrl ? (
+                                              <Button size="sm" variant="ghost" asChild>
+                                                <a href={offer.sourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                                                  Open source
+                                                </a>
+                                              </Button>
+                                            ) : null}
+                                          </div>
+                                        </div>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                );
+              })}
+              </Accordion>
             )}
           </div>
 
           <div className="rounded-lg border p-3 space-y-3">
             <div>
-              <div className="font-medium text-sm">Approved downstream pool</div>
+              <div className="font-medium text-sm">Approved offers ready for routing</div>
               <div className="text-xs text-muted-foreground">
-                These are the offers cleared for use across downstream content.
+                These are the offers already cleared for specials pages, sales emails, and related downstream work.
               </div>
             </div>
 
             {approved.length === 0 ? (
               <p className="text-sm text-muted-foreground">No offers have been approved yet.</p>
             ) : (
-              <div className="space-y-3">
-                {approved.map((offer) => {
-                  const brandDealerships = selectionDealerships.filter((dealership) => !offer.brand || dealership.brand === offer.brand);
-                  const selectedDealershipIds = offer.targets.map((target) => target.dealershipId);
-                  const publishReady = offer.targets.some((target) => target.downstreamUses.length > 0);
+              <Accordion type="multiple" defaultValue={groupedApproved.map((brandGroup) => `approved-${brandGroup.brandLabel}`)} className="space-y-4">
+                {groupedApproved.map((brandGroup) => {
+                  const tone = getBrandSectionClasses(brandGroup.brandLabel);
                   return (
-                    <div key={offer.id} className="rounded-lg border p-3 space-y-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="font-medium text-sm">{offer.offerTitle}</div>
+                  <AccordionItem value={`approved-${brandGroup.brandLabel}`} key={brandGroup.brandLabel} className={`rounded-xl border p-4 shadow-sm ${tone.wrap}`}>
+                    <AccordionTrigger className="py-0 hover:no-underline">
+                      <div className="flex w-full flex-wrap items-center justify-between gap-2 pr-3">
+                        <div className="text-left">
+                          <div className={`font-semibold text-base ${tone.heading}`}>{brandGroup.brandLabel}</div>
                           <div className="text-xs text-muted-foreground">
-                            {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
+                            {brandGroup.totalCount} approved offer{brandGroup.totalCount === 1 ? "" : "s"} in this downstream pool.
                           </div>
                         </div>
-                        <Badge variant="outline" className="capitalize">{offer.status}</Badge>
+                        <Badge variant="outline" className={tone.badge}>{brandGroup.totalCount}</Badge>
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        Approved pool updated {new Date(offer.updatedAt).toLocaleString()}
-                        {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
-                      </div>
-
-                      <div className="rounded-md border bg-muted/20 p-3 space-y-2">
-                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                          <div>
-                            <div className="font-medium text-sm">Dealer selection</div>
-                            <div className="text-xs text-muted-foreground">
-                              Pick which {offer.brand || "approved"} stores should use this offer downstream.
-                            </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="pt-3">
+                    <div className="space-y-3 border-t border-border/60 pt-3">
+                      {brandGroup.offerTypes.map((offerTypeGroup) => (
+                        <div key={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}`} className={`space-y-3 rounded-lg bg-background/60 p-3 ${tone.offerTypeWrap}`}>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">{offerTypeGroup.offerTypeLabel}</Badge>
+                            <span className="text-xs text-muted-foreground">{offerTypeGroup.totalCount} offer{offerTypeGroup.totalCount === 1 ? "" : "s"}</span>
                           </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Button size="sm" variant="outline" onClick={() => setAllDealershipTargets(offer.id, brandDealerships.map((dealership) => dealership.id))} disabled={targetMutation.isPending || brandDealerships.length === 0}>
-                              All {offer.brand || "selected"} stores
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={() => clearDealershipTargets(offer.id)} disabled={targetMutation.isPending || selectedDealershipIds.length === 0}>
-                              Clear targets
-                            </Button>
-                          </div>
-                        </div>
 
-                        <div className="flex flex-wrap gap-2">
-                          {brandDealerships.map((dealership) => {
-                            const isSelected = selectedDealershipIds.includes(dealership.id);
-                            return (
-                              <Button
-                                key={dealership.id}
-                                size="sm"
-                                variant={isSelected ? "default" : "outline"}
-                                onClick={() => toggleDealershipTarget(offer.id, dealership.id, selectedDealershipIds)}
-                                disabled={targetMutation.isPending}
-                                data-testid={`button-offer-${offer.id}-dealer-${dealership.id}`}
-                              >
-                                {dealership.name}
-                              </Button>
-                            );
-                          })}
-                        </div>
-
-                        <div className="text-xs text-muted-foreground">
-                          {offer.targets.length > 0
-                            ? `Selected for: ${offer.targets.map((target) => target.dealershipName).join(", ")}`
-                            : `No dealership targets selected yet. This ${offer.brand || "approved"} offer is approved, but not routed to a store yet.`}
-                        </div>
-
-                        {offer.targets.length > 0 ? (
-                          <div className="space-y-2 pt-1">
-                            {offer.targets.map((target) => {
-                              const currentUses = target.downstreamUses.map((use) => ({ channel: use.channel, placement: use.placement }));
-                              const specialsUse = currentUses.find((use) => use.channel === "specials-page");
-                              const emailUse = currentUses.find((use) => use.channel === "sales-email");
-                              return (
-                                <div key={target.id} className="rounded-md border bg-background p-3 space-y-2">
-                                  <div className="font-medium text-xs uppercase tracking-wide text-muted-foreground">{target.dealershipName} downstream plan</div>
-                                  <div className="flex flex-wrap gap-2">
-                                    <Button
-                                      size="sm"
-                                      variant={specialsUse ? "default" : "outline"}
-                                      onClick={() => toggleDownstreamUse(offer.id, target.dealershipId, currentUses, { channel: "specials-page", placement: specialsUse?.placement === "hero" ? "supporting" : "hero" })}
-                                      disabled={downstreamUseMutation.isPending}
-                                    >
-                                      {specialsUse ? `Specials page: ${specialsUse.placement}` : "Use on specials page"}
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant={emailUse ? "default" : "outline"}
-                                      onClick={() => toggleDownstreamUse(offer.id, target.dealershipId, currentUses, { channel: "sales-email", placement: emailUse?.placement === "hero" ? "primary" : "hero" })}
-                                      disabled={downstreamUseMutation.isPending}
-                                    >
-                                      {emailUse ? `Sales email: ${emailUse.placement}` : "Use in sales email"}
-                                    </Button>
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {target.downstreamUses.length > 0
-                                      ? target.downstreamUses.map((use) => `${use.channel === "specials-page" ? "specials page" : "sales email"} as ${use.placement}`).join(" • ")
-                                      : "Not yet assigned to a specials page or sales email slot."}
-                                  </div>
+                          <div className="space-y-3 pl-0 md:pl-3">
+                            {offerTypeGroup.models.map((modelGroup) => (
+                              <div key={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${modelGroup.modelLabel}`} className="space-y-2">
+                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  {modelGroup.modelLabel} · {modelGroup.totalCount}
                                 </div>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
+                                <div className="space-y-3">
+                                  {modelGroup.offers.map((offer) => {
+                                    const brandDealerships = selectionDealerships.filter((dealership) => !offer.brand || dealership.brand === offer.brand);
+                                    const selectedDealershipIds = offer.targets.map((target) => target.dealershipId);
+                                    const publishReady = offer.targets.some((target) => target.downstreamUses.length > 0);
+                                    return (
+                                      <div key={offer.id} className="rounded-lg border bg-background p-3 space-y-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div>
+                                            <div className="font-medium text-sm">{offer.offerTitle}</div>
+                                            <div className="text-xs text-muted-foreground">
+                                              {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
+                                            </div>
+                                          </div>
+                                          <Badge variant="outline" className="capitalize">{offer.status}</Badge>
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">
+                                          Approved pool updated {new Date(offer.updatedAt).toLocaleString()}
+                                          {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
+                                        </div>
 
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        <Button size="sm" variant="outline" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "detected" })} disabled={bulkStatusMutation.isPending || targetMutation.isPending}>
-                          Move back to queue
-                        </Button>
-                        <Button size="sm" variant="secondary" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "published" })} disabled={bulkStatusMutation.isPending || targetMutation.isPending || offer.status === "published" || !publishReady}>
-                          Mark published
-                        </Button>
-                        {offer.sourceUrl ? (
-                          <Button size="sm" variant="ghost" asChild>
-                            <a href={offer.sourceUrl} target="_blank" rel="noreferrer">
-                              Open source
-                            </a>
-                          </Button>
-                        ) : null}
-                      </div>
-                      {!publishReady ? (
-                        <div className="text-xs text-muted-foreground">
-                          Add at least one specials-page or sales-email handoff before marking this offer published.
+                                        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+                                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                            <div>
+                                              <div className="font-medium text-sm">Dealer selection</div>
+                                              <div className="text-xs text-muted-foreground">
+                                                Pick which {offer.brand || "approved"} stores should use this offer downstream.
+                                              </div>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                              <Button size="sm" variant="outline" onClick={() => setAllDealershipTargets(offer.id, brandDealerships.map((dealership) => dealership.id))} disabled={targetMutation.isPending || brandDealerships.length === 0}>
+                                                All {offer.brand || "selected"} stores
+                                              </Button>
+                                              <Button size="sm" variant="ghost" onClick={() => clearDealershipTargets(offer.id)} disabled={targetMutation.isPending || selectedDealershipIds.length === 0}>
+                                                Clear targets
+                                              </Button>
+                                            </div>
+                                          </div>
+
+                                          <div className="flex flex-wrap gap-2">
+                                            {brandDealerships.map((dealership) => {
+                                              const isSelected = selectedDealershipIds.includes(dealership.id);
+                                              return (
+                                                <Button
+                                                  key={dealership.id}
+                                                  size="sm"
+                                                  variant={isSelected ? "default" : "outline"}
+                                                  onClick={() => toggleDealershipTarget(offer.id, dealership.id, selectedDealershipIds)}
+                                                  disabled={targetMutation.isPending}
+                                                  data-testid={`button-offer-${offer.id}-dealer-${dealership.id}`}
+                                                >
+                                                  {dealership.name}
+                                                </Button>
+                                              );
+                                            })}
+                                          </div>
+
+                                          <div className="text-xs text-muted-foreground">
+                                            {offer.targets.length > 0
+                                              ? `Selected for: ${offer.targets.map((target) => target.dealershipName).join(", ")}`
+                                              : `No dealership targets selected yet. This ${offer.brand || "approved"} offer is approved, but not routed to a store yet.`}
+                                          </div>
+
+                                          {offer.targets.length > 0 ? (
+                                            <div className="space-y-2 pt-1">
+                                              {offer.targets.map((target) => {
+                                                const currentUses = target.downstreamUses.map((use) => ({ channel: use.channel, placement: use.placement }));
+                                                const specialsUse = currentUses.find((use) => use.channel === "specials-page");
+                                                const emailUse = currentUses.find((use) => use.channel === "sales-email");
+                                                return (
+                                                  <div key={target.id} className="rounded-md border bg-background p-3 space-y-2">
+                                                    <div className="font-medium text-xs uppercase tracking-wide text-muted-foreground">{target.dealershipName} downstream plan</div>
+                                                    <div className="flex flex-wrap gap-2">
+                                                      <Button
+                                                        size="sm"
+                                                        variant={specialsUse ? "default" : "outline"}
+                                                        onClick={() => toggleDownstreamUse(offer.id, target.dealershipId, currentUses, { channel: "specials-page", placement: specialsUse?.placement === "hero" ? "supporting" : "hero" })}
+                                                        disabled={downstreamUseMutation.isPending}
+                                                      >
+                                                        {specialsUse ? `Specials page: ${specialsUse.placement}` : "Use on specials page"}
+                                                      </Button>
+                                                      <Button
+                                                        size="sm"
+                                                        variant={emailUse ? "default" : "outline"}
+                                                        onClick={() => toggleDownstreamUse(offer.id, target.dealershipId, currentUses, { channel: "sales-email", placement: emailUse?.placement === "hero" ? "primary" : "hero" })}
+                                                        disabled={downstreamUseMutation.isPending}
+                                                      >
+                                                        {emailUse ? `Sales email: ${emailUse.placement}` : "Use in sales email"}
+                                                      </Button>
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground">
+                                                      {target.downstreamUses.length > 0
+                                                        ? target.downstreamUses.map((use) => `${use.channel === "specials-page" ? "specials page" : "sales email"} as ${use.placement}`).join(" • ")
+                                                        : "Not yet assigned to a specials page or sales email slot."}
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          ) : null}
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-2 pt-1">
+                                          <Button size="sm" variant="outline" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "detected" })} disabled={bulkStatusMutation.isPending || targetMutation.isPending}>
+                                            Move back to queue
+                                          </Button>
+                                          <Button size="sm" variant="secondary" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "published" })} disabled={bulkStatusMutation.isPending || targetMutation.isPending || offer.status === "published" || !publishReady}>
+                                            Mark published
+                                          </Button>
+                                          {offer.sourceUrl ? (
+                                            <Button size="sm" variant="ghost" asChild>
+                                              <a href={offer.sourceUrl} target="_blank" rel="noreferrer">
+                                                Open source
+                                              </a>
+                                            </Button>
+                                          ) : null}
+                                        </div>
+                                        {!publishReady ? (
+                                          <div className="text-xs text-muted-foreground">
+                                            Add at least one specials-page or sales-email handoff before marking this offer published.
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      ) : null}
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                );
+              })}
+              </Accordion>
             )}
           </div>
 
