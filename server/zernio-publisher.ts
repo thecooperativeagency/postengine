@@ -402,9 +402,13 @@ export function startPublishPoller() {
     console.log(`[Zernio] ${duePosts.length} post(s) due for publishing...`);
 
     for (const post of duePosts) {
-      console.log(`[Zernio] Publishing post ${post.id}: ${post.vehicleInfo}`);
-      const result = await publishPost(post.id);
-      console.log(`[Zernio] Post ${post.id} result:`, result.success ? "✅ Published" : "❌ Failed");
+      try {
+        console.log(`[Zernio] Publishing post ${post.id}: ${post.vehicleInfo}`);
+        const result = await publishPost(post.id);
+        console.log(`[Zernio] Post ${post.id} result:`, result.success ? "✅ Published" : "❌ Failed");
+      } catch (error) {
+        console.error(`[Zernio] Post ${post.id} crashed during publish reconciliation:`, error);
+      }
     }
   }, 60 * 1000); // every 60 seconds
 }

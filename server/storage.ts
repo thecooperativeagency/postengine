@@ -39,9 +39,37 @@ import {
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, and, sql } from "drizzle-orm";
+import { copyFileSync, existsSync, mkdirSync } from "fs";
+import { homedir } from "os";
+import path from "path";
 import { sanitizeLegacyCaption } from "./post-sanitizer";
 
-const sqlite = new Database("sqlite.db");
+function resolveDatabasePath() {
+  const configuredPath = process.env.POSTENGINE_DB_PATH?.trim();
+  if (configuredPath) {
+    const absoluteConfiguredPath = path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.resolve(process.cwd(), configuredPath);
+    mkdirSync(path.dirname(absoluteConfiguredPath), { recursive: true });
+    return absoluteConfiguredPath;
+  }
+
+  const appDataDir = path.join(homedir(), ".postengine");
+  const appDataDbPath = path.join(appDataDir, "sqlite.db");
+  const legacyRepoDbPath = path.resolve(process.cwd(), "sqlite.db");
+
+  mkdirSync(appDataDir, { recursive: true });
+
+  if (!existsSync(appDataDbPath) && existsSync(legacyRepoDbPath)) {
+    copyFileSync(legacyRepoDbPath, appDataDbPath);
+    console.log(`[storage] Seeded database at ${appDataDbPath} from legacy repo sqlite.db`);
+  }
+
+  return appDataDbPath;
+}
+
+export const DATABASE_PATH = resolveDatabasePath();
+const sqlite = new Database(DATABASE_PATH);
 const db = drizzle(sqlite);
 
 export interface IStorage {
