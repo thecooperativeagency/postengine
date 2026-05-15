@@ -1,4 +1,5 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { sqliteTable, text, integer, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -28,26 +29,38 @@ export type InsertDealership = z.infer<typeof insertDealershipSchema>;
 export type Dealership = typeof dealerships.$inferSelect;
 
 // Social Posts
-export const posts = sqliteTable("posts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  dealershipId: integer("dealership_id").notNull(),
-  status: text("status").notNull().default("draft"), // draft, queued, scheduled, published, rejected
-  postType: text("post_type").notNull().default("inventory"), // inventory, promo, lifestyle, announcement
-  vehicleInfo: text("vehicle_info"), // e.g. "2026 BMW X5 M60"
-  caption: text("caption"), // Instagram/Facebook caption
-  captionFacebook: text("caption_facebook"), // Facebook caption (same as IG unless different)
-  captionGmb: text("caption_gmb"), // Google My Business caption
-  hashtags: text("hashtags"),
-  ctaBlock: text("cta_block"), // dealership-specific CTA
-  mediaUrls: text("media_urls"), // JSON array of URLs
-  mediaType: text("media_type").default("image"), // image, video, carousel
-  platforms: text("platforms").default('["instagram","facebook"]'), // JSON array
-  scheduledFor: text("scheduled_for"), // ISO datetime
-  publishedAt: text("published_at"),
-  folderSource: text("folder_source"), // Drive folder path
-  notes: text("notes"),
-  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
-});
+export const posts = sqliteTable(
+  "posts",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    dealershipId: integer("dealership_id").notNull(),
+    status: text("status").notNull().default("draft"), // draft, queued, scheduled, published, rejected
+    postType: text("post_type").notNull().default("inventory"), // inventory, promo, lifestyle, announcement
+    vehicleInfo: text("vehicle_info"), // e.g. "2026 BMW X5 M60"
+    caption: text("caption"), // Instagram/Facebook caption
+    captionFacebook: text("caption_facebook"), // Facebook caption (same as IG unless different)
+    captionGmb: text("caption_gmb"), // Google My Business caption
+    hashtags: text("hashtags"),
+    ctaBlock: text("cta_block"), // dealership-specific CTA
+    mediaUrls: text("media_urls"), // JSON array of URLs
+    mediaType: text("media_type").default("image"), // image, video, carousel
+    platforms: text("platforms").default('["instagram","facebook"]'), // JSON array
+    scheduledFor: text("scheduled_for"), // ISO datetime
+    publishedAt: text("published_at"),
+    publishAttempts: integer("publish_attempts").notNull().default(0),
+    lastPublishAttemptAt: text("last_publish_attempt_at"),
+    publishBackoffUntil: text("publish_backoff_until"),
+    publishResults: text("publish_results"), // JSON object keyed by platform
+    folderSource: text("folder_source"), // Drive folder path
+    notes: text("notes"),
+    createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    dealershipFolderSourceUnique: uniqueIndex("idx_posts_dealership_folder_source_unique")
+      .on(table.dealershipId, table.folderSource)
+      .where(sql`${table.folderSource} IS NOT NULL AND trim(${table.folderSource}) <> ''`),
+  }),
+);
 
 export const insertPostSchema = createInsertSchema(posts).omit({ id: true, createdAt: true });
 export type InsertPost = z.infer<typeof insertPostSchema>;
@@ -266,3 +279,34 @@ export const insertContentEngineBuildManifestEntrySchema = createInsertSchema(co
 });
 export type InsertContentEngineBuildManifestEntry = z.infer<typeof insertContentEngineBuildManifestEntrySchema>;
 export type ContentEngineBuildManifestEntry = typeof contentEngineBuildManifestEntries.$inferSelect;
+
+export const emailIterationSetups = sqliteTable("email_iteration_setups", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  dealershipId: integer("dealership_id").notNull(),
+  campaignKey: text("campaign_key").notNull(),
+  campaignType: text("campaign_type").notNull(),
+  status: text("status").notNull().default("active-now"),
+  latestBaseEmailReferenceFile: text("latest_base_email_reference_file"),
+  priorReferenceFiles: text("prior_reference_files").notNull().default("[]"),
+  monthLabel: text("month_label").notNull().default(""),
+  campaignLabel: text("campaign_label").notNull().default(""),
+  offerChangesNotes: text("offer_changes_notes").notNull().default(""),
+  photoChangesNotes: text("photo_changes_notes").notNull().default(""),
+  themeCustomBlockNotes: text("theme_custom_block_notes").notNull().default(""),
+  ctaLinkNotes: text("cta_link_notes").notNull().default(""),
+  carryoverNotes: text("carryover_notes").notNull().default(""),
+  selectedOfferReviewIds: text("selected_offer_review_ids").notNull().default("[]"),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => ({
+  dealershipCampaignUnique: uniqueIndex("idx_email_iteration_setup_dealership_campaign_unique")
+    .on(table.dealershipId, table.campaignKey),
+}));
+
+export const insertEmailIterationSetupSchema = createInsertSchema(emailIterationSetups).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertEmailIterationSetup = z.infer<typeof insertEmailIterationSetupSchema>;
+export type EmailIterationSetup = typeof emailIterationSetups.$inferSelect;

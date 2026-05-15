@@ -8,8 +8,10 @@ import {
   insertAccountModuleSchema,
   insertEngineSourceSchema,
   insertOfferReviewSchema,
+  insertEmailIterationSetupSchema,
 } from "@shared/schema";
 import type { OfferReview } from "@shared/schema";
+import { z } from "zod";
 import { scanDriveFolders, archiveFile, loadFolders } from "./drive-scanner";
 import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
@@ -21,8 +23,136 @@ import {
   getOfferReviewTransitionError,
   syncContentEngineBuildManifest,
 } from "./content-engine-build-manifest";
+import { buildEmailIterationOfferOptionsByDealership } from "./email-iteration-offers";
+import {
+  ENGINE_DASHBOARD_PASSWORD_ENV,
+  isAuthorizedDashboardPassword,
+  isDashboardProtectionEnabled,
+  readDashboardPassword,
+} from "./dashboard-auth";
+
+const ARCHIVE_REQUIRED_STATUSES = new Set(["scheduled", "published"]);
+const emailIterationSetupUpdateSchema = insertEmailIterationSetupSchema.partial().omit({
+  dealershipId: true,
+  campaignKey: true,
+  campaignType: true,
+});
+
+function parseStringArray(value: string | null | undefined) {
+  if (!value) return [] as string[];
+  try {
+    const parsed = JSON.parse(value) as string[];
+    return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseNumberArray(value: string | null | undefined) {
+  if (!value) return [] as number[];
+  try {
+    const parsed = JSON.parse(value) as number[];
+    return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === "number" && Number.isFinite(entry)) : [];
+  } catch {
+    return [];
+  }
+}
+
+type PostArchiveCandidate = {
+  id: number;
+  dealershipId: number;
+  status: string;
+  folderSource: string | null;
+};
+
+export function archivePostSourceOrThrow(
+  existing: PostArchiveCandidate,
+  nextStatus: string | undefined,
+  archive: (dealershipId: number, folderSource: string) => boolean,
+): void {
+  if (!nextStatus || !ARCHIVE_REQUIRED_STATUSES.has(nextStatus)) return;
+  if (existing.status === nextStatus) return;
+
+  const folderSource = existing.folderSource?.trim();
+  if (!folderSource) return;
+
+  try {
+    const archived = archive(existing.dealershipId, folderSource);
+    if (!archived) {
+      throw new Error("Drive archive move returned false");
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Drive archive move failed for post ${existing.id} (${folderSource}): ${message}`);
+  }
+}
+
+type BulkApproveDeps<TPost extends PostArchiveCandidate> = {
+  getPost(id: number): TPost | undefined;
+  updatePost(id: number, data: { status: "scheduled" }): TPost | undefined;
+  logScheduled(post: TPost): void;
+  archive(dealershipId: number, folderSource: string): boolean;
+};
+
+export function bulkApprovePosts<TPost extends PostArchiveCandidate>(ids: number[], deps: BulkApproveDeps<TPost>) {
+  const successful: TPost[] = [];
+  const failed: Array<{ id: number; error: string; folderSource?: string }> = [];
+
+  for (const rawId of ids) {
+    const id = Number(rawId);
+    const existing = deps.getPost(id);
+    if (!existing) {
+      failed.push({ id, error: "Post not found" });
+      continue;
+    }
+
+    try {
+      archivePostSourceOrThrow(existing, "scheduled", deps.archive);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failed.push({ id, error: message, folderSource: existing.folderSource || undefined });
+      continue;
+    }
+
+    const updated = deps.updatePost(id, { status: "scheduled" });
+    if (!updated) {
+      failed.push({ id, error: "Failed to update post" });
+      continue;
+    }
+
+    deps.logScheduled(updated);
+    successful.push(updated);
+  }
+
+  return { successful, failed };
+}
 
 export async function registerRoutes(server: Server, app: Express) {
+  // ---- Dashboard auth ----
+  app.get("/api/auth/config", (_req, res) => {
+    res.json({
+      enabled: isDashboardProtectionEnabled(),
+      headerName: "X-Dashboard-Password",
+      appName: "ENGINE",
+    });
+  });
+
+  app.post("/api/auth/check", (req, res) => {
+    if (!isDashboardProtectionEnabled()) {
+      return res.json({ ok: true, enabled: false });
+    }
+
+    if (!isAuthorizedDashboardPassword(readDashboardPassword(req))) {
+      return res.status(401).json({
+        ok: false,
+        error: "Unauthorized",
+        message: `Valid ${ENGINE_DASHBOARD_PASSWORD_ENV} required`,
+      });
+    }
+
+    return res.json({ ok: true, enabled: true });
+  });
+
   // ---- Dealerships ----
   app.get("/api/dealerships", (_req, res) => {
     const dealerships = storage.getDealerships();
@@ -84,13 +214,21 @@ export async function registerRoutes(server: Server, app: Express) {
       });
       res.status(201).json(post);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      const status = err?.name === "DuplicateFolderSourceError" ? 409 : 400;
+      res.status(status).json({ error: err.message });
     }
   });
 
   app.patch("/api/posts/:id", (req, res) => {
     const existing = storage.getPost(Number(req.params.id));
     if (!existing) return res.status(404).json({ error: "Not found" });
+
+    try {
+      archivePostSourceOrThrow(existing, req.body.status, archiveFile);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(409).json({ error: message });
+    }
 
     const updated = storage.updatePost(Number(req.params.id), req.body);
     if (!updated) return res.status(500).json({ error: "Failed to update" });
@@ -103,16 +241,6 @@ export async function registerRoutes(server: Server, app: Express) {
         action: req.body.status,
         details: `Post ${req.body.status}: ${updated.vehicleInfo || updated.postType}`,
       });
-
-      // Archive Drive file when post is scheduled or published
-      if ((req.body.status === "scheduled" || req.body.status === "published") && updated.folderSource) {
-        try {
-          archiveFile(updated.dealershipId, updated.folderSource);
-          console.log(`[Archive] Moved file to _Archive for post ${updated.id}`);
-        } catch (e) {
-          console.error(`[Archive] Failed to move file:`, e);
-        }
-      }
     }
 
     res.json(updated);
@@ -135,33 +263,25 @@ export async function registerRoutes(server: Server, app: Express) {
   app.post("/api/posts/bulk-approve", (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ error: "ids must be an array" });
-    const results = [];
-    for (const id of ids) {
-      const existing = storage.getPost(Number(id));
-      if (!existing) continue;
 
-      const updated = storage.updatePost(id, { status: "scheduled" });
-      if (updated) {
+    const result = bulkApprovePosts(ids, {
+      getPost: (id) => storage.getPost(id),
+      updatePost: (id, data) => storage.updatePost(id, data),
+      archive: archiveFile,
+      logScheduled: (updated) => {
         storage.logActivity({
           postId: updated.id,
           dealershipId: updated.dealershipId,
           action: "scheduled",
           details: `Post approved & scheduled: ${updated.vehicleInfo || updated.postType}`,
         });
+      },
+    });
 
-        if (existing.status !== "scheduled" && updated.folderSource) {
-          try {
-            archiveFile(updated.dealershipId, updated.folderSource);
-            console.log(`[Archive] Moved file to _Archive for post ${updated.id} via bulk approve`);
-          } catch (e) {
-            console.error(`[Archive] Failed to move file during bulk approve:`, e);
-          }
-        }
-
-        results.push(updated);
-      }
-    }
-    res.json(results);
+    res.status(result.failed.length > 0 ? 207 : 200).json({
+      successful: result.successful,
+      failed: result.failed,
+    });
   });
 
   // ---- Activity ----
@@ -180,6 +300,23 @@ export async function registerRoutes(server: Server, app: Express) {
       const postId = parseInt(data.replace("approve_", ""));
       const post = storage.getPost(postId);
       if (post) {
+        try {
+          archivePostSourceOrThrow(post, "scheduled", archiveFile);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, text: `⚠️ Could not schedule *${post.vehicleInfo}*: ${message}`, parse_mode: "Markdown" }),
+          });
+          await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ callback_query_id: callback_query.id }),
+          });
+          return res.json({ ok: false, error: message });
+        }
+
         storage.updatePost(postId, { status: "scheduled" });
         const result = await publishPost(postId);
         // Update Telegram message
@@ -246,6 +383,13 @@ export async function registerRoutes(server: Server, app: Express) {
     const postId = parseInt(req.params.id);
     const post = storage.getPost(postId);
     if (!post) return res.status(404).json({ error: "Not found" });
+
+    try {
+      archivePostSourceOrThrow(post, "scheduled", archiveFile);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(409).json({ error: message });
+    }
 
     // Set status to scheduled first
     storage.updatePost(postId, { status: "scheduled" });
@@ -935,6 +1079,77 @@ export async function registerRoutes(server: Server, app: Express) {
       useCount: updatedUses.length,
       uses: updatedUses,
     });
+  });
+
+  app.get("/api/content-engine/email-iterations", (_req, res) => {
+    const dealerships = new Map(storage.getDealerships().map((dealership) => [dealership.id, dealership]));
+    const approvedReviews = storage.getOfferReviews({ moduleKey: "content-engine", limit: 300 });
+    const targets = storage.getOfferReviewTargets();
+    const downstreamUses = storage.getOfferReviewDownstreamUses();
+    const availableOfferOptionsByDealership = buildEmailIterationOfferOptionsByDealership(approvedReviews, targets, downstreamUses);
+
+    const cards = storage.getEmailIterationSetups().map((setup) => {
+      const dealership = dealerships.get(setup.dealershipId);
+      return {
+        ...setup,
+        store: dealership?.name ?? "Unknown dealership",
+        brand: dealership?.brand ?? null,
+        location: dealership?.location ?? null,
+        priorReferenceFiles: parseStringArray(setup.priorReferenceFiles),
+        selectedOfferReviewIds: parseNumberArray(setup.selectedOfferReviewIds),
+        availableOfferOptions: availableOfferOptionsByDealership.get(setup.dealershipId) ?? [],
+      };
+    }).sort((left, right) => {
+      if (left.status !== right.status) {
+        return left.status === "active-now" ? -1 : 1;
+      }
+      if (left.store !== right.store) {
+        return left.store.localeCompare(right.store);
+      }
+      return left.campaignType.localeCompare(right.campaignType);
+    });
+
+    res.json({ cards });
+  });
+
+  app.patch("/api/content-engine/email-iterations/:id", (req, res) => {
+    const setupId = Number(req.params.id);
+    const existing = storage.getEmailIterationSetups().find((setup) => setup.id === setupId);
+    if (!existing) return res.status(404).json({ error: "Email iteration setup not found" });
+    const availableOfferOptionsByDealership = buildEmailIterationOfferOptionsByDealership(
+      storage.getOfferReviews({ moduleKey: "content-engine", limit: 300 }),
+      storage.getOfferReviewTargets(),
+      storage.getOfferReviewDownstreamUses(),
+    );
+
+    try {
+      const parsed = emailIterationSetupUpdateSchema.parse({
+        ...req.body,
+        priorReferenceFiles: Array.isArray(req.body?.priorReferenceFiles)
+          ? JSON.stringify(req.body.priorReferenceFiles.filter((value: unknown) => typeof value === "string"))
+          : req.body?.priorReferenceFiles,
+        selectedOfferReviewIds: Array.isArray(req.body?.selectedOfferReviewIds)
+          ? JSON.stringify(req.body.selectedOfferReviewIds.filter((value: unknown) => typeof value === "number" && Number.isFinite(value)))
+          : req.body?.selectedOfferReviewIds,
+      });
+
+      const updated = storage.updateEmailIterationSetup(setupId, parsed);
+      if (!updated) return res.status(500).json({ error: "Failed to update email iteration setup" });
+
+      const dealership = storage.getDealership(updated.dealershipId);
+      res.json({
+        ...updated,
+        store: dealership?.name ?? "Unknown dealership",
+        brand: dealership?.brand ?? null,
+        location: dealership?.location ?? null,
+        priorReferenceFiles: parseStringArray(updated.priorReferenceFiles),
+        selectedOfferReviewIds: parseNumberArray(updated.selectedOfferReviewIds),
+        availableOfferOptions: availableOfferOptionsByDealership.get(updated.dealershipId) ?? [],
+      });
+    } catch (error) {
+      const message = error instanceof z.ZodError ? error.issues.map((issue) => issue.message).join("; ") : error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: message });
+    }
   });
 
   app.get("/api/content-engine/build-plan", (_req, res) => {

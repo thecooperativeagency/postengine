@@ -1,16 +1,20 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
-  BookOpen, Clock, Download, ExternalLink,
+  BookOpen, Clock, Download, ExternalLink, Mail, Image,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { PageHeader, PageShell } from "@/components/page-shell";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { buildOfferFamilyGroups } from "@/lib/offer-grouping";
 
 interface CadenceRow {
   dealershipName: string;
@@ -134,6 +138,58 @@ interface EngineSourceRow {
   evidenceNotes: string | null;
 }
 
+interface EmailIterationCardData {
+  id: number;
+  dealershipId: number;
+  campaignKey: string;
+  campaignType: "sales" | "service";
+  status: "active-now" | "later";
+  latestBaseEmailReferenceFile: string | null;
+  priorReferenceFiles: string[];
+  selectedOfferReviewIds: number[];
+  availableOfferOptions: Array<{
+    id: number;
+    offerTitle: string;
+    offerModel: string | null;
+    offerType: string | null;
+    expirationDate: string | null;
+    sourceUrl: string | null;
+    channels: string[];
+    placements: string[];
+  }>;
+  monthLabel: string;
+  campaignLabel: string;
+  offerChangesNotes: string;
+  photoChangesNotes: string;
+  themeCustomBlockNotes: string;
+  ctaLinkNotes: string;
+  carryoverNotes: string;
+  store: string;
+  brand: string | null;
+  location: string | null;
+}
+
+interface EmailIterationData {
+  cards: EmailIterationCardData[];
+}
+
+type EmailIterationDraft = {
+  monthLabel: string;
+  campaignLabel: string;
+  selectedOfferReviewIds: number[];
+  offerChangesNotes: string;
+  photoChangesNotes: string;
+  themeCustomBlockNotes: string;
+  ctaLinkNotes: string;
+  carryoverNotes: string;
+};
+
+function compactFileLabel(path: string | null) {
+  if (!path) return "No base file seeded yet";
+  const parts = path.split("/").filter(Boolean);
+  return parts.slice(-3).join(" / ");
+}
+
 function formatUpdateWindowDays(value: string) {
   try {
     const days = JSON.parse(value) as number[];
@@ -142,13 +198,6 @@ function formatUpdateWindowDays(value: string) {
   } catch {
     return value;
   }
-}
-
-function getBrandSortValue(brand: string | null | undefined) {
-  const normalized = (brand || "Other").trim().toLowerCase();
-  if (normalized === "audi") return 0;
-  if (normalized === "bmw") return 1;
-  return 2;
 }
 
 function getBrandSectionClasses(brand: string) {
@@ -177,84 +226,6 @@ function getBrandSectionClasses(brand: string) {
   };
 }
 
-function getOfferTypeSortValue(offerType: string) {
-  const normalized = offerType.trim().toLowerCase();
-  if (normalized === "lease") return 0;
-  if (normalized === "apr") return 1;
-  if (normalized === "finance") return 2;
-  if (normalized === "bonus cash / customer cash") return 3;
-  if (normalized === "loyalty / conquest") return 4;
-  if (normalized === "service / maintenance") return 5;
-  return 6;
-}
-
-function getOfferTypeLabel(offerType: string | null | undefined) {
-  const normalized = offerType?.trim().toLowerCase() || "";
-  if (!normalized) return "Other Offers";
-  if (normalized.includes("lease")) return "Lease";
-  if (normalized.includes("apr")) return "APR";
-  if (normalized.includes("finance")) return "Finance";
-  if (normalized.includes("bonus") || normalized.includes("customer cash") || normalized.includes("purchase credit") || normalized.includes("cash")) return "Bonus Cash / Customer Cash";
-  if (normalized.includes("loyalty") || normalized.includes("conquest")) return "Loyalty / Conquest";
-  if (normalized.includes("service") || normalized.includes("maintenance")) return "Service / Maintenance";
-  return offerType?.trim() || "Other Offers";
-}
-
-function getOfferModelLabel(offerModel: string | null | undefined) {
-  const normalized = offerModel?.trim();
-  if (!normalized) return "General / Multi-Model";
-  if (["all models", "multiple models", "multi-model", "national", "brand-wide"].includes(normalized.toLowerCase())) {
-    return "General / Multi-Model";
-  }
-  return normalized;
-}
-
-function buildOfferGroups<T extends { brand: string | null; offerType: string | null; offerModel: string | null; updatedAt: string }>(offers: T[]) {
-  const brandMap = new Map<string, Map<string, Map<string, T[]>>>();
-
-  for (const offer of offers) {
-    const brandLabel = offer.brand?.trim() || "Other";
-    const offerTypeLabel = getOfferTypeLabel(offer.offerType);
-    const offerModelLabel = getOfferModelLabel(offer.offerModel);
-
-    if (!brandMap.has(brandLabel)) brandMap.set(brandLabel, new Map());
-    const offerTypeMap = brandMap.get(brandLabel)!;
-    if (!offerTypeMap.has(offerTypeLabel)) offerTypeMap.set(offerTypeLabel, new Map());
-    const modelMap = offerTypeMap.get(offerTypeLabel)!;
-    if (!modelMap.has(offerModelLabel)) modelMap.set(offerModelLabel, []);
-    modelMap.get(offerModelLabel)!.push(offer);
-  }
-
-  return Array.from(brandMap.entries())
-    .sort(([brandA], [brandB]) => {
-      const sortDiff = getBrandSortValue(brandA) - getBrandSortValue(brandB);
-      return sortDiff !== 0 ? sortDiff : brandA.localeCompare(brandB);
-    })
-    .map(([brandLabel, offerTypeMap]) => ({
-      brandLabel,
-      totalCount: Array.from(offerTypeMap.values()).reduce(
-        (brandTotal, modelMap) => brandTotal + Array.from(modelMap.values()).reduce((modelTotal, rows) => modelTotal + rows.length, 0),
-        0,
-      ),
-      offerTypes: Array.from(offerTypeMap.entries())
-        .sort(([typeA], [typeB]) => {
-          const sortDiff = getOfferTypeSortValue(typeA) - getOfferTypeSortValue(typeB);
-          return sortDiff !== 0 ? sortDiff : typeA.localeCompare(typeB);
-        })
-        .map(([offerTypeLabel, modelMap]) => ({
-          offerTypeLabel,
-          totalCount: Array.from(modelMap.values()).reduce((sum, rows) => sum + rows.length, 0),
-          models: Array.from(modelMap.entries())
-            .sort(([modelA], [modelB]) => modelA.localeCompare(modelB))
-            .map(([modelLabel, rows]) => ({
-              modelLabel,
-              totalCount: rows.length,
-              offers: [...rows].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
-            })),
-        })),
-    }));
-}
-
 // ── A. Content Cadence ──────────────────────────────────
 function ContentCadence() {
   const { data: cadence, isLoading } = useQuery<CadenceRow[]>({
@@ -275,43 +246,69 @@ function ContentCadence() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs text-muted-foreground uppercase tracking-wider">
-                    <th className="text-left px-4 py-2 font-medium">Dealership</th>
-                    <th className="text-left px-4 py-2 font-medium">Post Type</th>
-                    <th className="text-center px-4 py-2 font-medium">Posts/Day</th>
-                    <th className="text-left px-4 py-2 font-medium">Platforms</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cadence.map((row, i) => {
-                    const platforms = JSON.parse(row.platforms) as string[];
-                    return (
-                      <tr key={i} className="border-b border-border/50 last:border-0">
-                        <td className="px-4 py-2 font-medium">{row.dealershipName}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{row.postType}</td>
-                        <td className="px-4 py-2 text-center">{row.postsPerDay}</td>
-                        <td className="px-4 py-2">
-                          <div className="flex gap-1.5">
-                            {platforms.map(p => (
-                              <Badge key={p} variant="outline" className="text-xs">
-                                {p === "googlebusiness" ? "GMB" : p.charAt(0).toUpperCase() + p.slice(1)}
-                              </Badge>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="space-y-3">
+          <div className="grid gap-3 md:hidden">
+            {cadence.map((row, i) => {
+              const platforms = JSON.parse(row.platforms) as string[];
+              return (
+                <Card key={i}>
+                  <CardContent className="space-y-3 p-4">
+                    <div className="space-y-1">
+                      <div className="text-sm font-medium">{row.dealershipName}</div>
+                      <div className="text-xs text-muted-foreground">{row.postType}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <Badge variant="outline">{row.postsPerDay} / day</Badge>
+                      {platforms.map((platform) => (
+                        <Badge key={platform} variant="secondary" className="text-[11px]">
+                          {platform === "googlebusiness" ? "GMB" : platform.charAt(0).toUpperCase() + platform.slice(1)}
+                        </Badge>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          <Card className="hidden md:block">
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-xs text-muted-foreground uppercase tracking-wider">
+                      <th className="text-left px-4 py-2 font-medium">Dealership</th>
+                      <th className="text-left px-4 py-2 font-medium">Post Type</th>
+                      <th className="text-center px-4 py-2 font-medium">Posts/Day</th>
+                      <th className="text-left px-4 py-2 font-medium">Platforms</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cadence.map((row, i) => {
+                      const platforms = JSON.parse(row.platforms) as string[];
+                      return (
+                        <tr key={i} className="border-b border-border/50 last:border-0">
+                          <td className="px-4 py-2 font-medium">{row.dealershipName}</td>
+                          <td className="px-4 py-2 text-muted-foreground">{row.postType}</td>
+                          <td className="px-4 py-2 text-center">{row.postsPerDay}</td>
+                          <td className="px-4 py-2">
+                            <div className="flex gap-1.5">
+                              {platforms.map(p => (
+                                <Badge key={p} variant="outline" className="text-xs">
+                                  {p === "googlebusiness" ? "GMB" : p.charAt(0).toUpperCase() + p.slice(1)}
+                                </Badge>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );
@@ -332,8 +329,8 @@ function OfferQueue() {
   const selectionDealerships = data?.selectionDealerships ?? [];
 
   const candidateIds = useMemo(() => candidates.map((offer) => offer.id), [candidates]);
-  const groupedCandidates = useMemo(() => buildOfferGroups(candidates), [candidates]);
-  const groupedApproved = useMemo(() => buildOfferGroups(approved), [approved]);
+  const groupedCandidates = useMemo(() => buildOfferFamilyGroups(candidates), [candidates]);
+  const groupedApproved = useMemo(() => buildOfferFamilyGroups(approved), [approved]);
   const downstreamReadyByDealership = useMemo(() => selectionDealerships.map((dealership) => ({
     ...dealership,
     offers: approved.flatMap((offer) => offer.targets
@@ -345,6 +342,10 @@ function OfferQueue() {
         uses: target.downstreamUses,
       }))),
   })), [approved, selectionDealerships]);
+  const buildReadyDealershipCount = useMemo(
+    () => downstreamReadyByDealership.filter((dealership) => dealership.offers.length > 0).length,
+    [downstreamReadyByDealership],
+  );
   const selectedCandidateCount = useMemo(
     () => selectedIds.filter((id) => candidateIds.includes(id)).length,
     [candidateIds, selectedIds],
@@ -461,6 +462,24 @@ function OfferQueue() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-lg border bg-muted/20 p-3 space-y-1">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">1. Intake</div>
+              <div className="text-lg font-semibold text-foreground">{(data?.stats.detected ?? 0) + (data?.stats.reviewing ?? 0)}</div>
+              <p className="text-xs text-muted-foreground">Offers still waiting on approval decisions.</p>
+            </div>
+            <div className="rounded-lg border bg-muted/20 p-3 space-y-1">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">2. Approved pool</div>
+              <div className="text-lg font-semibold text-foreground">{data?.stats.approved ?? 0}</div>
+              <p className="text-xs text-muted-foreground">Cleared offers ready for dealership targeting and downstream use.</p>
+            </div>
+            <div className="rounded-lg border bg-muted/20 p-3 space-y-1">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">3. Build ready</div>
+              <div className="text-lg font-semibold text-foreground">{buildReadyDealershipCount}</div>
+              <p className="text-xs text-muted-foreground">Dealerships with at least one routed specials-page or sales-email handoff.</p>
+            </div>
+          </div>
+
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline">Total {data?.stats.total ?? 0}</Badge>
             <Badge variant="outline">Awaiting approval {(data?.stats.detected ?? 0) + (data?.stats.reviewing ?? 0)}</Badge>
@@ -540,63 +559,87 @@ function OfferQueue() {
                           </div>
 
                           <div className="space-y-3 pl-0 md:pl-3">
-                            {offerTypeGroup.models.map((modelGroup) => (
-                              <div key={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${modelGroup.modelLabel}`} className="space-y-2">
-                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  {modelGroup.modelLabel} · {modelGroup.totalCount}
-                                </div>
-                                <div className="space-y-3">
-                                  {modelGroup.offers.map((offer) => {
-                                    const checked = selectedIds.includes(offer.id);
-                                    return (
-                                      <label key={offer.id} className="flex items-start gap-3 rounded-lg border bg-background p-3 cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          className="mt-1 h-4 w-4"
-                                          checked={checked}
-                                          onChange={(event) => toggleSelected(offer.id, event.target.checked)}
-                                          data-testid={`checkbox-offer-${offer.id}`}
-                                        />
-                                        <div className="flex-1 space-y-1">
-                                          <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                              <div className="font-medium text-sm">{offer.offerTitle}</div>
-                                              <div className="text-xs text-muted-foreground">
-                                                {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
-                                              </div>
-                                            </div>
-                                            <Badge variant="outline" className="capitalize">{offer.status}</Badge>
-                                          </div>
-                                          <div className="text-xs text-muted-foreground">
-                                            Updated {new Date(offer.updatedAt).toLocaleString()}
-                                            {offer.effectiveDate ? ` • Starts ${new Date(offer.effectiveDate).toLocaleDateString()}` : ""}
-                                            {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
-                                          </div>
-                                          <div className="flex flex-wrap gap-2 pt-1">
-                                            <Button size="sm" variant="outline" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "reviewing" }); }} disabled={bulkStatusMutation.isPending || offer.status === "reviewing"}>
-                                              Reviewing
-                                            </Button>
-                                            <Button size="sm" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "approved" }); }} disabled={bulkStatusMutation.isPending || offer.status === "approved"}>
-                                              Approve
-                                            </Button>
-                                            <Button size="sm" variant="destructive" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "rejected" }); }} disabled={bulkStatusMutation.isPending || offer.status === "rejected"}>
-                                              Reject
-                                            </Button>
-                                            {offer.sourceUrl ? (
-                                              <Button size="sm" variant="ghost" asChild>
-                                                <a href={offer.sourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
-                                                  Open source
-                                                </a>
-                                              </Button>
-                                            ) : null}
-                                          </div>
+                            <Accordion type="multiple" className="space-y-3">
+                              {offerTypeGroup.families.map((familyGroup) => (
+                                <AccordionItem
+                                  key={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${familyGroup.familyLabel}`}
+                                  value={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${familyGroup.familyLabel}`}
+                                  className="rounded-lg border bg-background/80 px-3"
+                                >
+                                  <AccordionTrigger className="py-2.5 hover:no-underline">
+                                    <div className="flex w-full flex-wrap items-center justify-between gap-3 pr-3 text-left">
+                                      <div className="min-w-0 flex-1">
+                                        <div className="text-base font-semibold text-foreground">
+                                          {familyGroup.familyLabel}
                                         </div>
-                                      </label>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ))}
+                                        <div className="text-sm font-medium text-foreground/80">
+                                          {familyGroup.summary}
+                                        </div>
+                                        {familyGroup.representativeVariantPreview && !familyGroup.summary.includes(familyGroup.representativeVariantPreview) ? (
+                                          <div className="text-[11px] text-muted-foreground line-clamp-1">
+                                            {familyGroup.representativeVariantPreview}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <Badge variant="secondary" className="hidden sm:inline-flex">{familyGroup.variantCount} variants</Badge>
+                                        <Badge variant="outline">{familyGroup.totalCount}</Badge>
+                                      </div>
+                                    </div>
+                                  </AccordionTrigger>
+                                  <AccordionContent className="space-y-2.5 pb-2.5">
+                                    {familyGroup.offers.map((offer) => {
+                                      const checked = selectedIds.includes(offer.id);
+                                      return (
+                                        <label key={offer.id} className="flex items-start gap-2.5 rounded-lg border bg-background px-3 py-2.5 cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            className="mt-1 h-4 w-4"
+                                            checked={checked}
+                                            onChange={(event) => toggleSelected(offer.id, event.target.checked)}
+                                            data-testid={`checkbox-offer-${offer.id}`}
+                                          />
+                                          <div className="flex-1 space-y-1">
+                                            <div className="flex items-start justify-between gap-3">
+                                              <div>
+                                                <div className="font-medium text-sm leading-snug">{offer.offerTitle}</div>
+                                                <div className="text-[11px] text-muted-foreground line-clamp-1">
+                                                  {[offer.accountName, offer.offerModel].filter(Boolean).join(" • ") || offer.sourceKey}
+                                                </div>
+                                              </div>
+                                              <Badge variant="outline" className="capitalize">{offer.status}</Badge>
+                                            </div>
+                                            <div className="text-[11px] text-muted-foreground">
+                                              Updated {new Date(offer.updatedAt).toLocaleString()}
+                                              {offer.effectiveDate ? ` • Starts ${new Date(offer.effectiveDate).toLocaleDateString()}` : ""}
+                                              {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
+                                            </div>
+                                            <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                              <Button size="sm" variant="outline" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "reviewing" }); }} disabled={bulkStatusMutation.isPending || offer.status === "reviewing"}>
+                                                Reviewing
+                                              </Button>
+                                              <Button size="sm" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "approved" }); }} disabled={bulkStatusMutation.isPending || offer.status === "approved"}>
+                                                Approve
+                                              </Button>
+                                              <Button size="sm" variant="destructive" onClick={(event) => { event.preventDefault(); bulkStatusMutation.mutate({ ids: [offer.id], status: "rejected" }); }} disabled={bulkStatusMutation.isPending || offer.status === "rejected"}>
+                                                Reject
+                                              </Button>
+                                              {offer.sourceUrl ? (
+                                                <Button size="sm" variant="ghost" asChild>
+                                                  <a href={offer.sourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                                                    Open source
+                                                  </a>
+                                                </Button>
+                                              ) : null}
+                                            </div>
+                                          </div>
+                                        </label>
+                                      );
+                                    })}
+                                  </AccordionContent>
+                                </AccordionItem>
+                              ))}
+                            </Accordion>
                           </div>
                         </div>
                       ))}
@@ -646,87 +689,124 @@ function OfferQueue() {
                           </div>
 
                           <div className="space-y-3 pl-0 md:pl-3">
-                            {offerTypeGroup.models.map((modelGroup) => (
-                              <div key={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${modelGroup.modelLabel}`} className="space-y-2">
-                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  {modelGroup.modelLabel} · {modelGroup.totalCount}
-                                </div>
-                                <div className="space-y-3">
-                                  {modelGroup.offers.map((offer) => {
-                                    const brandDealerships = selectionDealerships.filter((dealership) => !offer.brand || dealership.brand === offer.brand);
-                                    const selectedDealershipIds = offer.targets.map((target) => target.dealershipId);
-                                    const publishReady = offer.targets.some((target) => target.downstreamUses.length > 0);
-                                    return (
-                                      <div key={offer.id} className="rounded-lg border bg-background p-3 space-y-3">
-                                        <div className="flex items-start justify-between gap-3">
-                                          <div>
-                                            <div className="font-medium text-sm">{offer.offerTitle}</div>
-                                            <div className="text-xs text-muted-foreground">
-                                              {[offer.brand, offer.accountName, offer.offerModel, offer.offerType].filter(Boolean).join(" • ") || offer.sourceKey}
-                                            </div>
+                            <Accordion type="multiple" className="space-y-3">
+                              {offerTypeGroup.families.map((familyGroup) => (
+                                <AccordionItem
+                                  key={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${familyGroup.familyLabel}`}
+                                  value={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${familyGroup.familyLabel}`}
+                                  className="rounded-lg border bg-background/80 px-3"
+                                >
+                                  <AccordionTrigger className="py-2.5 hover:no-underline">
+                                    <div className="flex w-full flex-wrap items-center justify-between gap-3 pr-3 text-left">
+                                      <div className="min-w-0 flex-1">
+                                        <div className="text-base font-semibold text-foreground">
+                                          {familyGroup.familyLabel}
+                                        </div>
+                                        <div className="text-sm font-medium text-foreground/80">
+                                          {familyGroup.summary}
+                                        </div>
+                                        {familyGroup.representativeVariantPreview && !familyGroup.summary.includes(familyGroup.representativeVariantPreview) ? (
+                                          <div className="text-[11px] text-muted-foreground line-clamp-1">
+                                            {familyGroup.representativeVariantPreview}
                                           </div>
-                                          <Badge variant="outline" className="capitalize">{offer.status}</Badge>
-                                        </div>
-                                        <div className="text-xs text-muted-foreground">
-                                          Approved pool updated {new Date(offer.updatedAt).toLocaleString()}
-                                          {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
-                                        </div>
-
-                                        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
-                                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                        ) : null}
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <Badge variant="secondary" className="hidden sm:inline-flex">{familyGroup.variantCount} variants</Badge>
+                                        <Badge variant="outline">{familyGroup.totalCount}</Badge>
+                                      </div>
+                                    </div>
+                                  </AccordionTrigger>
+                                  <AccordionContent className="space-y-2.5 pb-2.5">
+                                    {familyGroup.offers.map((offer) => {
+                                      const brandDealerships = selectionDealerships.filter((dealership) => !offer.brand || dealership.brand === offer.brand);
+                                      const selectedDealershipIds = offer.targets.map((target) => target.dealershipId);
+                                      const publishReady = offer.targets.some((target) => target.downstreamUses.length > 0);
+                                      return (
+                                        <div key={offer.id} className="rounded-lg border bg-background px-3 py-2.5 space-y-2">
+                                          <div className="flex items-start justify-between gap-3">
                                             <div>
-                                              <div className="font-medium text-sm">Dealer selection</div>
-                                              <div className="text-xs text-muted-foreground">
-                                                Pick which {offer.brand || "approved"} stores should use this offer downstream.
+                                              <div className="font-medium text-sm leading-snug">{offer.offerTitle}</div>
+                                              <div className="text-[11px] text-muted-foreground line-clamp-1">
+                                                {[offer.accountName, offer.offerModel].filter(Boolean).join(" • ") || offer.sourceKey}
                                               </div>
                                             </div>
-                                            <div className="flex flex-wrap gap-2">
-                                              <Button size="sm" variant="outline" onClick={() => setAllDealershipTargets(offer.id, brandDealerships.map((dealership) => dealership.id))} disabled={targetMutation.isPending || brandDealerships.length === 0}>
-                                                All {offer.brand || "selected"} stores
-                                              </Button>
-                                              <Button size="sm" variant="ghost" onClick={() => clearDealershipTargets(offer.id)} disabled={targetMutation.isPending || selectedDealershipIds.length === 0}>
-                                                Clear targets
-                                              </Button>
-                                            </div>
+                                            <Badge variant="outline" className="capitalize">{offer.status}</Badge>
+                                          </div>
+                                          <div className="text-[11px] text-muted-foreground">
+                                            Approved pool updated {new Date(offer.updatedAt).toLocaleString()}
+                                            {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
                                           </div>
 
-                                          <div className="flex flex-wrap gap-2">
-                                            {brandDealerships.map((dealership) => {
-                                              const isSelected = selectedDealershipIds.includes(dealership.id);
-                                              return (
-                                                <Button
-                                                  key={dealership.id}
-                                                  size="sm"
-                                                  variant={isSelected ? "default" : "outline"}
-                                                  onClick={() => toggleDealershipTarget(offer.id, dealership.id, selectedDealershipIds)}
-                                                  disabled={targetMutation.isPending}
-                                                  data-testid={`button-offer-${offer.id}-dealer-${dealership.id}`}
-                                                >
-                                                  {dealership.name}
+                                          <div className="rounded-md border bg-muted/20 px-2.5 py-2 space-y-2">
+                                            <div className="flex flex-col gap-1.5 md:flex-row md:items-start md:justify-between">
+                                              <div className="space-y-0.5">
+                                                <div className="font-medium text-xs uppercase tracking-wide text-muted-foreground">Dealer selection</div>
+                                                <div className="text-[11px] text-muted-foreground">
+                                                  Pick which {offer.brand || "approved"} stores should use this offer downstream.
+                                                </div>
+                                              </div>
+                                              <div className="flex flex-wrap gap-1.5">
+                                                <Button size="sm" variant="outline" className="h-7 rounded-full px-2.5 text-[11px]" onClick={() => setAllDealershipTargets(offer.id, brandDealerships.map((dealership) => dealership.id))} disabled={targetMutation.isPending || brandDealerships.length === 0}>
+                                                  All {offer.brand || "selected"} stores
                                                 </Button>
-                                              );
-                                            })}
-                                          </div>
+                                                <Button size="sm" variant="ghost" className="h-7 rounded-full px-2.5 text-[11px]" onClick={() => clearDealershipTargets(offer.id)} disabled={targetMutation.isPending || selectedDealershipIds.length === 0}>
+                                                  Clear targets
+                                                </Button>
+                                              </div>
+                                            </div>
 
-                                          <div className="text-xs text-muted-foreground">
-                                            {offer.targets.length > 0
-                                              ? `Selected for: ${offer.targets.map((target) => target.dealershipName).join(", ")}`
-                                              : `No dealership targets selected yet. This ${offer.brand || "approved"} offer is approved, but not routed to a store yet.`}
-                                          </div>
-
-                                          {offer.targets.length > 0 ? (
-                                            <div className="space-y-2 pt-1">
-                                              {offer.targets.map((target) => {
-                                                const currentUses = target.downstreamUses.map((use) => ({ channel: use.channel, placement: use.placement }));
-                                                const specialsUse = currentUses.find((use) => use.channel === "specials-page");
-                                                const emailUse = currentUses.find((use) => use.channel === "sales-email");
+                                            <div className="flex flex-wrap gap-1.5">
+                                              {brandDealerships.map((dealership) => {
+                                                const isSelected = selectedDealershipIds.includes(dealership.id);
                                                 return (
-                                                  <div key={target.id} className="rounded-md border bg-background p-3 space-y-2">
-                                                    <div className="font-medium text-xs uppercase tracking-wide text-muted-foreground">{target.dealershipName} downstream plan</div>
-                                                    <div className="flex flex-wrap gap-2">
+                                                  <Button
+                                                    key={dealership.id}
+                                                    size="sm"
+                                                    variant={isSelected ? "default" : "outline"}
+                                                    className="h-7 rounded-full px-2.5 text-[11px]"
+                                                    onClick={() => toggleDealershipTarget(offer.id, dealership.id, selectedDealershipIds)}
+                                                    disabled={targetMutation.isPending}
+                                                    data-testid={`button-offer-${offer.id}-dealer-${dealership.id}`}
+                                                  >
+                                                    {dealership.name}
+                                                  </Button>
+                                                );
+                                              })}
+                                            </div>
+
+                                            <div className="rounded-md border border-dashed bg-background/70 px-2 py-1.5">
+                                              {offer.targets.length > 0 ? (
+                                                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                                  <span className="font-medium text-muted-foreground">Selected for</span>
+                                                  {offer.targets.map((target) => (
+                                                    <Badge key={target.id} variant="secondary" className="rounded-full px-2 py-0.5 text-[11px] font-normal">
+                                                      {target.dealershipName}
+                                                    </Badge>
+                                                  ))}
+                                                </div>
+                                              ) : (
+                                                <div className="text-[11px] text-muted-foreground">
+                                                  No dealership targets selected yet. This {offer.brand || "approved"} offer is approved, but not routed to a store yet.
+                                                </div>
+                                              )}
+                                            </div>
+
+                                            {offer.targets.length > 0 ? (
+                                              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                                {offer.targets.map((target) => {
+                                                  const currentUses = target.downstreamUses.map((use) => ({ channel: use.channel, placement: use.placement }));
+                                                  const specialsUse = currentUses.find((use) => use.channel === "specials-page");
+                                                  const emailUse = currentUses.find((use) => use.channel === "sales-email");
+                                                  return (
+                                                    <div key={target.id} className="flex min-w-[240px] flex-1 flex-wrap items-center gap-1.5 rounded-full border bg-background px-2 py-1.5">
+                                                      <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] font-medium">
+                                                        {target.dealershipName}
+                                                      </Badge>
                                                       <Button
                                                         size="sm"
                                                         variant={specialsUse ? "default" : "outline"}
+                                                        className="h-7 rounded-full px-2.5 text-[11px]"
                                                         onClick={() => toggleDownstreamUse(offer.id, target.dealershipId, currentUses, { channel: "specials-page", placement: specialsUse?.placement === "hero" ? "supporting" : "hero" })}
                                                         disabled={downstreamUseMutation.isPending}
                                                       >
@@ -735,25 +815,25 @@ function OfferQueue() {
                                                       <Button
                                                         size="sm"
                                                         variant={emailUse ? "default" : "outline"}
+                                                        className="h-7 rounded-full px-2.5 text-[11px]"
                                                         onClick={() => toggleDownstreamUse(offer.id, target.dealershipId, currentUses, { channel: "sales-email", placement: emailUse?.placement === "hero" ? "primary" : "hero" })}
                                                         disabled={downstreamUseMutation.isPending}
                                                       >
                                                         {emailUse ? `Sales email: ${emailUse.placement}` : "Use in sales email"}
                                                       </Button>
+                                                      <span className="text-[11px] text-muted-foreground">
+                                                        {target.downstreamUses.length > 0
+                                                          ? target.downstreamUses.map((use) => `${use.channel === "specials-page" ? "specials page" : "sales email"} as ${use.placement}`).join(" • ")
+                                                          : "Not yet assigned to a specials page or sales email slot."}
+                                                      </span>
                                                     </div>
-                                                    <div className="text-xs text-muted-foreground">
-                                                      {target.downstreamUses.length > 0
-                                                        ? target.downstreamUses.map((use) => `${use.channel === "specials-page" ? "specials page" : "sales email"} as ${use.placement}`).join(" • ")
-                                                        : "Not yet assigned to a specials page or sales email slot."}
-                                                    </div>
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          ) : null}
-                                        </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            ) : null}
+                                          </div>
 
-                                        <div className="flex flex-wrap gap-2 pt-1">
+                                          <div className="flex flex-wrap gap-2 pt-1">
                                           <Button size="sm" variant="outline" onClick={() => bulkStatusMutation.mutate({ ids: [offer.id], status: "detected" })} disabled={bulkStatusMutation.isPending || targetMutation.isPending}>
                                             Move back to queue
                                           </Button>
@@ -776,9 +856,10 @@ function OfferQueue() {
                                       </div>
                                     );
                                   })}
-                                </div>
-                              </div>
-                            ))}
+                                  </AccordionContent>
+                                </AccordionItem>
+                              ))}
+                            </Accordion>
                           </div>
                         </div>
                       ))}
@@ -801,18 +882,23 @@ function OfferQueue() {
 
             <div className="grid gap-3 md:grid-cols-2">
               {downstreamReadyByDealership.map((dealership) => (
-                <div key={dealership.id} className="rounded-md border p-3 space-y-2">
-                  <div className="font-medium text-sm">{dealership.name}</div>
+                <div key={dealership.id} className="rounded-md border px-3 py-2.5 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-medium text-sm">{dealership.name}</div>
+                    <Badge variant="outline">{dealership.offers.length}</Badge>
+                  </div>
                   {dealership.offers.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">No approved offers are routed into downstream builds for this store yet.</div>
+                    <div className="text-[11px] text-muted-foreground">No approved offers are routed into downstream builds for this store yet.</div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1.5">
                       {dealership.offers.map((offer) => (
-                        <div key={`${dealership.id}-${offer.offerId}`} className="rounded-md border bg-muted/20 p-2">
-                          <div className="text-sm font-medium">{offer.offerTitle}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {offer.uses.map((use) => `${use.channel === "specials-page" ? "specials page" : "sales email"} as ${use.placement}`).join(" • ")}
-                          </div>
+                        <div key={`${dealership.id}-${offer.offerId}`} className="flex min-w-[220px] flex-1 flex-wrap items-center gap-1.5 rounded-full border bg-muted/20 px-2 py-1.5">
+                          <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[11px] font-normal">{offer.offerTitle}</Badge>
+                          {offer.uses.map((use) => (
+                            <Badge key={`${dealership.id}-${offer.offerId}-${use.id}`} variant="outline" className="rounded-full px-2 py-0.5 text-[11px] font-normal capitalize">
+                              {use.channel === "specials-page" ? "specials" : "email"}: {use.placement}
+                            </Badge>
+                          ))}
                         </div>
                       ))}
                     </div>
@@ -837,33 +923,36 @@ function OfferQueue() {
 
             <div className="grid gap-3 md:grid-cols-2">
               {(buildPlan?.dealerships ?? []).map((dealership) => (
-                <div key={dealership.dealershipId} className="rounded-md border p-3 space-y-3">
-                  <div>
-                    <div className="font-medium text-sm">{dealership.dealershipName}</div>
-                    <div className="text-xs text-muted-foreground">{dealership.readyOfferCount} downstream placements ready to build.</div>
+                <div key={dealership.dealershipId} className="rounded-md border px-3 py-2.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="font-medium text-sm">{dealership.dealershipName}</div>
+                      <div className="text-[11px] text-muted-foreground">{dealership.readyOfferCount} downstream placements ready to build.</div>
+                    </div>
+                    <Badge variant="outline">{dealership.readyOfferCount}</Badge>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {dealership.channels.map((channel) => (
-                      <div key={`${dealership.dealershipId}-${channel.channel}`} className="rounded-md border bg-muted/20 p-3 space-y-2">
+                      <div key={`${dealership.dealershipId}-${channel.channel}`} className="rounded-md border bg-muted/20 px-2.5 py-2 space-y-1.5">
                         <div className="flex items-center justify-between gap-2">
-                          <div className="font-medium text-sm">{channel.channelLabel}</div>
+                          <div className="font-medium text-xs uppercase tracking-wide text-muted-foreground">{channel.channelLabel}</div>
                           <Badge variant="outline">{channel.offerCount}</Badge>
                         </div>
                         {channel.offerCount === 0 ? (
-                          <div className="text-xs text-muted-foreground">No approved offers assigned here yet.</div>
+                          <div className="text-[11px] text-muted-foreground">No approved offers assigned here yet.</div>
                         ) : (
-                          <div className="space-y-2">
+                          <div className="flex flex-wrap gap-1.5">
                             {channel.offers.map((offer) => (
-                              <div key={`${channel.channel}-${offer.offerReviewId}-${offer.placement}`} className="rounded-md border bg-background p-2">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="text-sm font-medium">{offer.offerTitle}</div>
-                                  <Badge className="capitalize" variant="secondary">{offer.placement}</Badge>
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                  {[offer.offerModel, offer.offerType].filter(Boolean).join(" • ")}
-                                  {offer.expirationDate ? ` • Expires ${new Date(offer.expirationDate).toLocaleDateString()}` : ""}
-                                </div>
+                              <div key={`${channel.channel}-${offer.offerReviewId}-${offer.placement}`} className="flex min-w-[220px] flex-1 flex-wrap items-center gap-1.5 rounded-full border bg-background px-2 py-1.5">
+                                <Badge className="rounded-full px-2 py-0.5 text-[11px] font-normal" variant="secondary">{offer.offerTitle}</Badge>
+                                <Badge className="rounded-full px-2 py-0.5 text-[11px] capitalize" variant="outline">{offer.placement}</Badge>
+                                {offer.offerModel ? (
+                                  <span className="text-[11px] text-muted-foreground">{offer.offerModel}</span>
+                                ) : null}
+                                {offer.expirationDate ? (
+                                  <span className="text-[11px] text-muted-foreground">Expires {new Date(offer.expirationDate).toLocaleDateString()}</span>
+                                ) : null}
                               </div>
                             ))}
                           </div>
@@ -923,6 +1012,246 @@ function OfferSources() {
               {source.evidenceNotes ? <div className="text-xs text-muted-foreground">{source.evidenceNotes}</div> : null}
             </div>
           ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function EmailIterationSetup() {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<EmailIterationData>({
+    queryKey: ["/api/content-engine/email-iterations"],
+  });
+  const [drafts, setDrafts] = useState<Record<number, EmailIterationDraft>>({});
+
+  useEffect(() => {
+    if (!data?.cards) return;
+    setDrafts((current) => {
+      const next = { ...current };
+      for (const card of data.cards) {
+        next[card.id] = current[card.id] ?? {
+          monthLabel: card.monthLabel,
+          campaignLabel: card.campaignLabel,
+          selectedOfferReviewIds: card.selectedOfferReviewIds,
+          offerChangesNotes: card.offerChangesNotes,
+          photoChangesNotes: card.photoChangesNotes,
+          themeCustomBlockNotes: card.themeCustomBlockNotes,
+          ctaLinkNotes: card.ctaLinkNotes,
+          carryoverNotes: card.carryoverNotes,
+        };
+      }
+      return next;
+    });
+  }, [data]);
+
+  const updateDraft = (id: number, patch: Partial<EmailIterationDraft>) => {
+    setDrafts((current) => ({
+      ...current,
+      [id]: {
+        ...(current[id] ?? {
+          monthLabel: "",
+          campaignLabel: "",
+          selectedOfferReviewIds: [],
+          offerChangesNotes: "",
+          photoChangesNotes: "",
+          themeCustomBlockNotes: "",
+          ctaLinkNotes: "",
+          carryoverNotes: "",
+        }),
+        ...patch,
+      },
+    }));
+  };
+
+  const toggleSelectedOffer = (cardId: number, offerReviewId: number) => {
+    const selectedIds = drafts[cardId]?.selectedOfferReviewIds ?? data?.cards.find((card) => card.id === cardId)?.selectedOfferReviewIds ?? [];
+    updateDraft(cardId, {
+      selectedOfferReviewIds: selectedIds.includes(offerReviewId)
+        ? selectedIds.filter((id) => id !== offerReviewId)
+        : [...selectedIds, offerReviewId],
+    });
+  };
+
+  const saveMutation = useMutation({
+    mutationFn: async ({ id, draft }: { id: number; draft: EmailIterationDraft }) => {
+      const res = await apiRequest("PATCH", `/api/content-engine/email-iterations/${id}`, draft);
+      return res.json();
+    },
+    onSuccess: async (updated: EmailIterationCardData) => {
+      setDrafts((current) => ({
+        ...current,
+        [updated.id]: {
+          monthLabel: updated.monthLabel,
+          campaignLabel: updated.campaignLabel,
+          selectedOfferReviewIds: updated.selectedOfferReviewIds,
+          offerChangesNotes: updated.offerChangesNotes,
+          photoChangesNotes: updated.photoChangesNotes,
+          themeCustomBlockNotes: updated.themeCustomBlockNotes,
+          ctaLinkNotes: updated.ctaLinkNotes,
+          carryoverNotes: updated.carryoverNotes,
+        },
+      }));
+      await queryClient.invalidateQueries({ queryKey: ["/api/content-engine/email-iterations"] });
+      toast({ title: `Saved ${updated.store} ${updated.campaignType} iterator` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Unable to save email iterator", description: error.message, variant: "destructive" });
+    },
+  });
+
+  if (isLoading) return <Skeleton className="h-32 rounded-lg" />;
+
+  const cards = data?.cards ?? [];
+
+  return (
+    <div className="space-y-3">
+      <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+        <Mail className="h-4 w-4" /> Email Iteration Setup
+      </h2>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Build each month from the last approved email</CardTitle>
+          <CardDescription>
+            This is the monthly iterator layer for dealership sales and service emails. Pick up last month’s base, note the offer/photo/theme deltas, and keep production moving without redesigning the template.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">Active now {cards.filter((card) => card.status === "active-now").length}</Badge>
+            <Badge variant="outline">Later {cards.filter((card) => card.status === "later").length}</Badge>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            {cards.map((card) => {
+              const draft = drafts[card.id] ?? {
+                monthLabel: card.monthLabel,
+                campaignLabel: card.campaignLabel,
+                selectedOfferReviewIds: card.selectedOfferReviewIds,
+                offerChangesNotes: card.offerChangesNotes,
+                photoChangesNotes: card.photoChangesNotes,
+                themeCustomBlockNotes: card.themeCustomBlockNotes,
+                ctaLinkNotes: card.ctaLinkNotes,
+                carryoverNotes: card.carryoverNotes,
+              };
+
+              return (
+                <div key={card.id} className="rounded-lg border px-3 py-2.5 space-y-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="text-sm font-semibold">{card.store}</div>
+                      <div className="text-[11px] text-muted-foreground">{card.location || card.brand || "Email iterator"}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Badge variant={card.status === "active-now" ? "default" : "secondary"}>
+                        {card.status === "active-now" ? "Active now" : "Later"}
+                      </Badge>
+                      <Badge variant="outline" className="capitalize">{card.campaignType}</Badge>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border bg-muted/20 px-2.5 py-2 space-y-2">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Latest base email</div>
+                      {card.latestBaseEmailReferenceFile ? (
+                        <a href={`file://${card.latestBaseEmailReferenceFile}`} className="text-xs text-primary hover:underline break-all">
+                          {compactFileLabel(card.latestBaseEmailReferenceFile)}
+                        </a>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">No base file seeded yet.</div>
+                      )}
+                    </div>
+
+                    {card.priorReferenceFiles.length > 0 ? (
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Reference history</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {card.priorReferenceFiles.map((path) => (
+                            <Badge key={path} variant="outline" className="rounded-full px-2 py-0.5 text-[11px] font-normal">
+                              {compactFileLabel(path)}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-md border bg-muted/20 px-2.5 py-2 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Monthly offer menu</div>
+                        <div className="text-[11px] text-muted-foreground">Pick the offers you want in play this month. This does *not* auto-write them into the email.</div>
+                      </div>
+                      <Badge variant="outline">{draft.selectedOfferReviewIds.length} selected</Badge>
+                    </div>
+                    {card.availableOfferOptions.length === 0 ? (
+                      <div className="text-xs text-muted-foreground">No approved offer menu is available for this store yet.</div>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {card.availableOfferOptions.map((offer) => {
+                          const isSelected = draft.selectedOfferReviewIds.includes(offer.id);
+                          return (
+                            <button
+                              key={offer.id}
+                              type="button"
+                              onClick={() => toggleSelectedOffer(card.id, offer.id)}
+                              className={`rounded-full border px-2.5 py-1 text-left text-[11px] transition-colors ${isSelected ? "border-primary bg-primary/10 text-foreground" : "border-border bg-background text-muted-foreground hover:text-foreground"}`}
+                            >
+                              <span className="font-medium text-foreground">{offer.offerTitle}</span>
+                              {offer.offerModel ? <span className="ml-1">• {offer.offerModel}</span> : null}
+                              {offer.offerType ? <span className="ml-1 uppercase">• {offer.offerType}</span> : null}
+                              {offer.channels.length > 0 ? <span className="ml-1">• {offer.channels.join(", ")}</span> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Month label</label>
+                      <Input value={draft.monthLabel} onChange={(event) => updateDraft(card.id, { monthLabel: event.target.value })} placeholder="June 2026" className="h-8 text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Campaign label</label>
+                      <Input value={draft.campaignLabel} onChange={(event) => updateDraft(card.id, { campaignLabel: event.target.value })} placeholder="Monthly sales email" className="h-8 text-sm" />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Offer changes</label>
+                      <Textarea value={draft.offerChangesNotes} onChange={(event) => updateDraft(card.id, { offerChangesNotes: event.target.value })} placeholder="What offers changed from the base email?" className="min-h-[76px] text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Photo changes</label>
+                      <Textarea value={draft.photoChangesNotes} onChange={(event) => updateDraft(card.id, { photoChangesNotes: event.target.value })} placeholder="Which photo slots need updating?" className="min-h-[76px] text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Theme / custom blocks</label>
+                      <Textarea value={draft.themeCustomBlockNotes} onChange={(event) => updateDraft(card.id, { themeCustomBlockNotes: event.target.value })} placeholder="Seasonal theme, loyalty block, event insert, local special..." className="min-h-[76px] text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">CTA / link changes</label>
+                      <Textarea value={draft.ctaLinkNotes} onChange={(event) => updateDraft(card.id, { ctaLinkNotes: event.target.value })} placeholder="Anything to adjust in links, nav, buttons, destinations?" className="min-h-[76px] text-sm" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Carryover / base notes</label>
+                    <Textarea value={draft.carryoverNotes} onChange={(event) => updateDraft(card.id, { carryoverNotes: event.target.value })} placeholder="What should stay the same from the base email?" className="min-h-[76px] text-sm" />
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button size="sm" onClick={() => saveMutation.mutate({ id: card.id, draft })} disabled={saveMutation.isPending}>
+                      Save iterator notes
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -997,23 +1326,22 @@ function BrandFonts() {
 // ── Main Page ───────────────────────────────────────────
 export default function ContentEngine() {
   return (
-    <div className="p-6 space-y-6 max-w-[900px]">
-      <div>
-        <h1 className="text-xl font-display font-semibold flex items-center gap-2">
-          <BookOpen className="h-5 w-5" /> Content Engine
-        </h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Shared offer review, downstream routing, and build-manifest handoff for Engine.
-        </p>
-      </div>
+    <PageShell className="max-w-[1100px]">
+      <PageHeader
+        eyebrow="Engine / Content Engine"
+        title="Content Engine"
+        description="Shared offer review, routing, and build-manifest handoff inside ENGINE. Approve offers here, route them store by store, then hand them into specials pages and sales emails."
+      />
 
       <ContentCadence />
       <Separator />
       <OfferQueue />
       <Separator />
+      <EmailIterationSetup />
+      <Separator />
       <OfferSources />
       <Separator />
       <BrandFonts />
-    </div>
+    </PageShell>
   );
 }

@@ -11,6 +11,7 @@ import {
   offerReviewTargets,
   offerReviewDownstreamUses,
   contentEngineBuildManifestEntries,
+  emailIterationSetups,
   type Dealership,
   type InsertDealership,
   type Post,
@@ -35,6 +36,8 @@ import {
   type InsertOfferReviewDownstreamUse,
   type ContentEngineBuildManifestEntry,
   type InsertContentEngineBuildManifestEntry,
+  type EmailIterationSetup,
+  type InsertEmailIterationSetup,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -42,6 +45,7 @@ import { eq, desc, and, sql } from "drizzle-orm";
 import { copyFileSync, existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import path from "path";
+import { buildSeededEmailIterationDefinitions } from "./email-iteration-config";
 import { sanitizeLegacyCaption } from "./post-sanitizer";
 
 function resolveDatabasePath() {
@@ -71,6 +75,46 @@ function resolveDatabasePath() {
 export const DATABASE_PATH = resolveDatabasePath();
 const sqlite = new Database(DATABASE_PATH);
 const db = drizzle(sqlite);
+
+const DUPLICATE_FOLDER_SOURCE_INDEX = "idx_posts_dealership_folder_source_unique";
+
+export class DuplicateFolderSourceError extends Error {
+  constructor(folderSource?: string | null) {
+    super(folderSource
+      ? `A post already exists for Drive source "${folderSource}" in this dealership.`
+      : "A post already exists for this Drive source in this dealership.");
+    this.name = "DuplicateFolderSourceError";
+  }
+}
+
+export function isDuplicateFolderSourceError(error: unknown): error is DuplicateFolderSourceError {
+  return error instanceof DuplicateFolderSourceError;
+}
+
+function normalizeFolderSource(folderSource?: string | null) {
+  const normalized = folderSource?.trim();
+  return normalized ? normalized : null;
+}
+
+function isSqliteDuplicateFolderSourceError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes(`UNIQUE constraint failed: posts.dealership_id, posts.folder_source`) ||
+    error.message.includes(DUPLICATE_FOLDER_SOURCE_INDEX);
+}
+
+function ensureFolderSourceUnique(dealershipId: number, folderSource: string, excludePostId?: number) {
+  const existing = db.select({ id: posts.id })
+    .from(posts)
+    .where(and(
+      eq(posts.dealershipId, dealershipId),
+      eq(posts.folderSource, folderSource),
+    ))
+    .get();
+
+  if (existing && existing.id !== excludePostId) {
+    throw new DuplicateFolderSourceError(folderSource);
+  }
+}
 
 export interface IStorage {
   // Dealerships
@@ -119,6 +163,8 @@ export interface IStorage {
     offerReviewId: number,
     entries: InsertContentEngineBuildManifestEntry[],
   ): ContentEngineBuildManifestEntry[];
+  getEmailIterationSetups(): EmailIterationSetup[];
+  updateEmailIterationSetup(id: number, data: Partial<InsertEmailIterationSetup>): EmailIterationSetup | undefined;
   getOfferReviewStats(): {
     total: number;
     detected: number;
@@ -171,6 +217,10 @@ export class DatabaseStorage implements IStorage {
         platforms TEXT DEFAULT '["instagram","facebook"]',
         scheduled_for TEXT,
         published_at TEXT,
+        publish_attempts INTEGER NOT NULL DEFAULT 0,
+        last_publish_attempt_at TEXT,
+        publish_backoff_until TEXT,
+        publish_results TEXT,
         folder_source TEXT,
         notes TEXT,
         created_at TEXT NOT NULL
@@ -324,7 +374,49 @@ export class DatabaseStorage implements IStorage {
         updated_at TEXT NOT NULL,
         UNIQUE(offer_review_id, dealership_id, channel)
       );
+
+      CREATE TABLE IF NOT EXISTS email_iteration_setups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dealership_id INTEGER NOT NULL,
+        campaign_key TEXT NOT NULL,
+        campaign_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active-now',
+        latest_base_email_reference_file TEXT,
+        prior_reference_files TEXT NOT NULL DEFAULT '[]',
+        month_label TEXT NOT NULL DEFAULT '',
+        campaign_label TEXT NOT NULL DEFAULT '',
+        offer_changes_notes TEXT NOT NULL DEFAULT '',
+        photo_changes_notes TEXT NOT NULL DEFAULT '',
+        theme_custom_block_notes TEXT NOT NULL DEFAULT '',
+        cta_link_notes TEXT NOT NULL DEFAULT '',
+        carryover_notes TEXT NOT NULL DEFAULT '',
+        selected_offer_review_ids TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(dealership_id, campaign_key)
+      );
     `);
+
+    const postColumns = sqlite.prepare(`PRAGMA table_info(posts)`).all() as Array<{ name: string }>;
+    const postColumnNames = new Set(postColumns.map((col) => col.name));
+    if (!postColumnNames.has("caption_facebook")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN caption_facebook TEXT;`);
+    }
+    if (!postColumnNames.has("caption_gmb")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN caption_gmb TEXT;`);
+    }
+    if (!postColumnNames.has("publish_attempts")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN publish_attempts INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!postColumnNames.has("last_publish_attempt_at")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN last_publish_attempt_at TEXT;`);
+    }
+    if (!postColumnNames.has("publish_backoff_until")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN publish_backoff_until TEXT;`);
+    }
+    if (!postColumnNames.has("publish_results")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN publish_results TEXT;`);
+    }
 
     const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;
     const dealershipColumnNames = new Set(dealershipColumns.map((col) => col.name));
@@ -377,6 +469,12 @@ export class DatabaseStorage implements IStorage {
       sqlite.exec(`ALTER TABLE offer_reviews ADD COLUMN source_item_key TEXT;`);
     }
 
+    const emailIterationColumns = sqlite.prepare(`PRAGMA table_info(email_iteration_setups)`).all() as Array<{ name: string }>;
+    const emailIterationColumnNames = new Set(emailIterationColumns.map((col) => col.name));
+    if (!emailIterationColumnNames.has("selected_offer_review_ids")) {
+      sqlite.exec(`ALTER TABLE email_iteration_setups ADD COLUMN selected_offer_review_ids TEXT NOT NULL DEFAULT '[]';`);
+    }
+
     sqlite.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_offer_review_targets_offer_dealer
       ON offer_review_targets (offer_review_id, dealership_id);
@@ -392,6 +490,16 @@ export class DatabaseStorage implements IStorage {
       ON content_engine_build_manifest_entries (offer_review_id, dealership_id, channel);
     `);
 
+    try {
+      sqlite.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS ${DUPLICATE_FOLDER_SOURCE_INDEX}
+        ON posts (dealership_id, folder_source)
+        WHERE folder_source IS NOT NULL AND trim(folder_source) <> '';
+      `);
+    } catch (error) {
+      console.warn(`[storage] Unable to create ${DUPLICATE_FOLDER_SOURCE_INDEX}:`, error);
+    }
+
     this.sanitizeLegacyPosts();
     this.seedEngineModules();
 
@@ -403,6 +511,7 @@ export class DatabaseStorage implements IStorage {
 
     this.seedAccountModules();
     this.seedEngineSources();
+    this.seedEmailIterationSetups();
   }
 
   private seedDealerships() {
@@ -768,6 +877,35 @@ export class DatabaseStorage implements IStorage {
     db.delete(engineSources).where(sql`${engineSources.key} in ('bmw-offers-watcher', 'audi-offers-watcher')`).run();
   }
 
+  private seedEmailIterationSetups() {
+    const dealershipIdByName = new Map(this.getDealerships().map((dealership) => [dealership.name, dealership.id]));
+    const now = new Date().toISOString();
+
+    for (const definition of buildSeededEmailIterationDefinitions()) {
+      const dealershipId = dealershipIdByName.get(definition.dealershipName);
+      if (!dealershipId) continue;
+
+      db.insert(emailIterationSetups).values({
+        dealershipId,
+        campaignKey: definition.campaignKey,
+        campaignType: definition.campaignType,
+        status: definition.status,
+        latestBaseEmailReferenceFile: definition.latestBaseEmailReferenceFile,
+        priorReferenceFiles: JSON.stringify(definition.priorReferenceFiles),
+        monthLabel: definition.monthLabel,
+        campaignLabel: definition.campaignLabel,
+        offerChangesNotes: definition.offerChangesNotes,
+        photoChangesNotes: definition.photoChangesNotes,
+        themeCustomBlockNotes: definition.themeCustomBlockNotes,
+        ctaLinkNotes: definition.ctaLinkNotes,
+        carryoverNotes: definition.carryoverNotes,
+        selectedOfferReviewIds: "[]",
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoNothing().run();
+    }
+  }
+
   // Dealerships
   getDealerships(): Dealership[] {
     return db.select().from(dealerships).all();
@@ -849,13 +987,50 @@ export class DatabaseStorage implements IStorage {
   }
 
   createPost(data: InsertPost): Post {
-    return db.insert(posts).values({
-      ...data,
-      createdAt: new Date().toISOString(),
-    }).returning().get();
+    const folderSource = normalizeFolderSource(data.folderSource);
+
+    if (folderSource) {
+      ensureFolderSourceUnique(data.dealershipId, folderSource);
+    }
+
+    try {
+      return db.insert(posts).values({
+        ...data,
+        folderSource,
+        createdAt: new Date().toISOString(),
+      }).returning().get();
+    } catch (error) {
+      if (folderSource && isSqliteDuplicateFolderSourceError(error)) {
+        throw new DuplicateFolderSourceError(folderSource);
+      }
+      throw error;
+    }
   }
 
   updatePost(id: number, data: Partial<InsertPost>): Post | undefined {
+    const needsFolderSourceCheck = typeof data.folderSource !== "undefined" || typeof data.dealershipId !== "undefined";
+    if (needsFolderSourceCheck) {
+      const existing = this.getPost(id);
+      if (!existing) return undefined;
+
+      const folderSource = normalizeFolderSource(
+        typeof data.folderSource !== "undefined" ? data.folderSource : existing.folderSource,
+      );
+      if (folderSource) {
+        ensureFolderSourceUnique(data.dealershipId ?? existing.dealershipId, folderSource, id);
+      }
+
+      const nextData = typeof data.folderSource !== "undefined"
+        ? { ...data, folderSource }
+        : data;
+
+      return db.update(posts)
+        .set(nextData)
+        .where(eq(posts.id, id))
+        .returning()
+        .get();
+    }
+
     return db.update(posts).set(data).where(eq(posts.id, id)).returning().get();
   }
 
@@ -1198,6 +1373,21 @@ export class DatabaseStorage implements IStorage {
         updatedAt: now,
       }).returning().get());
     })();
+  }
+
+  getEmailIterationSetups(): EmailIterationSetup[] {
+    return db.select()
+      .from(emailIterationSetups)
+      .orderBy(emailIterationSetups.status, emailIterationSetups.campaignType, emailIterationSetups.dealershipId)
+      .all();
+  }
+
+  updateEmailIterationSetup(id: number, data: Partial<InsertEmailIterationSetup>): EmailIterationSetup | undefined {
+    return db.update(emailIterationSetups)
+      .set({ ...data, updatedAt: new Date().toISOString() })
+      .where(eq(emailIterationSetups.id, id))
+      .returning()
+      .get();
   }
 
   getOfferReviewStats() {

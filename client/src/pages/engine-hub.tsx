@@ -1,10 +1,13 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { PageHeader, PageShell } from "@/components/page-shell";
 import { useToast } from "@/hooks/use-toast";
+import { buildOfferFamilyGroups } from "@/lib/offer-grouping";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Activity, BookOpen, Boxes, PauseCircle, PlayCircle, ScanSearch } from "lucide-react";
 
@@ -112,13 +115,6 @@ function formatUpdateWindowDays(value: string) {
   }
 }
 
-function getBrandSortValue(brand: string | null | undefined) {
-  const normalized = (brand || "Other").trim().toLowerCase();
-  if (normalized === "audi") return 0;
-  if (normalized === "bmw") return 1;
-  return 2;
-}
-
 function getBrandSectionClasses(brand: string) {
   const normalized = brand.trim().toLowerCase();
   if (normalized === "audi") {
@@ -143,84 +139,6 @@ function getBrandSectionClasses(brand: string) {
     badge: "border-border bg-background text-foreground",
     offerTypeWrap: "border-l-2 border-l-border",
   };
-}
-
-function getOfferTypeSortValue(offerType: string) {
-  const normalized = offerType.trim().toLowerCase();
-  if (normalized === "lease") return 0;
-  if (normalized === "apr") return 1;
-  if (normalized === "finance") return 2;
-  if (normalized === "bonus cash / customer cash") return 3;
-  if (normalized === "loyalty / conquest") return 4;
-  if (normalized === "service / maintenance") return 5;
-  return 6;
-}
-
-function getOfferTypeLabel(offerType: string | null | undefined) {
-  const normalized = offerType?.trim().toLowerCase() || "";
-  if (!normalized) return "Other Offers";
-  if (normalized.includes("lease")) return "Lease";
-  if (normalized.includes("apr")) return "APR";
-  if (normalized.includes("finance")) return "Finance";
-  if (normalized.includes("bonus") || normalized.includes("customer cash") || normalized.includes("purchase credit") || normalized.includes("cash")) return "Bonus Cash / Customer Cash";
-  if (normalized.includes("loyalty") || normalized.includes("conquest")) return "Loyalty / Conquest";
-  if (normalized.includes("service") || normalized.includes("maintenance")) return "Service / Maintenance";
-  return offerType?.trim() || "Other Offers";
-}
-
-function getOfferModelLabel(offerModel: string | null | undefined) {
-  const normalized = offerModel?.trim();
-  if (!normalized) return "General / Multi-Model";
-  if (["all models", "multiple models", "multi-model", "national", "brand-wide"].includes(normalized.toLowerCase())) {
-    return "General / Multi-Model";
-  }
-  return normalized;
-}
-
-function buildOfferGroups<T extends { brand: string | null; offerType: string | null; offerModel: string | null; updatedAt: string }>(offers: T[]) {
-  const brandMap = new Map<string, Map<string, Map<string, T[]>>>();
-
-  for (const offer of offers) {
-    const brandLabel = offer.brand?.trim() || "Other";
-    const offerTypeLabel = getOfferTypeLabel(offer.offerType);
-    const offerModelLabel = getOfferModelLabel(offer.offerModel);
-
-    if (!brandMap.has(brandLabel)) brandMap.set(brandLabel, new Map());
-    const offerTypeMap = brandMap.get(brandLabel)!;
-    if (!offerTypeMap.has(offerTypeLabel)) offerTypeMap.set(offerTypeLabel, new Map());
-    const modelMap = offerTypeMap.get(offerTypeLabel)!;
-    if (!modelMap.has(offerModelLabel)) modelMap.set(offerModelLabel, []);
-    modelMap.get(offerModelLabel)!.push(offer);
-  }
-
-  return Array.from(brandMap.entries())
-    .sort(([brandA], [brandB]) => {
-      const sortDiff = getBrandSortValue(brandA) - getBrandSortValue(brandB);
-      return sortDiff !== 0 ? sortDiff : brandA.localeCompare(brandB);
-    })
-    .map(([brandLabel, offerTypeMap]) => ({
-      brandLabel,
-      totalCount: Array.from(offerTypeMap.values()).reduce(
-        (brandTotal, modelMap) => brandTotal + Array.from(modelMap.values()).reduce((modelTotal, rows) => modelTotal + rows.length, 0),
-        0,
-      ),
-      offerTypes: Array.from(offerTypeMap.entries())
-        .sort(([typeA], [typeB]) => {
-          const sortDiff = getOfferTypeSortValue(typeA) - getOfferTypeSortValue(typeB);
-          return sortDiff !== 0 ? sortDiff : typeA.localeCompare(typeB);
-        })
-        .map(([offerTypeLabel, modelMap]) => ({
-          offerTypeLabel,
-          totalCount: Array.from(modelMap.values()).reduce((sum, rows) => sum + rows.length, 0),
-          models: Array.from(modelMap.entries())
-            .sort(([modelA], [modelB]) => modelA.localeCompare(modelB))
-            .map(([modelLabel, rows]) => ({
-              modelLabel,
-              totalCount: rows.length,
-              offers: [...rows].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
-            })),
-        })),
-    }));
 }
 
 export default function EngineHub() {
@@ -331,42 +249,75 @@ export default function EngineHub() {
     );
   }
 
-  const groupedOfferReviews = buildOfferGroups(data.offerReviews);
+  const groupedOfferReviews = buildOfferFamilyGroups(data.offerReviews);
+  const nextStep = data.offerReviewStats.detected > 0
+    ? {
+        label: `Review ${data.offerReviewStats.detected} detected offer${data.offerReviewStats.detected === 1 ? "" : "s"}`,
+        detail: "Approve or reject the live intake before routing anything downstream.",
+        href: "/content-engine",
+        cta: "Open Content Engine",
+      }
+    : data.offerReviewStats.approved > 0
+      ? {
+          label: `Route ${data.offerReviewStats.approved} approved offer${data.offerReviewStats.approved === 1 ? "" : "s"}`,
+          detail: "Finish dealership targeting and downstream handoff for anything already approved.",
+          href: "/content-engine",
+          cta: "Route approved offers",
+        }
+      : {
+          label: data.status.paused ? "Resume imports when you are ready" : "Run the next scan when fresh assets or offers land",
+          detail: "The shared intake is clear right now, so the next operator move is new detection or a Drive scan.",
+          href: "/posts",
+          cta: "Open Posts",
+        };
 
   return (
-    <div className="p-6 space-y-6 max-w-[1200px]">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="space-y-2">
-          <h1 className="text-xl font-display font-semibold flex items-center gap-2" data-testid="text-engine-hub-title">
-            <Boxes className="h-5 w-5" />
-            Engine Hub
-          </h1>
-          <p className="text-sm text-muted-foreground max-w-2xl">
-            Shared-core view for engine modules, account coverage, and import activity while PostEngine and Content Engine stay live.
-          </p>
-        </div>
+    <PageShell>
+      <PageHeader
+        eyebrow="Engine / Shared intake"
+        title="Engine Hub"
+        description="Shared intake and source health for ENGINE. This is where you check imports, run detection, and decide what needs attention before Content Engine routing begins."
+        actions={
+          <>
+            <Button onClick={() => scanMutation.mutate()} disabled={scanMutation.isPending || data.status.paused} data-testid="button-engine-scan">
+              <ScanSearch className="mr-2 h-4 w-4" /> Run Drive Scan
+            </Button>
+            {data.status.paused ? (
+              <Button onClick={() => resumeMutation.mutate()} disabled={resumeMutation.isPending} data-testid="button-engine-resume" variant="outline">
+                <PlayCircle className="mr-2 h-4 w-4" /> Resume Imports
+              </Button>
+            ) : (
+              <Button variant="secondary" onClick={() => pauseMutation.mutate()} disabled={pauseMutation.isPending} data-testid="button-engine-pause">
+                <PauseCircle className="mr-2 h-4 w-4" /> Pause Imports
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => bmwDetectionMutation.mutate()} disabled={bmwDetectionMutation.isPending || data.status.paused} data-testid="button-engine-detect-bmw-offers">
+              <BookOpen className="mr-2 h-4 w-4" /> Detect BMW Offers
+            </Button>
+            <Button variant="outline" onClick={() => audiDetectionMutation.mutate()} disabled={audiDetectionMutation.isPending || data.status.paused} data-testid="button-engine-detect-audi-offers">
+              <BookOpen className="mr-2 h-4 w-4" /> Detect Audi Offers
+            </Button>
+          </>
+        }
+      />
 
-        <div className="flex flex-wrap gap-2">
-          {data.status.paused ? (
-            <Button onClick={() => resumeMutation.mutate()} disabled={resumeMutation.isPending} data-testid="button-engine-resume">
-              <PlayCircle className="h-4 w-4 mr-2" /> Resume Imports
-            </Button>
-          ) : (
-            <Button variant="secondary" onClick={() => pauseMutation.mutate()} disabled={pauseMutation.isPending} data-testid="button-engine-pause">
-              <PauseCircle className="h-4 w-4 mr-2" /> Pause Imports
-            </Button>
-          )}
-          <Button variant="outline" onClick={() => bmwDetectionMutation.mutate()} disabled={bmwDetectionMutation.isPending || data.status.paused} data-testid="button-engine-detect-bmw-offers">
-            <BookOpen className="h-4 w-4 mr-2" /> Detect BMW Offers
-          </Button>
-          <Button variant="outline" onClick={() => audiDetectionMutation.mutate()} disabled={audiDetectionMutation.isPending || data.status.paused} data-testid="button-engine-detect-audi-offers">
-            <BookOpen className="h-4 w-4 mr-2" /> Detect Audi Offers
-          </Button>
-          <Button onClick={() => scanMutation.mutate()} disabled={scanMutation.isPending || data.status.paused} data-testid="button-engine-scan">
-            <ScanSearch className="h-4 w-4 mr-2" /> Run Drive Scan
-          </Button>
-        </div>
-      </div>
+      <Card>
+        <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+          <div className="space-y-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Recommended next step</div>
+            <div className="text-base font-medium text-foreground">{nextStep.label}</div>
+            <p className="max-w-2xl text-sm text-muted-foreground">{nextStep.detail}</p>
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <Badge variant={data.status.paused ? "secondary" : "default"}>{data.status.paused ? "Paused" : "Imports live"}</Badge>
+              <Badge variant="outline">Last scan {formatDateTime(data.status.lastRunAt)}</Badge>
+              <Badge variant="outline">Queue {data.offerReviewStats.total}</Badge>
+            </div>
+          </div>
+          <Link href={nextStep.href}>
+            <Button variant="outline" className="w-full sm:w-auto">{nextStep.cta}</Button>
+          </Link>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
@@ -495,43 +446,67 @@ export default function EngineHub() {
                           </div>
 
                           <div className="space-y-3 pl-0 md:pl-3">
-                            {offerTypeGroup.models.map((modelGroup) => (
-                              <div key={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${modelGroup.modelLabel}`} className="space-y-2">
-                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  {modelGroup.modelLabel} · {modelGroup.totalCount}
-                                </div>
-                                <div className="space-y-3">
-                                  {modelGroup.offers.map((review) => (
-                                    <div key={review.id} className="rounded-lg border bg-background p-3 space-y-2">
-                                      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                                        <div>
-                                          <div className="font-medium">{review.offerTitle}</div>
-                                          <div className="text-xs text-muted-foreground">
-                                            {[review.brand, review.accountName, review.offerModel, review.offerType].filter(Boolean).join(" • ") || review.sourceKey}
-                                          </div>
+                            <Accordion type="multiple" className="space-y-3">
+                              {offerTypeGroup.families.map((familyGroup) => (
+                                <AccordionItem
+                                  key={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${familyGroup.familyLabel}`}
+                                  value={`${brandGroup.brandLabel}-${offerTypeGroup.offerTypeLabel}-${familyGroup.familyLabel}`}
+                                  className="rounded-lg border bg-background/80 px-3"
+                                >
+                                  <AccordionTrigger className="py-2.5 hover:no-underline">
+                                    <div className="flex w-full flex-wrap items-center justify-between gap-3 pr-3 text-left">
+                                      <div className="min-w-0 flex-1">
+                                        <div className="text-base font-semibold text-foreground">
+                                          {familyGroup.familyLabel}
                                         </div>
-                                        <Badge variant={statusVariant(review.status)}>{review.status}</Badge>
-                                      </div>
-                                      <div className="text-xs text-muted-foreground">
-                                        {review.moduleKey} • Updated {formatDateTime(review.updatedAt)}
-                                        {review.effectiveDate ? ` • Starts ${formatDateTime(review.effectiveDate)}` : ""}
-                                        {review.expirationDate ? ` • Ends ${formatDateTime(review.expirationDate)}` : ""}
-                                      </div>
-                                      <div className="flex flex-wrap gap-2">
-                                        <Button size="sm" variant="outline" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "reviewing" })} disabled={offerReviewMutation.isPending || review.status === "reviewing"}>Mark Reviewing</Button>
-                                        <Button size="sm" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "approved" })} disabled={offerReviewMutation.isPending || review.status === "approved"}>Approve</Button>
-                                        <Button size="sm" variant="destructive" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "rejected" })} disabled={offerReviewMutation.isPending || review.status === "rejected"}>Reject</Button>
-                                        {review.sourceUrl ? (
-                                          <Button size="sm" variant="ghost" asChild>
-                                            <a href={review.sourceUrl} target="_blank" rel="noreferrer">Open Source</a>
-                                          </Button>
+                                        <div className="text-sm font-medium text-foreground/80">
+                                          {familyGroup.summary}
+                                        </div>
+                                        {familyGroup.representativeVariantPreview && !familyGroup.summary.includes(familyGroup.representativeVariantPreview) ? (
+                                          <div className="text-[11px] text-muted-foreground line-clamp-1">
+                                            {familyGroup.representativeVariantPreview}
+                                          </div>
                                         ) : null}
                                       </div>
+                                      <div className="flex items-center gap-2">
+                                        <Badge variant="secondary" className="hidden sm:inline-flex">{familyGroup.variantCount} variants</Badge>
+                                        <Badge variant="outline">{familyGroup.totalCount}</Badge>
+                                      </div>
                                     </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
+                                  </AccordionTrigger>
+                                  <AccordionContent className="space-y-2.5 pb-2.5">
+                                    {familyGroup.offers.map((review) => (
+                                      <div key={review.id} className="rounded-lg border bg-background px-3 py-2.5 space-y-1.5">
+                                        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                                          <div>
+                                            <div className="text-sm font-medium leading-snug">{review.offerTitle}</div>
+                                            <div className="text-[11px] text-muted-foreground line-clamp-1">
+                                              {[review.accountName, review.offerModel].filter(Boolean).join(" • ") || review.sourceKey}
+                                            </div>
+                                          </div>
+                                          <Badge variant={statusVariant(review.status)}>{review.status}</Badge>
+                                        </div>
+                                        <div className="text-[11px] text-muted-foreground">
+                                          {review.moduleKey} • Updated {formatDateTime(review.updatedAt)}
+                                          {review.effectiveDate ? ` • Starts ${formatDateTime(review.effectiveDate)}` : ""}
+                                          {review.expirationDate ? ` • Ends ${formatDateTime(review.expirationDate)}` : ""}
+                                        </div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                          <Button size="sm" variant="outline" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "reviewing" })} disabled={offerReviewMutation.isPending || review.status === "reviewing"}>Mark Reviewing</Button>
+                                          <Button size="sm" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "approved" })} disabled={offerReviewMutation.isPending || review.status === "approved"}>Approve</Button>
+                                          <Button size="sm" variant="destructive" onClick={() => offerReviewMutation.mutate({ id: review.id, status: "rejected" })} disabled={offerReviewMutation.isPending || review.status === "rejected"}>Reject</Button>
+                                          {review.sourceUrl ? (
+                                            <Button size="sm" variant="ghost" asChild>
+                                              <a href={review.sourceUrl} target="_blank" rel="noreferrer">Open Source</a>
+                                            </Button>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </AccordionContent>
+                                </AccordionItem>
+                              ))}
+                            </Accordion>
                           </div>
                         </div>
                       ))}
@@ -616,6 +591,6 @@ export default function EngineHub() {
           </CardContent>
         </Card>
       </div>
-    </div>
+    </PageShell>
   );
 }
