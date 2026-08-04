@@ -1,10 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft, Save, Send, CalendarDays, Eye } from "lucide-react";
+import { ArrowLeft, Save, Send, CalendarDays, Eye, ImagePlus, Loader2, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getDashboardAuthHeaders } from "@/lib/dashboard-auth";
 import type { Post, Dealership } from "@shared/schema";
 import { Link } from "wouter";
 
@@ -61,6 +62,10 @@ export default function PostForm() {
   const isEdit = matchEdit && params?.id && params.id !== "new";
   const postId = isEdit ? Number(params.id) : null;
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [mediaUrls, setMediaUrls] = useState<string[]>([]);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  const [isDragActive, setIsDragActive] = useState(false);
 
   const { data: dealerships } = useQuery<Dealership[]>({
     queryKey: ["/api/dealerships"],
@@ -92,6 +97,68 @@ export default function PostForm() {
     },
   });
 
+  const readFileAsBase64 = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        const base64 = result.includes(",") ? result.split(",")[1] : result;
+        if (!base64) reject(new Error(`Could not read ${file.name}`));
+        else resolve(base64);
+      };
+      reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+      reader.readAsDataURL(file);
+    });
+
+  const uploadMediaFiles = async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (files.length === 0) return;
+    setIsUploadingMedia(true);
+    try {
+      const payloadFiles = [];
+      for (const file of files) {
+        payloadFiles.push({
+          filename: file.name,
+          mimeType: file.type || undefined,
+          contentBase64: await readFileAsBase64(file),
+        });
+      }
+      const res = await fetch("/api/media/upload", {
+        method: "POST",
+        headers: getDashboardAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ files: payloadFiles }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body?.error || body?.message || `Upload failed (${res.status})`);
+      }
+      const urls: string[] = Array.isArray(body.urls) ? body.urls : [];
+      if (urls.length === 0) throw new Error("Upload returned no media URLs");
+      setMediaUrls((prev) => {
+        const next = [...prev, ...urls];
+        if (typeof body.mediaType === "string" && body.mediaType) {
+          form.setValue("mediaType", body.mediaType);
+        } else if (next.length > 1) {
+          form.setValue("mediaType", "carousel");
+        }
+        return next;
+      });
+      toast({
+        title: urls.length === 1 ? "Media added" : `${urls.length} files added`,
+        description: "Attached to this one-off post.",
+      });
+    } catch (err) {
+      toast({
+        title: "Upload failed",
+        description: err instanceof Error ? err.message : "Could not upload media",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploadingMedia(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   // When editing, populate form with existing data
   useEffect(() => {
     if (existingPost) {
@@ -116,6 +183,12 @@ export default function PostForm() {
         mediaType: existingPost.mediaType || "image",
         notes: existingPost.notes || "",
       });
+      try {
+        const parsed = existingPost.mediaUrls ? JSON.parse(existingPost.mediaUrls) : [];
+        setMediaUrls(Array.isArray(parsed) ? parsed.filter((u: unknown) => typeof u === "string") : []);
+      } catch {
+        setMediaUrls([]);
+      }
     }
   }, [existingPost, form]);
 
@@ -137,6 +210,10 @@ export default function PostForm() {
         platforms: JSON.stringify(data.platforms),
         scheduledFor: data.scheduledFor || null,
         dealershipId: data.dealershipId,
+        mediaUrls: mediaUrls.length > 0 ? JSON.stringify(mediaUrls) : null,
+        mediaType:
+          data.mediaType ||
+          (mediaUrls.length > 1 ? "carousel" : mediaUrls.some((u) => /\.(mp4|mov|webm|m4v)(\?|$)/i.test(u)) ? "video" : "image"),
       };
       if (postId) {
         const res = await apiRequest("PATCH", `/api/posts/${postId}`, payload);
@@ -310,6 +387,102 @@ export default function PostForm() {
                       </FormItem>
                     )}
                   />
+
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium">Media</div>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          fileInputRef.current?.click();
+                        }
+                      }}
+                      onClick={() => fileInputRef.current?.click()}
+                      onDragEnter={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setIsDragActive(true);
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setIsDragActive(true);
+                      }}
+                      onDragLeave={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setIsDragActive(false);
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setIsDragActive(false);
+                        void uploadMediaFiles(event.dataTransfer.files);
+                      }}
+                      className={`rounded-lg border border-dashed px-4 py-6 text-center transition-colors cursor-pointer ${
+                        isDragActive
+                          ? "border-primary bg-primary/5"
+                          : "border-border bg-muted/20 hover:border-primary/50 hover:bg-muted/30"
+                      }`}
+                      data-testid="media-dropzone"
+                    >
+                      <div className="flex flex-col items-center gap-2">
+                        {isUploadingMedia ? (
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        ) : (
+                          <ImagePlus className="h-6 w-6 text-muted-foreground" />
+                        )}
+                        <div className="text-sm font-medium">
+                          {isUploadingMedia ? "Uploading…" : "Drop image or video here"}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          One-off posts · click to browse · jpg/png/webp/gif/mp4/mov
+                        </div>
+                      </div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*,video/mp4,video/quicktime,video/webm,.mov,.m4v"
+                        multiple
+                        className="hidden"
+                        data-testid="input-media-file"
+                        onChange={(event) => {
+                          if (event.target.files) void uploadMediaFiles(event.target.files);
+                        }}
+                      />
+                    </div>
+
+                    {mediaUrls.length > 0 && (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" data-testid="media-preview-grid">
+                        {mediaUrls.map((url) => {
+                          const isVideo = /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url);
+                          return (
+                            <div key={url} className="relative group rounded-md border overflow-hidden bg-muted/30 aspect-square">
+                              {isVideo ? (
+                                <video src={url} className="h-full w-full object-cover" muted playsInline />
+                              ) : (
+                                <img src={url} alt="Upload preview" className="h-full w-full object-cover" />
+                              )}
+                              <button
+                                type="button"
+                                className="absolute top-1.5 right-1.5 rounded-full bg-background/90 border p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setMediaUrls((prev) => prev.filter((item) => item !== url));
+                                }}
+                                data-testid="button-remove-media"
+                                aria-label="Remove media"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
 
                   <FormField
                     control={form.control}
@@ -503,7 +676,7 @@ export default function PostForm() {
                   type="button"
                   variant="secondary"
                   onClick={() => onSubmit("draft")}
-                  disabled={createMutation.isPending}
+                  disabled={createMutation.isPending || isUploadingMedia}
                   data-testid="button-save-draft"
                 >
                   <Save className="h-4 w-4 mr-1.5" />
@@ -513,7 +686,7 @@ export default function PostForm() {
                   type="button"
                   variant="outline"
                   onClick={() => onSubmit("queued")}
-                  disabled={createMutation.isPending}
+                  disabled={createMutation.isPending || isUploadingMedia}
                   data-testid="button-queue-review"
                 >
                   <Send className="h-4 w-4 mr-1.5" />
@@ -522,7 +695,7 @@ export default function PostForm() {
                 <Button
                   type="button"
                   onClick={() => onSubmit("scheduled")}
-                  disabled={createMutation.isPending}
+                  disabled={createMutation.isPending || isUploadingMedia}
                   data-testid="button-schedule"
                 >
                   <CalendarDays className="h-4 w-4 mr-1.5" />
@@ -557,7 +730,23 @@ export default function PostForm() {
                   </div>
                 )}
 
-                {(watchCaption || watchCaptionGmb || watchVehicle) ? (
+                {mediaUrls.length > 0 && (
+                  <div className="rounded-lg border p-3 space-y-2">
+                    <div className="text-xs font-semibold">Media</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {mediaUrls.slice(0, 4).map((url) => {
+                        const isVideo = /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url);
+                        return isVideo ? (
+                          <video key={url} src={url} className="rounded-md aspect-square object-cover w-full bg-muted" muted playsInline />
+                        ) : (
+                          <img key={url} src={url} alt="" className="rounded-md aspect-square object-cover w-full bg-muted" />
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {(watchCaption || watchCaptionGmb || watchVehicle || mediaUrls.length > 0) ? (
                   <div className="space-y-4">
                     <div className="rounded-lg border p-3 space-y-2">
                       <div className="text-xs font-semibold">Instagram Preview</div>

@@ -23,6 +23,7 @@ import {
   readDashboardPassword,
 } from "./dashboard-auth";
 import { findRecentVehicleDuplicate } from "./post-dedup";
+import { hostUploadedMedia, inferPostMediaType } from "./media-upload";
 
 const ARCHIVE_REQUIRED_STATUSES = new Set(["scheduled", "published"]);
 const DEFAULT_HIDDEN_POST_STATUSES = new Set(["rejected"]);
@@ -297,6 +298,43 @@ export async function registerRoutes(server: Server, app: Express) {
     const post = storage.getPost(Number(req.params.id));
     if (!post) return res.status(404).json({ error: "Not found" });
     res.json({ ...post, composedContent: composePostContent(post) });
+  });
+
+  app.post("/api/media/upload", async (req, res) => {
+    try {
+      const filesInput = Array.isArray(req.body?.files)
+        ? req.body.files
+        : req.body?.filename || req.body?.contentBase64
+          ? [req.body]
+          : [];
+
+      if (filesInput.length === 0) {
+        return res.status(400).json({ error: "No files provided. Pass files[] or filename + contentBase64." });
+      }
+      if (filesInput.length > 12) {
+        return res.status(400).json({ error: "Too many files (max 12)." });
+      }
+
+      const uploaded = [];
+      for (const file of filesInput) {
+        const filename = typeof file?.filename === "string" ? file.filename : "";
+        const contentBase64 = typeof file?.contentBase64 === "string" ? file.contentBase64 : "";
+        const mimeType = typeof file?.mimeType === "string" ? file.mimeType : undefined;
+        if (!filename || !contentBase64) {
+          return res.status(400).json({ error: "Each file needs filename and contentBase64." });
+        }
+        uploaded.push(await hostUploadedMedia({ filename, contentBase64, mimeType }));
+      }
+
+      res.status(201).json({
+        success: true,
+        files: uploaded,
+        urls: uploaded.map((item) => item.url),
+        mediaType: inferPostMediaType(uploaded.map((item) => item.mediaType)),
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || "Upload failed" });
+    }
   });
 
   app.post("/api/posts", (req, res) => {
