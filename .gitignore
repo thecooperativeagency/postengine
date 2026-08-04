@@ -10,3 +10,8 @@ pepper/pepper_tokens.env
 # Nested git repos (not submodules)
 claude/
 
+
+.DS_Store
+**/.DS_Store
+*.db.bak*
+sqlite.db.bak*

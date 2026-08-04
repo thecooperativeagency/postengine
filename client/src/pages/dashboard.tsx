@@ -94,9 +94,9 @@ export default function Dashboard({ dealershipFilter }: { dealershipFilter: numb
   /** dealershipId -> talking points text */
   const [talkingByStore, setTalkingByStore] = useState<Record<number, string>>({});
   const dashboardTitle = "Dashboard";
-  const dashboardEyebrow = "Engine / Post Engine";
+  const dashboardEyebrow = "Post Engine";
   const dealerSectionTitle = "Dealerships";
-  const dealerSectionDescription = "Current dealership coverage for seeded engine modules.";
+  const dealerSectionDescription = "Stores currently managed in Post Engine.";
   const { data, isLoading } = useQuery<DashboardData>({
     queryKey: ["/api/dashboard"],
   });

@@ -4,8 +4,6 @@ import {
   PlusCircle,
   ClipboardCheck,
   CalendarDays,
-  Boxes,
-  BookOpen,
   Settings,
   Building2,
 } from "lucide-react";
@@ -36,8 +34,6 @@ import {
 
 const fullNavItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Engine Hub", url: "/engine", icon: Boxes },
-  { title: "Content Engine", url: "/content-engine", icon: BookOpen },
   { title: "Posts", url: "/posts", icon: FileText },
   { title: "Review Queue", url: "/queue", icon: ClipboardCheck },
   { title: "Calendar", url: "/calendar", icon: CalendarDays },

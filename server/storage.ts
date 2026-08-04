@@ -45,7 +45,6 @@ import { eq, desc, and, sql } from "drizzle-orm";
 import { copyFileSync, existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import path from "path";
-import { buildSeededEmailIterationDefinitions } from "./email-iteration-config";
 import { sanitizeLegacyCaption } from "./post-sanitizer";
 
 function resolveDatabasePath() {
@@ -715,16 +714,7 @@ export class DatabaseStorage implements IStorage {
         key: "post-engine",
         name: "PostEngine",
         route: "/",
-        description: "Current social post workflow hub for queue, review, and publishing.",
-        status: "active",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        key: "content-engine",
-        name: "Content Engine",
-        route: "/content-engine",
-        description: "Content planning and production coordination surface kept live during transition.",
+        description: "Social post workflow for queue, review, and publishing.",
         status: "active",
         createdAt: now,
         updatedAt: now,
@@ -779,100 +769,6 @@ export class DatabaseStorage implements IStorage {
         lastResultSummary: "Ready for manual scans via /api/drive/scan",
         metadata: JSON.stringify({ route: "/api/drive/scan", notes: "Preserves existing Post Engine ingestion flow." }),
       },
-      {
-        key: "bmw-offers-api",
-        moduleKey: "content-engine",
-        name: "BMW Offers API",
-        watcherType: "api-poll",
-        sourceType: "offers-api",
-        status: "active",
-        target: "BMW USA national new-vehicle offers structured feed",
-        sourceUrl: "https://www.bmwusa.com/offers-api/current-offers/v2?bySeries=true",
-        accessStatus: "reliable",
-        preferredRank: 1,
-        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5]),
-        evidenceNotes: "Preferred structured source. Wayback sampling suggests offer refreshes usually appear near the start of the month, commonly days 1-5; API had a 2026-05-02 snapshot.",
-        cadenceMinutes: 1440,
-        lastCheckedAt: null,
-        lastResultSummary: "Vetted preferred BMW source; watcher not built yet",
-        metadata: JSON.stringify({
-          brand: "BMW",
-          preferred: true,
-          observedOn: "2026-05-08",
-          observedValidity: "Live offers page said offers valid through June 01, 2026.",
-          firstSeenSnapshotDays: [4, 3, 2, 1, 5, 1, 3, 5, 2],
-        }),
-      },
-      {
-        key: "bmw-offers-page",
-        moduleKey: "content-engine",
-        name: "BMW Offers Landing Page",
-        watcherType: "page-reference",
-        sourceType: "offers-page",
-        status: "active",
-        target: "BMW USA public specials/offers page",
-        sourceUrl: "https://www.bmwusa.com/special-offers-new.html",
-        accessStatus: "reference",
-        preferredRank: 2,
-        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5]),
-        evidenceNotes: "Secondary public reference page for verifying live offer windows. Observed on 2026-05-08 with page copy stating offers valid through June 01, 2026.",
-        cadenceMinutes: 1440,
-        lastCheckedAt: null,
-        lastResultSummary: "Vetted BMW reference page; watcher not built yet",
-        metadata: JSON.stringify({
-          brand: "BMW",
-          preferred: false,
-          observedOn: "2026-05-08",
-          observedValidity: "Offers valid through June 01, 2026.",
-        }),
-      },
-      {
-        key: "audi-offers-page",
-        moduleKey: "content-engine",
-        name: "Audi Offers Page",
-        watcherType: "browser-needed",
-        sourceType: "offers-page",
-        status: "blocked",
-        target: "Audi USA consumer offers landing page",
-        sourceUrl: "https://www.audiusa.com/en/offers/",
-        accessStatus: "blocked-403",
-        preferredRank: 1,
-        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5, 6]),
-        evidenceNotes: "Likely primary consumer offers page, but direct requests from this environment are currently blocked (403 Access Denied). Treat as browser-required / conditional until a browser fetch path exists.",
-        cadenceMinutes: 1440,
-        lastCheckedAt: null,
-        lastResultSummary: "Vetted as likely source, but blocked in current environment",
-        metadata: JSON.stringify({
-          brand: "Audi",
-          preferred: true,
-          observedOn: "2026-05-08",
-          blocker: "403 Access Denied from current environment",
-          archiveUpdateWindow: "Wayback appearances often around days 1-6 with more noise than BMW.",
-        }),
-      },
-      {
-        key: "audi-financial-hub",
-        moduleKey: "content-engine",
-        name: "Audi Financial Services Offers Hub",
-        watcherType: "page-reference",
-        sourceType: "finance-program-page",
-        status: "conditional",
-        target: "Audi USA finance/program offers reference hub",
-        sourceUrl: "https://www.audiusa.com/en/shopping-tools/financial-services-hub/offers-special-programs/",
-        accessStatus: "conditional",
-        preferredRank: 2,
-        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5, 6]),
-        evidenceNotes: "Secondary/reference path for Audi offers and special programs. Useful fallback context, but not yet validated as a stable structured source in this environment.",
-        cadenceMinutes: 1440,
-        lastCheckedAt: null,
-        lastResultSummary: "Reference source only; no watcher built yet",
-        metadata: JSON.stringify({
-          brand: "Audi",
-          preferred: false,
-          observedOn: "2026-05-08",
-          notes: "Use as reference alongside browser-based checks for /en/offers/.",
-        }),
-      },
     ];
 
     for (const source of seededSources) {
@@ -902,36 +798,15 @@ export class DatabaseStorage implements IStorage {
       }).run();
     }
 
-    db.delete(engineSources).where(sql`${engineSources.key} in ('bmw-offers-watcher', 'audi-offers-watcher')`).run();
+    // Drop retired offer-scrape / content-engine sources if still present.
+    db.delete(engineSources).where(sql`${engineSources.moduleKey} = 'content-engine'`).run();
+    db.delete(engineSources).where(sql`${engineSources.key} in ('bmw-offers-watcher', 'audi-offers-watcher', 'bmw-offers-api', 'bmw-offers-page', 'audi-offers-page', 'audi-financial-hub')`).run();
+    db.delete(engineModules).where(eq(engineModules.key, "content-engine")).run();
+    db.delete(accountModules).where(eq(accountModules.moduleKey, "content-engine")).run();
   }
 
   private seedEmailIterationSetups() {
-    const dealershipIdByName = new Map(this.getDealerships().map((dealership) => [dealership.name, dealership.id]));
-    const now = new Date().toISOString();
-
-    for (const definition of buildSeededEmailIterationDefinitions()) {
-      const dealershipId = dealershipIdByName.get(definition.dealershipName);
-      if (!dealershipId) continue;
-
-      db.insert(emailIterationSetups).values({
-        dealershipId,
-        campaignKey: definition.campaignKey,
-        campaignType: definition.campaignType,
-        status: definition.status,
-        latestBaseEmailReferenceFile: definition.latestBaseEmailReferenceFile,
-        priorReferenceFiles: JSON.stringify(definition.priorReferenceFiles),
-        monthLabel: definition.monthLabel,
-        campaignLabel: definition.campaignLabel,
-        offerChangesNotes: definition.offerChangesNotes,
-        photoChangesNotes: definition.photoChangesNotes,
-        themeCustomBlockNotes: definition.themeCustomBlockNotes,
-        ctaLinkNotes: definition.ctaLinkNotes,
-        carryoverNotes: definition.carryoverNotes,
-        selectedOfferReviewIds: "[]",
-        createdAt: now,
-        updatedAt: now,
-      }).onConflictDoNothing().run();
-    }
+    // Email iteration / content-engine handoff removed from Coop PostEngine.
   }
 
   // Dealerships
