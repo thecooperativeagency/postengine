@@ -12,7 +12,7 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 import { scanDriveFolders, archiveFile, loadFolders, listFolder, isVideoMedia } from "./drive-scanner";
-import { generateCaption } from "./caption-writer";
+import { generateCaption, generateCaptionsForPlatforms, normalizeCaptionPlatforms } from "./caption-writer";
 import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
 import { composePostContent } from "./post-composer";
@@ -379,6 +379,69 @@ export async function registerRoutes(server: Server, app: Express) {
     }
 
     res.json(updated);
+  });
+
+  app.post("/api/captions/generate", async (req, res) => {
+    try {
+      const dealershipId = Number(req.body?.dealershipId);
+      if (!Number.isInteger(dealershipId) || dealershipId <= 0) {
+        return res.status(400).json({ error: "dealershipId is required" });
+      }
+      const dealership = storage.getDealership(dealershipId);
+      if (!dealership) return res.status(404).json({ error: "Dealership not found" });
+
+      const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+      if (!prompt) {
+        return res.status(400).json({ error: "Caption prompt is required" });
+      }
+      if (prompt.length > 1200) {
+        return res.status(400).json({ error: "Caption prompt is too long (max 1200 characters)" });
+      }
+
+      const platforms = normalizeCaptionPlatforms(req.body?.platforms);
+      if (platforms.length === 0) {
+        return res.status(400).json({ error: "Select at least one supported platform (instagram, facebook, googlebusiness, tiktok)" });
+      }
+
+      const postType = typeof req.body?.postType === "string" && req.body.postType.trim()
+        ? req.body.postType.trim()
+        : "inventory";
+      const vehicleInfo = typeof req.body?.vehicleInfo === "string" && req.body.vehicleInfo.trim()
+        ? req.body.vehicleInfo.trim()
+        : postType;
+      const mediaType = typeof req.body?.mediaType === "string" ? req.body.mediaType : null;
+      const talkingPoints = typeof req.body?.talkingPoints === "string" ? req.body.talkingPoints : null;
+      const currentCaptions = req.body?.currentCaptions && typeof req.body.currentCaptions === "object"
+        ? req.body.currentCaptions
+        : undefined;
+
+      const captions = await generateCaptionsForPlatforms({
+        dealershipName: dealership.name,
+        brand: dealership.brand,
+        postType,
+        vehicleInfo,
+        platforms,
+        prompt,
+        mediaType,
+        captionSpec: (dealership as any).captionSpec,
+        gmbSpec: (dealership as any).gmbSpec,
+        talkingPoints,
+        currentCaptions,
+      });
+
+      res.json({
+        success: true,
+        platforms,
+        captions,
+        // Convenience aliases for the New Post form field names
+        caption: captions.instagram || captions.tiktok || "",
+        captionFacebook: captions.facebook || "",
+        captionGmb: captions.googlebusiness || "",
+        captionTiktok: captions.tiktok || "",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Caption generation failed" });
+    }
   });
 
   app.post("/api/posts/:id/rewrite-caption", async (req, res) => {

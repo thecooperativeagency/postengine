@@ -4,7 +4,7 @@ import { useLocation, useRoute } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft, Save, Send, CalendarDays, Eye, ImagePlus, Loader2, X } from "lucide-react";
+import { ArrowLeft, Save, Send, CalendarDays, Eye, ImagePlus, Loader2, X, Sparkles } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,6 +66,8 @@ export default function PostForm() {
   const [mediaUrls, setMediaUrls] = useState<string[]>([]);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [captionPrompt, setCaptionPrompt] = useState("");
+  const [isGeneratingCaptions, setIsGeneratingCaptions] = useState(false);
 
   const { data: dealerships } = useQuery<Dealership[]>({
     queryKey: ["/api/dealerships"],
@@ -156,6 +158,79 @@ export default function PostForm() {
     } finally {
       setIsUploadingMedia(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const generateCaptionsFromPrompt = async () => {
+    const values = form.getValues();
+    if (!values.dealershipId) {
+      toast({ title: "Pick an account first", variant: "destructive" });
+      return;
+    }
+    const prompt = captionPrompt.trim();
+    if (!prompt) {
+      toast({ title: "Add a caption prompt", description: "One line is enough — angle, offer, vibe, audience note.", variant: "destructive" });
+      return;
+    }
+    const platforms = (values.platforms || []).filter((p) =>
+      ["instagram", "facebook", "googlebusiness", "tiktok"].includes(p),
+    );
+    if (platforms.length === 0) {
+      toast({ title: "Select platforms", description: "AI writes only for the platforms checked under Publishing.", variant: "destructive" });
+      return;
+    }
+
+    setIsGeneratingCaptions(true);
+    try {
+      const res = await apiRequest("POST", "/api/captions/generate", {
+        dealershipId: values.dealershipId,
+        platforms,
+        prompt,
+        postType: values.postType,
+        vehicleInfo: values.vehicleInfo || values.postType,
+        mediaType:
+          values.mediaType ||
+          (mediaUrls.length > 1 ? "carousel" : mediaUrls.some((u) => /\.(mp4|mov|webm|m4v)(\?|$)/i.test(u)) ? "video" : "image"),
+        currentCaptions: {
+          instagram: values.caption || "",
+          facebook: values.captionFacebook || "",
+          googlebusiness: values.captionGmb || "",
+          tiktok: values.caption || "",
+        },
+      });
+      const body = await res.json();
+      const captions = body?.captions || {};
+      if (platforms.includes("instagram") && typeof captions.instagram === "string") {
+        form.setValue("caption", captions.instagram);
+      } else if (platforms.includes("tiktok") && typeof captions.tiktok === "string" && !platforms.includes("instagram")) {
+        form.setValue("caption", captions.tiktok);
+      }
+      if (platforms.includes("facebook") && typeof captions.facebook === "string") {
+        form.setValue("captionFacebook", captions.facebook);
+      }
+      if (platforms.includes("googlebusiness") && typeof captions.googlebusiness === "string") {
+        form.setValue("captionGmb", captions.googlebusiness);
+      }
+      if (platforms.includes("tiktok") && typeof captions.tiktok === "string" && platforms.includes("instagram")) {
+        // Keep IG field primary; tuck TikTok line into notes for operator visibility.
+        const note = `TikTok caption: ${captions.tiktok}`;
+        const existingNotes = form.getValues("notes") || "";
+        if (!existingNotes.includes(captions.tiktok)) {
+          form.setValue("notes", [existingNotes, note].filter(Boolean).join("\n"));
+        }
+      }
+      toast({
+        title: "Captions drafted",
+        description: `Wrote for ${platforms.join(", ")}. Edit anything before saving.`,
+      });
+    } catch (err) {
+      toast({
+        title: "Caption generation failed",
+        description: err instanceof Error ? err.message : "Could not generate captions",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGeneratingCaptions(false);
     }
   };
 
@@ -484,6 +559,39 @@ export default function PostForm() {
                     )}
                   </div>
 
+                  <div className="rounded-lg border bg-muted/15 p-3 space-y-2" data-testid="caption-prompt-panel">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-medium">AI caption prompt</div>
+                        <div className="text-xs text-muted-foreground">
+                          Optional. Writes only for platforms checked under Publishing — each platform gets its own voice.
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={isGeneratingCaptions || isUploadingMedia}
+                        onClick={() => void generateCaptionsFromPrompt()}
+                        data-testid="button-generate-captions"
+                      >
+                        {isGeneratingCaptions ? (
+                          <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-4 w-4 mr-1.5" />
+                        )}
+                        {isGeneratingCaptions ? "Writing…" : "Generate captions"}
+                      </Button>
+                    </div>
+                    <Textarea
+                      value={captionPrompt}
+                      onChange={(event) => setCaptionPrompt(event.target.value)}
+                      placeholder="e.g. White Cayenne on the lot at dusk — premium, quiet confidence, no hard sell"
+                      className="min-h-[72px] resize-y bg-background"
+                      data-testid="textarea-caption-prompt"
+                    />
+                  </div>
+
                   <FormField
                     control={form.control}
                     name="caption"
@@ -492,7 +600,7 @@ export default function PostForm() {
                         <FormLabel>
                           Caption
                           <span className="text-xs text-muted-foreground ml-2">
-                            ({field.value?.split(/\s+/).filter(Boolean).length || 0} words)
+                            (manual or AI · {field.value?.split(/\s+/).filter(Boolean).length || 0} words)
                           </span>
                         </FormLabel>
                         <FormControl>
@@ -676,7 +784,7 @@ export default function PostForm() {
                   type="button"
                   variant="secondary"
                   onClick={() => onSubmit("draft")}
-                  disabled={createMutation.isPending || isUploadingMedia}
+                  disabled={createMutation.isPending || isUploadingMedia || isGeneratingCaptions}
                   data-testid="button-save-draft"
                 >
                   <Save className="h-4 w-4 mr-1.5" />
@@ -686,7 +794,7 @@ export default function PostForm() {
                   type="button"
                   variant="outline"
                   onClick={() => onSubmit("queued")}
-                  disabled={createMutation.isPending || isUploadingMedia}
+                  disabled={createMutation.isPending || isUploadingMedia || isGeneratingCaptions}
                   data-testid="button-queue-review"
                 >
                   <Send className="h-4 w-4 mr-1.5" />
@@ -695,7 +803,7 @@ export default function PostForm() {
                 <Button
                   type="button"
                   onClick={() => onSubmit("scheduled")}
-                  disabled={createMutation.isPending || isUploadingMedia}
+                  disabled={createMutation.isPending || isUploadingMedia || isGeneratingCaptions}
                   data-testid="button-schedule"
                 >
                   <CalendarDays className="h-4 w-4 mr-1.5" />
