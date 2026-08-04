@@ -77,13 +77,46 @@ export const cadenceSettings = sqliteTable("cadence_settings", {
   manualTime: text("manual_time"), // e.g. "10:00" if autoTime is false
   platforms: text("platforms").notNull().default('["instagram","facebook","googlebusiness"]'), // JSON array
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  /** User explicitly set a Reels preference for this rule (required on create). */
+  reelsConfigured: integer("reels_configured", { mode: "boolean" }).notNull().default(false),
+  /** When true, scanner reserves video/Reel slots each week. */
+  reelsEnabled: integer("reels_enabled", { mode: "boolean" }).notNull().default(false),
+  /** Target Instagram Reels (video posts) per week for this rule. */
+  reelsPerWeek: integer("reels_per_week").notNull().default(0),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
-export const insertCadenceSchema = createInsertSchema(cadenceSettings).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertCadenceSchema = createInsertSchema(cadenceSettings)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .superRefine((data, ctx) => {
+    if (!data.reelsConfigured) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Set a weekly Reels preference before saving this cadence rule.",
+        path: ["reelsConfigured"],
+      });
+    }
+    if (data.reelsEnabled && (!data.reelsPerWeek || data.reelsPerWeek < 1)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Reels per week must be at least 1 when Reels are enabled.",
+        path: ["reelsPerWeek"],
+      });
+    }
+    if (!data.reelsEnabled && (data.reelsPerWeek ?? 0) > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Disable Reels or set reels per week to 0.",
+        path: ["reelsPerWeek"],
+      });
+    }
+  });
 export type InsertCadence = z.infer<typeof insertCadenceSchema>;
 export type CadenceSetting = typeof cadenceSettings.$inferSelect;
+
+/** Weeks of reel inventory to keep on hand relative to weekly target (system floor multiplier). */
+export const REEL_INVENTORY_FLOOR_WEEKS = 2;
 
 // Activity log
 export const activityLog = sqliteTable("activity_log", {

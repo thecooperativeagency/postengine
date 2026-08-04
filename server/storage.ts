@@ -74,6 +74,8 @@ function resolveDatabasePath() {
 
 export const DATABASE_PATH = resolveDatabasePath();
 const sqlite = new Database(DATABASE_PATH);
+sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("busy_timeout = 5000");
 const db = drizzle(sqlite);
 
 const DUPLICATE_FOLDER_SOURCE_INDEX = "idx_posts_dealership_folder_source_unique";
@@ -122,6 +124,7 @@ export interface IStorage {
   getDealership(id: number): Dealership | undefined;
   createDealership(data: InsertDealership): Dealership;
   updateDealership(id: number, data: Partial<InsertDealership>): Dealership | undefined;
+  deleteDealership(id: number): boolean;
 
   // Posts
   getPosts(filters?: { dealershipId?: number; status?: string; postType?: string }): Post[];
@@ -141,6 +144,7 @@ export interface IStorage {
   getAccountModules(dealershipId?: number): AccountModule[];
   upsertAccountModule(data: InsertAccountModule): AccountModule;
   getEngineJobs(limit?: number): EngineJob[];
+  getRunningEngineJobsByType(jobType: string): EngineJob[];
   createEngineJob(data: InsertEngineJob): EngineJob;
   updateEngineJob(id: number, data: Partial<InsertEngineJob>): EngineJob | undefined;
   getEngineSources(): EngineSource[];
@@ -251,6 +255,9 @@ export class DatabaseStorage implements IStorage {
         manual_time TEXT,
         platforms TEXT NOT NULL DEFAULT '["instagram","facebook","googlebusiness"]',
         is_active INTEGER NOT NULL DEFAULT 1,
+        reels_configured INTEGER NOT NULL DEFAULT 0,
+        reels_enabled INTEGER NOT NULL DEFAULT 0,
+        reels_per_week INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -475,6 +482,18 @@ export class DatabaseStorage implements IStorage {
       sqlite.exec(`ALTER TABLE email_iteration_setups ADD COLUMN selected_offer_review_ids TEXT NOT NULL DEFAULT '[]';`);
     }
 
+    const cadenceColumns = sqlite.prepare(`PRAGMA table_info(cadence_settings)`).all() as Array<{ name: string }>;
+    const cadenceColumnNames = new Set(cadenceColumns.map((col) => col.name));
+    if (!cadenceColumnNames.has("reels_configured")) {
+      sqlite.exec(`ALTER TABLE cadence_settings ADD COLUMN reels_configured INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!cadenceColumnNames.has("reels_enabled")) {
+      sqlite.exec(`ALTER TABLE cadence_settings ADD COLUMN reels_enabled INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!cadenceColumnNames.has("reels_per_week")) {
+      sqlite.exec(`ALTER TABLE cadence_settings ADD COLUMN reels_per_week INTEGER NOT NULL DEFAULT 0;`);
+    }
+
     sqlite.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_offer_review_targets_offer_dealer
       ON offer_review_targets (offer_review_id, dealership_id);
@@ -503,11 +522,8 @@ export class DatabaseStorage implements IStorage {
     this.sanitizeLegacyPosts();
     this.seedEngineModules();
 
-    // Seed dealerships if empty
-    const count = db.select({ count: sql<number>`count(*)` }).from(dealerships).get();
-    if (count && count.count === 0) {
-      this.seedDealerships();
-    }
+    // Ensure the canonical dealership set exists even if the live DB was partially wiped.
+    this.seedDealerships();
 
     this.seedAccountModules();
     this.seedEngineSources();
@@ -604,7 +620,19 @@ export class DatabaseStorage implements IStorage {
     ];
 
     for (const store of stores) {
-      db.insert(dealerships).values(store).run();
+      const existing = db.select({ id: dealerships.id })
+        .from(dealerships)
+        .where(eq(dealerships.domain, store.domain))
+        .get();
+
+      if (!existing) {
+        db.insert(dealerships).values(store).run();
+      }
+    }
+
+    const postCount = db.select({ count: sql<number>`count(*)` }).from(posts).get();
+    if (postCount && postCount.count > 0) {
+      return;
     }
 
     // Seed some sample posts
@@ -937,6 +965,27 @@ export class DatabaseStorage implements IStorage {
     return db.update(dealerships).set(data).where(eq(dealerships.id, id)).returning().get();
   }
 
+  deleteDealership(id: number): boolean {
+    const existing = this.getDealership(id);
+    if (!existing) return false;
+
+    sqlite.transaction(() => {
+      db.delete(activityLog).where(eq(activityLog.dealershipId, id)).run();
+      db.delete(posts).where(eq(posts.dealershipId, id)).run();
+      db.delete(cadenceSettings).where(eq(cadenceSettings.dealershipId, id)).run();
+      db.delete(accountModules).where(eq(accountModules.dealershipId, id)).run();
+      db.delete(engineJobs).where(eq(engineJobs.dealershipId, id)).run();
+      db.delete(offerReviewTargets).where(eq(offerReviewTargets.dealershipId, id)).run();
+      db.delete(offerReviewDownstreamUses).where(eq(offerReviewDownstreamUses.dealershipId, id)).run();
+      db.delete(contentEngineBuildManifestEntries).where(eq(contentEngineBuildManifestEntries.dealershipId, id)).run();
+      db.delete(emailIterationSetups).where(eq(emailIterationSetups.dealershipId, id)).run();
+      db.delete(offerReviews).where(eq(offerReviews.dealershipId, id)).run();
+      db.delete(dealerships).where(eq(dealerships.id, id)).run();
+    })();
+
+    return true;
+  }
+
   // Posts
   getPosts(filters?: { dealershipId?: number; status?: string; postType?: string }): Post[] {
     let query = db.select().from(posts);
@@ -1135,6 +1184,14 @@ export class DatabaseStorage implements IStorage {
 
   getEngineJobs(limit = 25): EngineJob[] {
     return db.select().from(engineJobs).orderBy(desc(engineJobs.createdAt)).limit(limit).all();
+  }
+
+  getRunningEngineJobsByType(jobType: string): EngineJob[] {
+    return db.select()
+      .from(engineJobs)
+      .where(and(eq(engineJobs.jobType, jobType), eq(engineJobs.status, "running")))
+      .orderBy(desc(engineJobs.createdAt))
+      .all();
   }
 
   createEngineJob(data: InsertEngineJob): EngineJob {

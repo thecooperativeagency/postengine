@@ -34,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const navItems = [
+const fullNavItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Engine Hub", url: "/engine", icon: Boxes },
   { title: "Content Engine", url: "/content-engine", icon: BookOpen },
@@ -71,6 +71,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({ dealershipFilter, onDealershipFilterChange }: AppSidebarProps) {
   const [location] = useHashLocation();
+  const navItems = fullNavItems;
 
   const { data: dealerships } = useQuery<Dealership[]>({
     queryKey: ["/api/dealerships"],
@@ -102,8 +103,8 @@ export function AppSidebar({ dealershipFilter, onDealershipFilterChange }: AppSi
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map((item) => {
-                const isActive = location === item.url ||
-                  (item.url === "/posts" && location.startsWith("/posts") && location !== "/posts/new");
+                const isActive =
+                  location === item.url || (item.url === "/posts" && location.startsWith("/posts") && location !== "/posts/new");
                 return (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton

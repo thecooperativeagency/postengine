@@ -4,6 +4,8 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startPublishPoller } from "./zernio-publisher";
 import { DATABASE_PATH } from "./storage";
+import { requireDashboardPassword } from "./dashboard-auth";
+import { getPublicMediaDir, PUBLIC_MEDIA_ROUTE_PREFIX } from "./public-media";
 // Load .env manually
 import { readFileSync } from "fs";
 try {
@@ -34,6 +36,8 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(PUBLIC_MEDIA_ROUTE_PREFIX, express.static(getPublicMediaDir()));
+app.use(requireDashboardPassword);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

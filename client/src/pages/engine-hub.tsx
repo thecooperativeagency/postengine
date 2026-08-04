@@ -190,7 +190,7 @@ export default function EngineHub() {
     },
     onSuccess: async (result: { newPosts: number; message: string }) => {
       await refreshEngineData();
-      toast({ title: "Drive scan complete", description: result.message || `Created ${result.newPosts} queued posts.` });
+      toast({ title: "Drive scan started", description: result.message || "Drive scan started in background." });
     },
     onError: (error: Error) => {
       toast({ title: "Drive scan failed", description: error.message, variant: "destructive" });

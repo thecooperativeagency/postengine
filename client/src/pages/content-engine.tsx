@@ -23,6 +23,9 @@ interface CadenceRow {
   daysOfWeek: string;
   platforms: string;
   isActive: boolean;
+  reelsConfigured?: boolean;
+  reelsEnabled?: boolean;
+  reelsPerWeek?: number;
 }
 
 interface OfferQueueData {
@@ -259,6 +262,13 @@ function ContentCadence() {
                     </div>
                     <div className="flex flex-wrap gap-2 text-xs">
                       <Badge variant="outline">{row.postsPerDay} / day</Badge>
+                      <Badge variant="outline">
+                        {!row.reelsConfigured
+                          ? "Reels unset"
+                          : row.reelsEnabled
+                            ? `${row.reelsPerWeek ?? 0} reels/wk`
+                            : "No reels"}
+                      </Badge>
                       {platforms.map((platform) => (
                         <Badge key={platform} variant="secondary" className="text-[11px]">
                           {platform === "googlebusiness" ? "GMB" : platform.charAt(0).toUpperCase() + platform.slice(1)}
@@ -280,6 +290,7 @@ function ContentCadence() {
                       <th className="text-left px-4 py-2 font-medium">Dealership</th>
                       <th className="text-left px-4 py-2 font-medium">Post Type</th>
                       <th className="text-center px-4 py-2 font-medium">Posts/Day</th>
+                      <th className="text-center px-4 py-2 font-medium">Reels/Wk</th>
                       <th className="text-left px-4 py-2 font-medium">Platforms</th>
                     </tr>
                   </thead>
@@ -291,6 +302,13 @@ function ContentCadence() {
                           <td className="px-4 py-2 font-medium">{row.dealershipName}</td>
                           <td className="px-4 py-2 text-muted-foreground">{row.postType}</td>
                           <td className="px-4 py-2 text-center">{row.postsPerDay}</td>
+                          <td className="px-4 py-2 text-center">
+                            {!row.reelsConfigured
+                              ? "unset"
+                              : row.reelsEnabled
+                                ? (row.reelsPerWeek ?? 0)
+                                : "—"}
+                          </td>
                           <td className="px-4 py-2">
                             <div className="flex gap-1.5">
                               {platforms.map(p => (

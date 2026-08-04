@@ -57,7 +57,6 @@ const platformOptions = [
 
 export default function PostForm() {
   const [, navigate] = useLocation();
-  const [matchNew] = useRoute("/posts/new");
   const [matchEdit, params] = useRoute("/posts/:id");
   const isEdit = matchEdit && params?.id && params.id !== "new";
   const postId = isEdit ? Number(params.id) : null;
@@ -79,7 +78,7 @@ export default function PostForm() {
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      dealershipId: 0,
+      dealershipId: undefined as unknown as number,
       postType: "inventory",
       vehicleInfo: "",
       caption: "",
@@ -160,6 +159,10 @@ export default function PostForm() {
 
   const onSubmit = (status: string) => {
     form.handleSubmit((data) => {
+      if (status === "scheduled" && !data.scheduledFor) {
+        toast({ title: "Schedule date required", description: "Pick a date and time before scheduling.", variant: "destructive" });
+        return;
+      }
       createMutation.mutate({ ...data, status });
     })();
   };
@@ -240,14 +243,14 @@ export default function PostForm() {
                       name="dealershipId"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Client</FormLabel>
+                          <FormLabel>Account</FormLabel>
                           <Select
-                            value={field.value?.toString()}
-                            onValueChange={(val) => field.onChange(Number(val))}
+                            value={field.value ? field.value.toString() : ""}
+                            onValueChange={(val) => field.onChange(val ? Number(val) : undefined)}
                           >
                             <FormControl>
                               <SelectTrigger data-testid="select-dealership">
-                                <SelectValue placeholder="Select dealership" />
+                                <SelectValue placeholder="Select account" />
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
@@ -331,7 +334,29 @@ export default function PostForm() {
                       </FormItem>
                     )}
                   />
-
+                  <FormField
+                    control={form.control}
+                    name="captionFacebook"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          Facebook Caption
+                          <span className="text-xs text-muted-foreground ml-2">
+                            (used when Facebook needs a separate caption)
+                          </span>
+                        </FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Optional Facebook-specific caption..."
+                            className="min-h-[80px] resize-y"
+                            {...field}
+                            data-testid="textarea-caption-facebook"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
                   <FormField
                     control={form.control}
