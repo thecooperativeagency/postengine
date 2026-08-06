@@ -12,4 +12,4 @@ fi
 
 # Start PostEngine
 cd "$SCRIPT_DIR"
-PORT=${PORT:-3456} npm run dev
+npm run build && PORT=${PORT:-3456} npm run start

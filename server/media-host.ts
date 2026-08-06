@@ -9,6 +9,8 @@
 import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
+import { cleanupNormalizedImage, normalizeImageForSocial } from "./image-normalizer";
+import { hostPublicMediaFile } from "./public-media";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const GITHUB_REPO = "thecooperativeagency/postengine";
@@ -108,7 +110,9 @@ async function uploadToGithub(localPath: string, filename: string): Promise<stri
  * Main function: given a Drive file ID and filename,
  * download and host on GitHub, return public URL.
  */
-export async function hostImage(fileId: string, filename: string): Promise<string | null> {
+export async function hostImage(fileId: string, filename: string, mimeType?: string): Promise<string | null> {
+  const isVideo = mimeType?.startsWith("video/") || /\.(mp4|mov|m4v|webm)$/i.test(filename);
+
   // Sanitize filename for GitHub
   const safeName = filename
     .replace(/[^a-zA-Z0-9._-]/g, "-")
@@ -122,10 +126,37 @@ export async function hostImage(fileId: string, filename: string): Promise<strin
   const downloaded = downloadFromDrive(fileId, tmpPath);
   if (!downloaded) return null;
 
-  // Upload to GitHub
-  const url = await uploadToGithub(tmpPath, safeName);
+  let uploadPath = tmpPath;
+  let uploadName = safeName;
 
-  // Cleanup temp file
+  try {
+    if (!isVideo) {
+      const normalized = await normalizeImageForSocial(tmpPath);
+      uploadPath = normalized.path;
+      uploadName = normalized.filename
+        .replace(/[^a-zA-Z0-9._-]/g, "-")
+        .replace(/--+/g, "-")
+        .toLowerCase();
+
+      if (normalized.wasNormalized) {
+        console.log(
+          `[MediaHost] Cropped ${filename} from ${normalized.originalWidth}x${normalized.originalHeight} to ${normalized.finalWidth}x${normalized.finalHeight} (4:5)`
+        );
+      }
+    }
+  } catch (e) {
+    console.warn(`[MediaHost] Image normalization skipped for ${filename}:`, e);
+  }
+
+  // Upload to GitHub when possible, but always fall back to the public media route.
+  let url = await uploadToGithub(uploadPath, uploadName);
+  if (!url) {
+    url = await hostPublicMediaFile(uploadPath, uploadName);
+    console.warn(`[MediaHost] GitHub upload failed for ${filename}; using public media fallback ${url}`);
+  }
+
+  // Cleanup temp file(s)
+  cleanupNormalizedImage(uploadPath, tmpPath);
   try { fs.unlinkSync(tmpPath); } catch {}
 
   return url;

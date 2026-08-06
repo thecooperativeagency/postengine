@@ -56,7 +56,15 @@
         "Service": "1zvl7aJ8OacSVVVznMGjY_ZMeFFKnQhwq",
         "Parts & Accessories": "1DEm6YiJ1QCA7aBjuOkahZnJlLxHmQuD9",
         "_Archive": "1U6PUSIvwVIRJ4oqetzNtPhUFGvtIZWxr",
-        "Customer Media": "1TXR8CXOd3BQn_Sfr_7WKNbqyr_lEH8GK"
+        "Customer Media": "1TXR8CXOd3BQn_Sfr_7WKNbqyr_lEH8GK",
+        "Reels": "1BCpIhJacBCy9WshEiO7tpseWQ6WajS27"
+      },
+      "reelsPipeline": {
+        "root": "1iRXkcBuPMvTWZG1fSstRId9DH4o01v4U",
+        "inbox": "1MhdYdivhD37x9_GwIbzx-t1JFpIh007x",
+        "wip": "1dpEQTZnnI5AqgvSO-fS5EB4YmpFwYrG8",
+        "ready": "1BCpIhJacBCy9WshEiO7tpseWQ6WajS27",
+        "archive": "1kDrIHJ71Y2NP4YAeOpWNtsyqRJser1-4"
       }
     }
   }

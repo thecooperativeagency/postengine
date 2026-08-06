@@ -10,6 +10,8 @@ import {
   offerReviews,
   offerReviewTargets,
   offerReviewDownstreamUses,
+  contentEngineBuildManifestEntries,
+  emailIterationSetups,
   type Dealership,
   type InsertDealership,
   type Post,
@@ -32,14 +34,88 @@ import {
   type InsertOfferReviewTarget,
   type OfferReviewDownstreamUse,
   type InsertOfferReviewDownstreamUse,
+  type ContentEngineBuildManifestEntry,
+  type InsertContentEngineBuildManifestEntry,
+  type EmailIterationSetup,
+  type InsertEmailIterationSetup,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, and, sql } from "drizzle-orm";
+import { copyFileSync, existsSync, mkdirSync } from "fs";
+import { homedir } from "os";
+import path from "path";
 import { sanitizeLegacyCaption } from "./post-sanitizer";
 
-const sqlite = new Database("sqlite.db");
+function resolveDatabasePath() {
+  const configuredPath = process.env.POSTENGINE_DB_PATH?.trim();
+  if (configuredPath) {
+    const absoluteConfiguredPath = path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.resolve(process.cwd(), configuredPath);
+    mkdirSync(path.dirname(absoluteConfiguredPath), { recursive: true });
+    return absoluteConfiguredPath;
+  }
+
+  const appDataDir = path.join(homedir(), ".postengine");
+  const appDataDbPath = path.join(appDataDir, "sqlite.db");
+  const legacyRepoDbPath = path.resolve(process.cwd(), "sqlite.db");
+
+  mkdirSync(appDataDir, { recursive: true });
+
+  if (!existsSync(appDataDbPath) && existsSync(legacyRepoDbPath)) {
+    copyFileSync(legacyRepoDbPath, appDataDbPath);
+    console.log(`[storage] Seeded database at ${appDataDbPath} from legacy repo sqlite.db`);
+  }
+
+  return appDataDbPath;
+}
+
+export const DATABASE_PATH = resolveDatabasePath();
+const sqlite = new Database(DATABASE_PATH);
+sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("busy_timeout = 5000");
 const db = drizzle(sqlite);
+
+const DUPLICATE_FOLDER_SOURCE_INDEX = "idx_posts_dealership_folder_source_unique";
+
+export class DuplicateFolderSourceError extends Error {
+  constructor(folderSource?: string | null) {
+    super(folderSource
+      ? `A post already exists for Drive source "${folderSource}" in this dealership.`
+      : "A post already exists for this Drive source in this dealership.");
+    this.name = "DuplicateFolderSourceError";
+  }
+}
+
+export function isDuplicateFolderSourceError(error: unknown): error is DuplicateFolderSourceError {
+  return error instanceof DuplicateFolderSourceError;
+}
+
+function normalizeFolderSource(folderSource?: string | null) {
+  const normalized = folderSource?.trim();
+  return normalized ? normalized : null;
+}
+
+function isSqliteDuplicateFolderSourceError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes(`UNIQUE constraint failed: posts.dealership_id, posts.folder_source`) ||
+    error.message.includes(DUPLICATE_FOLDER_SOURCE_INDEX);
+}
+
+function ensureFolderSourceUnique(dealershipId: number, folderSource: string, excludePostId?: number) {
+  const existing = db.select({ id: posts.id })
+    .from(posts)
+    .where(and(
+      eq(posts.dealershipId, dealershipId),
+      eq(posts.folderSource, folderSource),
+    ))
+    .get();
+
+  if (existing && existing.id !== excludePostId) {
+    throw new DuplicateFolderSourceError(folderSource);
+  }
+}
 
 export interface IStorage {
   // Dealerships
@@ -47,6 +123,7 @@ export interface IStorage {
   getDealership(id: number): Dealership | undefined;
   createDealership(data: InsertDealership): Dealership;
   updateDealership(id: number, data: Partial<InsertDealership>): Dealership | undefined;
+  deleteDealership(id: number): boolean;
 
   // Posts
   getPosts(filters?: { dealershipId?: number; status?: string; postType?: string }): Post[];
@@ -66,6 +143,7 @@ export interface IStorage {
   getAccountModules(dealershipId?: number): AccountModule[];
   upsertAccountModule(data: InsertAccountModule): AccountModule;
   getEngineJobs(limit?: number): EngineJob[];
+  getRunningEngineJobsByType(jobType: string): EngineJob[];
   createEngineJob(data: InsertEngineJob): EngineJob;
   updateEngineJob(id: number, data: Partial<InsertEngineJob>): EngineJob | undefined;
   getEngineSources(): EngineSource[];
@@ -83,6 +161,13 @@ export interface IStorage {
   upsertOfferReviewTarget(data: InsertOfferReviewTarget): OfferReviewTarget;
   getOfferReviewDownstreamUses(offerReviewId?: number, dealershipId?: number): OfferReviewDownstreamUse[];
   replaceOfferReviewDownstreamUses(offerReviewId: number, dealershipId: number, uses: Array<{ channel: string; placement: string }>): OfferReviewDownstreamUse[];
+  getContentEngineBuildManifestEntries(offerReviewId?: number): ContentEngineBuildManifestEntry[];
+  replaceContentEngineBuildManifestEntriesForOfferReview(
+    offerReviewId: number,
+    entries: InsertContentEngineBuildManifestEntry[],
+  ): ContentEngineBuildManifestEntry[];
+  getEmailIterationSetups(): EmailIterationSetup[];
+  updateEmailIterationSetup(id: number, data: Partial<InsertEmailIterationSetup>): EmailIterationSetup | undefined;
   getOfferReviewStats(): {
     total: number;
     detected: number;
@@ -135,6 +220,10 @@ export class DatabaseStorage implements IStorage {
         platforms TEXT DEFAULT '["instagram","facebook"]',
         scheduled_for TEXT,
         published_at TEXT,
+        publish_attempts INTEGER NOT NULL DEFAULT 0,
+        last_publish_attempt_at TEXT,
+        publish_backoff_until TEXT,
+        publish_results TEXT,
         folder_source TEXT,
         notes TEXT,
         created_at TEXT NOT NULL
@@ -165,6 +254,9 @@ export class DatabaseStorage implements IStorage {
         manual_time TEXT,
         platforms TEXT NOT NULL DEFAULT '["instagram","facebook","googlebusiness"]',
         is_active INTEGER NOT NULL DEFAULT 1,
+        reels_configured INTEGER NOT NULL DEFAULT 0,
+        reels_enabled INTEGER NOT NULL DEFAULT 0,
+        reels_per_week INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -275,7 +367,62 @@ export class DatabaseStorage implements IStorage {
         updated_at TEXT NOT NULL,
         UNIQUE(offer_review_id, dealership_id, channel)
       );
+
+      CREATE TABLE IF NOT EXISTS content_engine_build_manifest_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        offer_review_id INTEGER NOT NULL,
+        dealership_id INTEGER NOT NULL,
+        channel TEXT NOT NULL,
+        placement TEXT NOT NULL DEFAULT 'supporting',
+        module_key TEXT NOT NULL DEFAULT 'content-engine',
+        review_status TEXT NOT NULL DEFAULT 'approved',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(offer_review_id, dealership_id, channel)
+      );
+
+      CREATE TABLE IF NOT EXISTS email_iteration_setups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dealership_id INTEGER NOT NULL,
+        campaign_key TEXT NOT NULL,
+        campaign_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active-now',
+        latest_base_email_reference_file TEXT,
+        prior_reference_files TEXT NOT NULL DEFAULT '[]',
+        month_label TEXT NOT NULL DEFAULT '',
+        campaign_label TEXT NOT NULL DEFAULT '',
+        offer_changes_notes TEXT NOT NULL DEFAULT '',
+        photo_changes_notes TEXT NOT NULL DEFAULT '',
+        theme_custom_block_notes TEXT NOT NULL DEFAULT '',
+        cta_link_notes TEXT NOT NULL DEFAULT '',
+        carryover_notes TEXT NOT NULL DEFAULT '',
+        selected_offer_review_ids TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(dealership_id, campaign_key)
+      );
     `);
+
+    const postColumns = sqlite.prepare(`PRAGMA table_info(posts)`).all() as Array<{ name: string }>;
+    const postColumnNames = new Set(postColumns.map((col) => col.name));
+    if (!postColumnNames.has("caption_facebook")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN caption_facebook TEXT;`);
+    }
+    if (!postColumnNames.has("caption_gmb")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN caption_gmb TEXT;`);
+    }
+    if (!postColumnNames.has("publish_attempts")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN publish_attempts INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!postColumnNames.has("last_publish_attempt_at")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN last_publish_attempt_at TEXT;`);
+    }
+    if (!postColumnNames.has("publish_backoff_until")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN publish_backoff_until TEXT;`);
+    }
+    if (!postColumnNames.has("publish_results")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN publish_results TEXT;`);
+    }
 
     const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;
     const dealershipColumnNames = new Set(dealershipColumns.map((col) => col.name));
@@ -328,6 +475,24 @@ export class DatabaseStorage implements IStorage {
       sqlite.exec(`ALTER TABLE offer_reviews ADD COLUMN source_item_key TEXT;`);
     }
 
+    const emailIterationColumns = sqlite.prepare(`PRAGMA table_info(email_iteration_setups)`).all() as Array<{ name: string }>;
+    const emailIterationColumnNames = new Set(emailIterationColumns.map((col) => col.name));
+    if (!emailIterationColumnNames.has("selected_offer_review_ids")) {
+      sqlite.exec(`ALTER TABLE email_iteration_setups ADD COLUMN selected_offer_review_ids TEXT NOT NULL DEFAULT '[]';`);
+    }
+
+    const cadenceColumns = sqlite.prepare(`PRAGMA table_info(cadence_settings)`).all() as Array<{ name: string }>;
+    const cadenceColumnNames = new Set(cadenceColumns.map((col) => col.name));
+    if (!cadenceColumnNames.has("reels_configured")) {
+      sqlite.exec(`ALTER TABLE cadence_settings ADD COLUMN reels_configured INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!cadenceColumnNames.has("reels_enabled")) {
+      sqlite.exec(`ALTER TABLE cadence_settings ADD COLUMN reels_enabled INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!cadenceColumnNames.has("reels_per_week")) {
+      sqlite.exec(`ALTER TABLE cadence_settings ADD COLUMN reels_per_week INTEGER NOT NULL DEFAULT 0;`);
+    }
+
     sqlite.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_offer_review_targets_offer_dealer
       ON offer_review_targets (offer_review_id, dealership_id);
@@ -338,17 +503,30 @@ export class DatabaseStorage implements IStorage {
       ON offer_review_downstream_uses (offer_review_id, dealership_id, channel);
     `);
 
+    sqlite.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_content_engine_build_manifest_offer_dealer_channel
+      ON content_engine_build_manifest_entries (offer_review_id, dealership_id, channel);
+    `);
+
+    try {
+      sqlite.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS ${DUPLICATE_FOLDER_SOURCE_INDEX}
+        ON posts (dealership_id, folder_source)
+        WHERE folder_source IS NOT NULL AND trim(folder_source) <> '';
+      `);
+    } catch (error) {
+      console.warn(`[storage] Unable to create ${DUPLICATE_FOLDER_SOURCE_INDEX}:`, error);
+    }
+
     this.sanitizeLegacyPosts();
     this.seedEngineModules();
 
-    // Seed dealerships if empty
-    const count = db.select({ count: sql<number>`count(*)` }).from(dealerships).get();
-    if (count && count.count === 0) {
-      this.seedDealerships();
-    }
+    // Ensure the canonical dealership set exists even if the live DB was partially wiped.
+    this.seedDealerships();
 
     this.seedAccountModules();
     this.seedEngineSources();
+    this.seedEmailIterationSetups();
   }
 
   private seedDealerships() {
@@ -441,7 +619,19 @@ export class DatabaseStorage implements IStorage {
     ];
 
     for (const store of stores) {
-      db.insert(dealerships).values(store).run();
+      const existing = db.select({ id: dealerships.id })
+        .from(dealerships)
+        .where(eq(dealerships.domain, store.domain))
+        .get();
+
+      if (!existing) {
+        db.insert(dealerships).values(store).run();
+      }
+    }
+
+    const postCount = db.select({ count: sql<number>`count(*)` }).from(posts).get();
+    if (postCount && postCount.count > 0) {
+      return;
     }
 
     // Seed some sample posts
@@ -524,16 +714,7 @@ export class DatabaseStorage implements IStorage {
         key: "post-engine",
         name: "PostEngine",
         route: "/",
-        description: "Current social post workflow hub for queue, review, and publishing.",
-        status: "active",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        key: "content-engine",
-        name: "Content Engine",
-        route: "/content-engine",
-        description: "Content planning and production coordination surface kept live during transition.",
+        description: "Social post workflow for queue, review, and publishing.",
         status: "active",
         createdAt: now,
         updatedAt: now,
@@ -588,100 +769,6 @@ export class DatabaseStorage implements IStorage {
         lastResultSummary: "Ready for manual scans via /api/drive/scan",
         metadata: JSON.stringify({ route: "/api/drive/scan", notes: "Preserves existing Post Engine ingestion flow." }),
       },
-      {
-        key: "bmw-offers-api",
-        moduleKey: "content-engine",
-        name: "BMW Offers API",
-        watcherType: "api-poll",
-        sourceType: "offers-api",
-        status: "active",
-        target: "BMW USA national new-vehicle offers structured feed",
-        sourceUrl: "https://www.bmwusa.com/offers-api/current-offers/v2?bySeries=true",
-        accessStatus: "reliable",
-        preferredRank: 1,
-        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5]),
-        evidenceNotes: "Preferred structured source. Wayback sampling suggests offer refreshes usually appear near the start of the month, commonly days 1-5; API had a 2026-05-02 snapshot.",
-        cadenceMinutes: 1440,
-        lastCheckedAt: null,
-        lastResultSummary: "Vetted preferred BMW source; watcher not built yet",
-        metadata: JSON.stringify({
-          brand: "BMW",
-          preferred: true,
-          observedOn: "2026-05-08",
-          observedValidity: "Live offers page said offers valid through June 01, 2026.",
-          firstSeenSnapshotDays: [4, 3, 2, 1, 5, 1, 3, 5, 2],
-        }),
-      },
-      {
-        key: "bmw-offers-page",
-        moduleKey: "content-engine",
-        name: "BMW Offers Landing Page",
-        watcherType: "page-reference",
-        sourceType: "offers-page",
-        status: "active",
-        target: "BMW USA public specials/offers page",
-        sourceUrl: "https://www.bmwusa.com/special-offers-new.html",
-        accessStatus: "reference",
-        preferredRank: 2,
-        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5]),
-        evidenceNotes: "Secondary public reference page for verifying live offer windows. Observed on 2026-05-08 with page copy stating offers valid through June 01, 2026.",
-        cadenceMinutes: 1440,
-        lastCheckedAt: null,
-        lastResultSummary: "Vetted BMW reference page; watcher not built yet",
-        metadata: JSON.stringify({
-          brand: "BMW",
-          preferred: false,
-          observedOn: "2026-05-08",
-          observedValidity: "Offers valid through June 01, 2026.",
-        }),
-      },
-      {
-        key: "audi-offers-page",
-        moduleKey: "content-engine",
-        name: "Audi Offers Page",
-        watcherType: "browser-needed",
-        sourceType: "offers-page",
-        status: "blocked",
-        target: "Audi USA consumer offers landing page",
-        sourceUrl: "https://www.audiusa.com/en/offers/",
-        accessStatus: "blocked-403",
-        preferredRank: 1,
-        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5, 6]),
-        evidenceNotes: "Likely primary consumer offers page, but direct requests from this environment are currently blocked (403 Access Denied). Treat as browser-required / conditional until a browser fetch path exists.",
-        cadenceMinutes: 1440,
-        lastCheckedAt: null,
-        lastResultSummary: "Vetted as likely source, but blocked in current environment",
-        metadata: JSON.stringify({
-          brand: "Audi",
-          preferred: true,
-          observedOn: "2026-05-08",
-          blocker: "403 Access Denied from current environment",
-          archiveUpdateWindow: "Wayback appearances often around days 1-6 with more noise than BMW.",
-        }),
-      },
-      {
-        key: "audi-financial-hub",
-        moduleKey: "content-engine",
-        name: "Audi Financial Services Offers Hub",
-        watcherType: "page-reference",
-        sourceType: "finance-program-page",
-        status: "conditional",
-        target: "Audi USA finance/program offers reference hub",
-        sourceUrl: "https://www.audiusa.com/en/shopping-tools/financial-services-hub/offers-special-programs/",
-        accessStatus: "conditional",
-        preferredRank: 2,
-        updateWindowDays: JSON.stringify([1, 2, 3, 4, 5, 6]),
-        evidenceNotes: "Secondary/reference path for Audi offers and special programs. Useful fallback context, but not yet validated as a stable structured source in this environment.",
-        cadenceMinutes: 1440,
-        lastCheckedAt: null,
-        lastResultSummary: "Reference source only; no watcher built yet",
-        metadata: JSON.stringify({
-          brand: "Audi",
-          preferred: false,
-          observedOn: "2026-05-08",
-          notes: "Use as reference alongside browser-based checks for /en/offers/.",
-        }),
-      },
     ];
 
     for (const source of seededSources) {
@@ -711,7 +798,15 @@ export class DatabaseStorage implements IStorage {
       }).run();
     }
 
-    db.delete(engineSources).where(sql`${engineSources.key} in ('bmw-offers-watcher', 'audi-offers-watcher')`).run();
+    // Drop retired offer-scrape / content-engine sources if still present.
+    db.delete(engineSources).where(sql`${engineSources.moduleKey} = 'content-engine'`).run();
+    db.delete(engineSources).where(sql`${engineSources.key} in ('bmw-offers-watcher', 'audi-offers-watcher', 'bmw-offers-api', 'bmw-offers-page', 'audi-offers-page', 'audi-financial-hub')`).run();
+    db.delete(engineModules).where(eq(engineModules.key, "content-engine")).run();
+    db.delete(accountModules).where(eq(accountModules.moduleKey, "content-engine")).run();
+  }
+
+  private seedEmailIterationSetups() {
+    // Email iteration / content-engine handoff removed from Coop PostEngine.
   }
 
   // Dealerships
@@ -743,6 +838,27 @@ export class DatabaseStorage implements IStorage {
 
   updateDealership(id: number, data: Partial<InsertDealership>): Dealership | undefined {
     return db.update(dealerships).set(data).where(eq(dealerships.id, id)).returning().get();
+  }
+
+  deleteDealership(id: number): boolean {
+    const existing = this.getDealership(id);
+    if (!existing) return false;
+
+    sqlite.transaction(() => {
+      db.delete(activityLog).where(eq(activityLog.dealershipId, id)).run();
+      db.delete(posts).where(eq(posts.dealershipId, id)).run();
+      db.delete(cadenceSettings).where(eq(cadenceSettings.dealershipId, id)).run();
+      db.delete(accountModules).where(eq(accountModules.dealershipId, id)).run();
+      db.delete(engineJobs).where(eq(engineJobs.dealershipId, id)).run();
+      db.delete(offerReviewTargets).where(eq(offerReviewTargets.dealershipId, id)).run();
+      db.delete(offerReviewDownstreamUses).where(eq(offerReviewDownstreamUses.dealershipId, id)).run();
+      db.delete(contentEngineBuildManifestEntries).where(eq(contentEngineBuildManifestEntries.dealershipId, id)).run();
+      db.delete(emailIterationSetups).where(eq(emailIterationSetups.dealershipId, id)).run();
+      db.delete(offerReviews).where(eq(offerReviews.dealershipId, id)).run();
+      db.delete(dealerships).where(eq(dealerships.id, id)).run();
+    })();
+
+    return true;
   }
 
   // Posts
@@ -795,13 +911,50 @@ export class DatabaseStorage implements IStorage {
   }
 
   createPost(data: InsertPost): Post {
-    return db.insert(posts).values({
-      ...data,
-      createdAt: new Date().toISOString(),
-    }).returning().get();
+    const folderSource = normalizeFolderSource(data.folderSource);
+
+    if (folderSource) {
+      ensureFolderSourceUnique(data.dealershipId, folderSource);
+    }
+
+    try {
+      return db.insert(posts).values({
+        ...data,
+        folderSource,
+        createdAt: new Date().toISOString(),
+      }).returning().get();
+    } catch (error) {
+      if (folderSource && isSqliteDuplicateFolderSourceError(error)) {
+        throw new DuplicateFolderSourceError(folderSource);
+      }
+      throw error;
+    }
   }
 
   updatePost(id: number, data: Partial<InsertPost>): Post | undefined {
+    const needsFolderSourceCheck = typeof data.folderSource !== "undefined" || typeof data.dealershipId !== "undefined";
+    if (needsFolderSourceCheck) {
+      const existing = this.getPost(id);
+      if (!existing) return undefined;
+
+      const folderSource = normalizeFolderSource(
+        typeof data.folderSource !== "undefined" ? data.folderSource : existing.folderSource,
+      );
+      if (folderSource) {
+        ensureFolderSourceUnique(data.dealershipId ?? existing.dealershipId, folderSource, id);
+      }
+
+      const nextData = typeof data.folderSource !== "undefined"
+        ? { ...data, folderSource }
+        : data;
+
+      return db.update(posts)
+        .set(nextData)
+        .where(eq(posts.id, id))
+        .returning()
+        .get();
+    }
+
     return db.update(posts).set(data).where(eq(posts.id, id)).returning().get();
   }
 
@@ -906,6 +1059,14 @@ export class DatabaseStorage implements IStorage {
 
   getEngineJobs(limit = 25): EngineJob[] {
     return db.select().from(engineJobs).orderBy(desc(engineJobs.createdAt)).limit(limit).all();
+  }
+
+  getRunningEngineJobsByType(jobType: string): EngineJob[] {
+    return db.select()
+      .from(engineJobs)
+      .where(and(eq(engineJobs.jobType, jobType), eq(engineJobs.status, "running")))
+      .orderBy(desc(engineJobs.createdAt))
+      .all();
   }
 
   createEngineJob(data: InsertEngineJob): EngineJob {
@@ -1107,6 +1268,58 @@ export class DatabaseStorage implements IStorage {
       createdAt: now,
       updatedAt: now,
     }).returning().get());
+  }
+
+  getContentEngineBuildManifestEntries(offerReviewId?: number): ContentEngineBuildManifestEntry[] {
+    if (offerReviewId) {
+      return db.select()
+        .from(contentEngineBuildManifestEntries)
+        .where(eq(contentEngineBuildManifestEntries.offerReviewId, offerReviewId))
+        .orderBy(contentEngineBuildManifestEntries.dealershipId, contentEngineBuildManifestEntries.channel)
+        .all();
+    }
+
+    return db.select()
+      .from(contentEngineBuildManifestEntries)
+      .orderBy(contentEngineBuildManifestEntries.dealershipId, contentEngineBuildManifestEntries.channel, contentEngineBuildManifestEntries.offerReviewId)
+      .all();
+  }
+
+  replaceContentEngineBuildManifestEntriesForOfferReview(
+    offerReviewId: number,
+    entries: InsertContentEngineBuildManifestEntry[],
+  ): ContentEngineBuildManifestEntry[] {
+    const now = new Date().toISOString();
+    return sqlite.transaction(() => {
+      db.delete(contentEngineBuildManifestEntries)
+        .where(eq(contentEngineBuildManifestEntries.offerReviewId, offerReviewId))
+        .run();
+
+      if (entries.length === 0) {
+        return [];
+      }
+
+      return entries.map((entry) => db.insert(contentEngineBuildManifestEntries).values({
+        ...entry,
+        createdAt: now,
+        updatedAt: now,
+      }).returning().get());
+    })();
+  }
+
+  getEmailIterationSetups(): EmailIterationSetup[] {
+    return db.select()
+      .from(emailIterationSetups)
+      .orderBy(emailIterationSetups.status, emailIterationSetups.campaignType, emailIterationSetups.dealershipId)
+      .all();
+  }
+
+  updateEmailIterationSetup(id: number, data: Partial<InsertEmailIterationSetup>): EmailIterationSetup | undefined {
+    return db.update(emailIterationSetups)
+      .set({ ...data, updatedAt: new Date().toISOString() })
+      .where(eq(emailIterationSetups.id, id))
+      .returning()
+      .get();
   }
 
   getOfferReviewStats() {

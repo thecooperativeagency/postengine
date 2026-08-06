@@ -3,6 +3,9 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startPublishPoller } from "./zernio-publisher";
+import { DATABASE_PATH } from "./storage";
+import { requireDashboardPassword } from "./dashboard-auth";
+import { getPublicMediaDir, PUBLIC_MEDIA_ROUTE_PREFIX } from "./public-media";
 // Load .env manually
 import { readFileSync } from "fs";
 try {
@@ -26,6 +29,7 @@ declare module "http" {
 
 app.use(
   express.json({
+    limit: "40mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -33,6 +37,8 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(PUBLIC_MEDIA_ROUTE_PREFIX, express.static(getPublicMediaDir()));
+app.use(requireDashboardPassword);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -109,6 +115,7 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      log(`using sqlite database at ${DATABASE_PATH}`, "storage");
       startPublishPoller(); // Start Zernio publish poller
     },
   );

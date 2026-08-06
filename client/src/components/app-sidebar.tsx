@@ -4,8 +4,6 @@ import {
   PlusCircle,
   ClipboardCheck,
   CalendarDays,
-  Boxes,
-  BookOpen,
   Settings,
   Building2,
 } from "lucide-react";
@@ -34,15 +32,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const navItems = [
+const fullNavItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Posts", url: "/posts", icon: FileText },
-  { title: "New Post", url: "/posts/new", icon: PlusCircle },
   { title: "Review Queue", url: "/queue", icon: ClipboardCheck },
   { title: "Calendar", url: "/calendar", icon: CalendarDays },
-  { title: "Engine Hub", url: "/engine", icon: Boxes },
-  { title: "Content Engine", url: "/content-engine", icon: BookOpen },
-  { title: "Settings", url: "/settings", icon: Settings },
+  { title: "New Post", url: "/posts/new", icon: PlusCircle },
+  { title: "Post Specs", url: "/settings", icon: Settings },
 ];
 
 function PostEngineLogo() {
@@ -71,6 +67,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({ dealershipFilter, onDealershipFilterChange }: AppSidebarProps) {
   const [location] = useHashLocation();
+  const navItems = fullNavItems;
 
   const { data: dealerships } = useQuery<Dealership[]>({
     queryKey: ["/api/dealerships"],
@@ -102,8 +99,8 @@ export function AppSidebar({ dealershipFilter, onDealershipFilterChange }: AppSi
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map((item) => {
-                const isActive = location === item.url ||
-                  (item.url === "/posts" && location.startsWith("/posts") && location !== "/posts/new");
+                const isActive =
+                  location === item.url || (item.url === "/posts" && location.startsWith("/posts") && location !== "/posts/new");
                 return (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton
