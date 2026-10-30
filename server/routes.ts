@@ -5,6 +5,7 @@ import { insertPostSchema, insertDealershipSchema } from "@shared/schema";
 import { scanDriveFolders, archiveFile } from "./drive-scanner";
 import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
+import { requireCronSecret, safeEqual } from "./auth";
 
 export async function registerRoutes(server: Server, app: Express) {
   // ---- Dealerships ----
@@ -139,6 +140,14 @@ export async function registerRoutes(server: Server, app: Express) {
   // ── TELEGRAM ────────────────────────────────────────────
   // Telegram webhook — handles Approve/Reject button taps
   app.post("/api/telegram/webhook", async (req, res) => {
+    const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET || "";
+    if (webhookSecret) {
+      const presented = req.get("x-telegram-bot-api-secret-token") || "";
+      if (!safeEqual(presented, webhookSecret)) {
+        return res.status(401).json({ ok: false });
+      }
+    }
+
     const { callback_query } = req.body;
     if (!callback_query) return res.json({ ok: true });
 
@@ -205,6 +214,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // Send weekly summary to Telegram
   app.post("/api/notify/weekly", async (req, res) => {
+    if (!requireCronSecret(req, res)) return;
     const posts = storage.getPosts({ status: "queued" });
     const dealerships = storage.getDealerships();
     await sendWeeklySummary(posts, dealerships);
@@ -227,6 +237,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // ── DRIVE SCANNER ───────────────────────────────────────────
   app.post("/api/drive/scan", async (req, res) => {
+    if (!requireCronSecret(req, res)) return;
     try {
       const count = await scanDriveFolders();
       res.json({ success: true, newPosts: count, message: `Created ${count} new draft post(s) from Drive` });

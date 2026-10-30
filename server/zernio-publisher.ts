@@ -8,13 +8,26 @@ import { storage } from "./storage";
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
+import { resolveBin } from "./local-bin";
 
 const ZERNIO_BASE = "https://zernio.com/api/v1";
-const FFMPEG = "/opt/homebrew/bin/ffmpeg";
-const FFPROBE = "/opt/homebrew/bin/ffprobe";
-const GITHUB_REPO = "thecooperativeagency/postengine";
-const MEDIA_BRANCH = "main";
 const MEDIA_FOLDER = "media";
+
+function ffmpegBin(): string {
+  return resolveBin("FFMPEG_PATH", "/opt/homebrew/bin/ffmpeg", "ffmpeg");
+}
+
+function ffprobeBin(): string {
+  return resolveBin("FFPROBE_PATH", "/opt/homebrew/bin/ffprobe", "ffprobe");
+}
+
+function githubRepo(): string {
+  return process.env.GITHUB_REPO?.trim() || "thecooperativeagency/postengine";
+}
+
+function mediaBranch(): string {
+  return process.env.GITHUB_MEDIA_BRANCH?.trim() || "main";
+}
 
 function getZernioKey(): string {
   if (process.env.ZERNIO_API_KEY) return process.env.ZERNIO_API_KEY;
@@ -32,7 +45,7 @@ function getZernioKey(): string {
 function getImageDimensions(filePath: string): { width: number; height: number } | null {
   try {
     const out = execSync(
-      `${FFPROBE} -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${filePath}"`,
+      `"${ffprobeBin()}" -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${filePath}"`,
       { encoding: "utf-8", timeout: 15000 }
     ).trim();
     const [w, h] = out.split(",").map(Number);
@@ -71,7 +84,7 @@ function cropFor45(inputPath: string, outputPath: string): boolean {
     }
 
     execSync(
-      `${FFMPEG} -y -i "${inputPath}" -vf "${cropFilter}" "${outputPath}"`,
+      `"${ffmpegBin()}" -y -i "${inputPath}" -vf "${cropFilter}" "${outputPath}"`,
       { encoding: "utf-8", timeout: 60000 }
     );
     return fs.existsSync(outputPath);
@@ -108,7 +121,7 @@ async function uploadCroppedToGithub(localPath: string, filename: string): Promi
     // Check if already exists
     let sha: string | undefined;
     const checkRes = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/contents/${githubPath}`,
+      `https://api.github.com/repos/${githubRepo()}/contents/${githubPath}?ref=${encodeURIComponent(mediaBranch())}`,
       { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" } }
     );
     if (checkRes.ok) {
@@ -116,11 +129,11 @@ async function uploadCroppedToGithub(localPath: string, filename: string): Promi
       sha = existing.sha;
     }
 
-    const body: any = { message: `Add IG-cropped media: ${filename}`, content: base64Content, branch: MEDIA_BRANCH };
+    const body: any = { message: `Add IG-cropped media: ${filename}`, content: base64Content, branch: mediaBranch() };
     if (sha) body.sha = sha;
 
     const uploadRes = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/contents/${githubPath}`,
+      `https://api.github.com/repos/${githubRepo()}/contents/${githubPath}`,
       {
         method: "PUT",
         headers: {
@@ -133,7 +146,7 @@ async function uploadCroppedToGithub(localPath: string, filename: string): Promi
     );
 
     if (uploadRes.ok) {
-      const rawUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/${MEDIA_BRANCH}/${githubPath}`;
+      const rawUrl = `https://raw.githubusercontent.com/${githubRepo()}/${mediaBranch()}/${githubPath}`;
       console.log(`[Zernio] ✅ Uploaded cropped image ${filename} → ${rawUrl}`);
       return rawUrl;
     } else {
@@ -213,7 +226,9 @@ async function ensureInstagramSafeImage(imageUrl: string): Promise<string> {
 // Load account mapping from config
 function getAccountMap(): Record<string, Record<string, string>> {
   try {
-    const raw = fs.readFileSync(path.join(process.cwd(), ".zernio-accounts.json"), "utf-8");
+    const accountsPath = process.env.ZERNIO_ACCOUNTS_PATH?.trim()
+      || path.join(process.cwd(), ".zernio-accounts.json");
+    const raw = fs.readFileSync(accountsPath, "utf-8");
     const config = JSON.parse(raw);
     return config.accounts || {};
   } catch {

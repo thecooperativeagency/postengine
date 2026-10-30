@@ -9,12 +9,17 @@
 import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
+import { googleWorkspaceAccount, resolveBin } from "./local-bin";
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
-const GITHUB_REPO = "thecooperativeagency/postengine";
-const MEDIA_BRANCH = "main";
 const MEDIA_FOLDER = "media";
-const ACCOUNT = "lance@thecoopbrla.com";
+
+function githubRepo(): string {
+  return process.env.GITHUB_REPO?.trim() || "thecooperativeagency/postengine";
+}
+
+function mediaBranch(): string {
+  return process.env.GITHUB_MEDIA_BRANCH?.trim() || "main";
+}
 
 function getGithubToken(): string {
   if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
@@ -31,13 +36,14 @@ function getGithubToken(): string {
  */
 function downloadFromDrive(fileId: string, destPath: string): boolean {
   try {
+    const bin = resolveBin("GOG_BIN", "/opt/homebrew/bin/gog", "gog");
     execSync(
-      `gog drive download ${fileId} --account ${ACCOUNT} --out "${destPath}" --no-input`,
+      `"${bin}" drive download ${fileId} --account ${googleWorkspaceAccount()} --out "${destPath}" --no-input`,
       { encoding: "utf-8", timeout: 60000 }
     );
     return fs.existsSync(destPath);
   } catch (e) {
-    console.error(`[MediaHost] Failed to download ${fileId}:`, e);
+    console.error("[MediaHost] Failed to download Drive file:", e instanceof Error ? e.message : "unknown");
     return false;
   }
 }
@@ -60,7 +66,7 @@ async function uploadToGithub(localPath: string, filename: string): Promise<stri
     // Check if file already exists (to get SHA for update)
     let sha: string | undefined;
     const checkRes = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/contents/${githubPath}`,
+      `https://api.github.com/repos/${githubRepo()}/contents/${githubPath}?ref=${encodeURIComponent(mediaBranch())}`,
       { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" } }
     );
     if (checkRes.ok) {
@@ -72,12 +78,12 @@ async function uploadToGithub(localPath: string, filename: string): Promise<stri
     const body: any = {
       message: `Add media: ${filename}`,
       content: base64Content,
-      branch: MEDIA_BRANCH,
+      branch: mediaBranch(),
     };
     if (sha) body.sha = sha;
 
     const uploadRes = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/contents/${githubPath}`,
+      `https://api.github.com/repos/${githubRepo()}/contents/${githubPath}`,
       {
         method: "PUT",
         headers: {
@@ -90,7 +96,7 @@ async function uploadToGithub(localPath: string, filename: string): Promise<stri
     );
 
     if (uploadRes.ok) {
-      const rawUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/${MEDIA_BRANCH}/${githubPath}`;
+      const rawUrl = `https://raw.githubusercontent.com/${githubRepo()}/${mediaBranch()}/${githubPath}`;
       console.log(`[MediaHost] ✅ Uploaded ${filename} → ${rawUrl}`);
       return rawUrl;
     } else {

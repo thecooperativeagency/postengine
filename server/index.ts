@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startPublishPoller } from "./zernio-publisher";
+import { requireBasicAuth } from "./auth";
 // Load .env manually
 import { readFileSync } from "fs";
 try {
@@ -33,6 +34,12 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({ status: "ok", service: "postengine" });
+});
+
+app.use(requireBasicAuth);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -102,6 +109,32 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+  async function registerTelegramWebhookIfEnabled() {
+    if (process.env.TELEGRAM_SET_WEBHOOK !== "1") return;
+    const token = process.env.TELEGRAM_BOT_TOKEN || "";
+    const url = process.env.TELEGRAM_WEBHOOK_URL || "";
+    if (!token || !url) {
+      log("TELEGRAM_SET_WEBHOOK=1 but TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_URL is missing", "telegram");
+      return;
+    }
+    const body: Record<string, string> = { url };
+    if (process.env.TELEGRAM_WEBHOOK_SECRET) {
+      body.secret_token = process.env.TELEGRAM_WEBHOOK_SECRET;
+    }
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json() as { ok?: boolean; description?: string };
+      if (data.ok) log("webhook registered", "telegram");
+      else log(`webhook registration failed: ${data.description || res.status}`, "telegram");
+    } catch (err) {
+      log(`webhook registration error: ${err instanceof Error ? err.message : "unknown"}`, "telegram");
+    }
+  }
+
   httpServer.listen(
     {
       port,
@@ -109,7 +142,11 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      if (!process.env.BASIC_AUTH_USER || !process.env.BASIC_AUTH_PASSWORD) {
+        log("BASIC_AUTH_USER/BASIC_AUTH_PASSWORD unset — do not attach a public domain");
+      }
       startPublishPoller(); // Start Zernio publish poller
+      void registerTelegramWebhookIfEnabled();
     },
   );
 })();

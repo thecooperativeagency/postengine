@@ -11,9 +11,16 @@ import { generateCaption } from "./caption-writer";
 import { hostImage } from "./media-host";
 import fs from "fs";
 import path from "path";
+import { googleWorkspaceAccount, resolveBin } from "./local-bin";
 
-const DRIVE_FOLDERS_PATH = path.join(process.cwd(), ".drive-folders.json");
-const ACCOUNT = "lance@thecoopbrla.com";
+function driveFoldersPath(): string {
+  return process.env.DRIVE_FOLDERS_PATH?.trim()
+    || path.join(process.cwd(), ".drive-folders.json");
+}
+
+function gogBin(): string {
+  return resolveBin("GOG_BIN", "/opt/homebrew/bin/gog", "gog");
+}
 
 interface DealershipFolders {
   id: number;
@@ -27,25 +34,40 @@ interface DriveFolders {
 }
 
 function loadFolders(): DriveFolders {
-  const raw = fs.readFileSync(DRIVE_FOLDERS_PATH, "utf-8");
+  const raw = fs.readFileSync(driveFoldersPath(), "utf-8");
   return JSON.parse(raw);
 }
 
 function gogCommand(args: string): any {
+  const bin = gogBin();
   try {
-    const result = execSync(`gog ${args} --account ${ACCOUNT} --json --no-input`, {
-      encoding: "utf-8",
-      timeout: 30000,
-    });
+    const result = execSync(
+      `"${bin}" ${args} --account ${googleWorkspaceAccount()} --json --no-input`,
+      { encoding: "utf-8", timeout: 30000 },
+    );
     return JSON.parse(result);
-  } catch (e) {
+  } catch (e: any) {
+    const msg = String(e?.message || "");
+    const missing = e?.code === "ENOENT"
+      || e?.status === 127
+      || /ENOENT|command not found|spawn .*gog/i.test(msg);
+    if (missing) {
+      throw new Error(
+        "Google Drive CLI (gog) is not available in this environment. The Mac Mini holds the gog login. Weekly import cannot run on Railway until Drive access is replaced. See docs/RAILWAY_DEPLOY.md.",
+      );
+    }
+    console.error("[DriveScanner] gog command failed");
     return null;
   }
 }
 
 function listFolder(folderId: string): any[] {
   const result = gogCommand(`drive ls --parent=${folderId}`);
-  if (!result) return [];
+  if (result === null) {
+    throw new Error(
+      "Google Drive list failed. gog is missing, unauthenticated, or the folder is unreachable.",
+    );
+  }
   const files = Array.isArray(result) ? result : result.files || [];
   return files.filter((f: any) =>
     f.mimeType && (
@@ -57,7 +79,7 @@ function listFolder(folderId: string): any[] {
 
 export function moveFile(fileId: string, targetFolderId: string): boolean {
   try {
-    execSync(`gog drive move ${fileId} --parent=${targetFolderId} --account ${ACCOUNT} --no-input`, {
+    execSync(`"${gogBin()}" drive move ${fileId} --parent=${targetFolderId} --account ${googleWorkspaceAccount()} --no-input`, {
       encoding: "utf-8",
       timeout: 30000,
     });

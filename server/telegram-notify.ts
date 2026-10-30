@@ -129,7 +129,8 @@ export async function sendWeeklySummary(posts: any[], dealerships: any[]): Promi
       text += `  • ${p.postType} — ${date}\n`;
     }
   }
-  text += `\nOpen PostEngine to review: http://localhost:3456/#/queue`;
+  const appUrl = (process.env.PUBLIC_APP_URL || "http://localhost:3456").replace(/\/$/, "");
+  text += `\nOpen PostEngine to review: ${appUrl}/#/queue`;
 
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",

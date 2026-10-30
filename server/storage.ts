@@ -2,8 +2,24 @@ import { dealerships, posts, activityLog, cadenceSettings, type Dealership, type
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, and, sql } from "drizzle-orm";
+import fs from "fs";
+import path from "path";
 
-const sqlite = new Database("sqlite.db");
+function resolveSqlitePath(): string {
+  if (process.env.SQLITE_PATH && process.env.SQLITE_PATH.trim()) {
+    return process.env.SQLITE_PATH.trim();
+  }
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    return path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "sqlite.db");
+  }
+  return path.join(process.cwd(), "sqlite.db");
+}
+
+const sqlitePath = resolveSqlitePath();
+fs.mkdirSync(path.dirname(sqlitePath), { recursive: true });
+const sqlite = new Database(sqlitePath);
+sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("busy_timeout = 5000");
 const db = drizzle(sqlite);
 
 export interface IStorage {
@@ -24,6 +40,13 @@ export interface IStorage {
   // Activity
   getActivityLog(limit?: number): ActivityLog[];
   logActivity(data: InsertActivityLog): ActivityLog;
+}
+
+function ensureColumn(table: string, column: string, definition: string) {
+  const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((col) => col.name === column)) {
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  }
 }
 
 export class DatabaseStorage implements IStorage {
@@ -70,7 +93,26 @@ export class DatabaseStorage implements IStorage {
         details TEXT,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS cadence_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dealership_id INTEGER NOT NULL,
+        post_type TEXT NOT NULL,
+        days_of_week TEXT NOT NULL DEFAULT '[]',
+        posts_per_day INTEGER NOT NULL DEFAULT 1,
+        auto_time INTEGER NOT NULL DEFAULT 1,
+        manual_time TEXT,
+        platforms TEXT NOT NULL DEFAULT '["instagram","facebook","googlebusiness"]',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
+
+    // The live Mac Mini database grew these columns outside the original
+    // CREATE TABLE. A fresh Railway volume needs the same shape.
+    ensureColumn("posts", "caption_facebook", "caption_facebook TEXT");
+    ensureColumn("posts", "caption_gmb", "caption_gmb TEXT");
 
     // Seed dealerships if empty
     const count = db.select({ count: sql<number>`count(*)` }).from(dealerships).get();
