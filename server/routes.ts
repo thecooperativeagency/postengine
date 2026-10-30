@@ -19,10 +19,9 @@ import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
 import { composePostContent } from "./post-composer";
 import {
-  ENGINE_DASHBOARD_PASSWORD_ENV,
-  isAuthorizedDashboardPassword,
+  checkDashboardPin,
+  dashboardCanSeeDealership,
   isDashboardProtectionEnabled,
-  readDashboardPassword,
 } from "./dashboard-auth";
 import { findRecentVehicleDuplicate } from "./post-dedup";
 import { hostUploadedMedia, inferPostMediaType } from "./media-upload";
@@ -243,34 +242,24 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.post("/api/auth/check", (req, res) => {
-    if (!isDashboardProtectionEnabled()) {
-      return res.json({ ok: true, enabled: false });
-    }
-
-    if (!isAuthorizedDashboardPassword(readDashboardPassword(req))) {
-      return res.status(401).json({
-        ok: false,
-        error: "Unauthorized",
-        message: "Valid dashboard PIN required",
-      });
-    }
-
-    return res.json({ ok: true, enabled: true });
+    checkDashboardPin(req, res);
   });
 
   // ---- Dealerships ----
-  app.get("/api/dealerships", (_req, res) => {
-    const dealerships = storage.getDealerships();
-    res.json(dealerships);
+  app.get("/api/dealerships", (req, res) => {
+    res.json(storage.getDealerships().filter((dealer) => dashboardCanSeeDealership(req, dealer.id)));
   });
 
   app.get("/api/dealerships/:id", (req, res) => {
     const dealership = storage.getDealership(Number(req.params.id));
-    if (!dealership) return res.status(404).json({ error: "Not found" });
+    if (!dealership || !dashboardCanSeeDealership(req, dealership.id)) return res.status(404).json({ error: "Not found" });
     res.json(dealership);
   });
 
   app.post("/api/dealerships", (req, res) => {
+    if (req.dashboardUser && req.dashboardUser.dealershipIds !== null) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
     try {
       const data = insertDealershipSchema.parse(req.body);
       const dealership = storage.createDealership(data);
@@ -281,13 +270,17 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.patch("/api/dealerships/:id", (req, res) => {
-    const updated = storage.updateDealership(Number(req.params.id), req.body);
+    const id = Number(req.params.id);
+    if (!dashboardCanSeeDealership(req, id)) return res.status(404).json({ error: "Not found" });
+    const updated = storage.updateDealership(id, req.body);
     if (!updated) return res.status(404).json({ error: "Not found" });
     res.json(updated);
   });
 
   app.delete("/api/dealerships/:id", (req, res) => {
-    const deleted = storage.deleteDealership(Number(req.params.id));
+    const id = Number(req.params.id);
+    if (!dashboardCanSeeDealership(req, id)) return res.status(404).json({ error: "Not found" });
+    const deleted = storage.deleteDealership(id);
     if (!deleted) return res.status(404).json({ error: "Not found" });
     res.json({ ok: true });
   });
@@ -299,18 +292,24 @@ export async function registerRoutes(server: Server, app: Express) {
     if (req.query.status) filters.status = req.query.status as string;
     if (req.query.postType) filters.postType = req.query.postType as string;
     const includeRejected = req.query.includeRejected === "true";
-    const postsList = storage.getPosts(filters);
+    const postsList = storage.getPosts(filters).filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
     res.json(filterPostsForApi(postsList, { status: filters.status, includeRejected }));
   });
 
-  app.get("/api/posts/stats", (_req, res) => {
-    const stats = storage.getPostStats();
-    res.json(stats);
+  app.get("/api/posts/stats", (req, res) => {
+    const visible = storage.getPosts().filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
+    res.json({
+      total: visible.length,
+      draft: visible.filter((post) => post.status === "draft").length,
+      queued: visible.filter((post) => post.status === "queued").length,
+      scheduled: visible.filter((post) => post.status === "scheduled").length,
+      published: visible.filter((post) => post.status === "published").length,
+    });
   });
 
   app.get("/api/posts/:id", (req, res) => {
     const post = storage.getPost(Number(req.params.id));
-    if (!post) return res.status(404).json({ error: "Not found" });
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
     res.json({ ...post, composedContent: composePostContent(post) });
   });
 
@@ -354,6 +353,9 @@ export async function registerRoutes(server: Server, app: Express) {
   app.post("/api/posts", (req, res) => {
     try {
       const data = insertPostSchema.parse(req.body);
+      if (!dashboardCanSeeDealership(req, data.dealershipId)) {
+        return res.status(404).json({ error: "Not found" });
+      }
       const post = storage.createPost(data);
       storage.logActivity({
         postId: post.id,
@@ -370,7 +372,10 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.patch("/api/posts/:id", (req, res) => {
     const existing = storage.getPost(Number(req.params.id));
-    if (!existing) return res.status(404).json({ error: "Not found" });
+    if (!existing || !dashboardCanSeeDealership(req, existing.dealershipId)) return res.status(404).json({ error: "Not found" });
+    if (req.body?.dealershipId !== undefined && !dashboardCanSeeDealership(req, Number(req.body.dealershipId))) {
+      return res.status(404).json({ error: "Not found" });
+    }
 
     try {
       archivePostSourceOrThrow(existing, req.body.status, archiveFile);
@@ -402,7 +407,7 @@ export async function registerRoutes(server: Server, app: Express) {
         return res.status(400).json({ error: "dealershipId is required" });
       }
       const dealership = storage.getDealership(dealershipId);
-      if (!dealership) return res.status(404).json({ error: "Dealership not found" });
+      if (!dealership || !dashboardCanSeeDealership(req, dealership.id)) return res.status(404).json({ error: "Dealership not found" });
 
       const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
       if (!prompt) {
@@ -462,7 +467,7 @@ export async function registerRoutes(server: Server, app: Express) {
     try {
       const postId = Number(req.params.id);
       const post = storage.getPost(postId);
-      if (!post) return res.status(404).json({ error: "Not found" });
+      if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
 
       const direction = typeof req.body?.direction === "string" ? req.body.direction.trim() : "";
       if (!direction) {
@@ -533,7 +538,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.delete("/api/posts/:id", (req, res) => {
     const post = storage.getPost(Number(req.params.id));
-    if (!post) return res.status(404).json({ error: "Not found" });
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
     storage.deletePost(Number(req.params.id));
     storage.logActivity({
       postId: post.id,
@@ -550,7 +555,11 @@ export async function registerRoutes(server: Server, app: Express) {
     if (!Array.isArray(ids)) return res.status(400).json({ error: "ids must be an array" });
 
     const result = bulkApprovePosts(ids, {
-      getPost: (id) => storage.getPost(id),
+      getPost: (id) => {
+        const post = storage.getPost(id);
+        if (post && !dashboardCanSeeDealership(req, post.dealershipId)) return undefined;
+        return post;
+      },
       updatePost: (id, data) => storage.updatePost(id, data),
       archive: archiveFile,
       findDuplicate: (post) => findRecentDuplicateForPost(post),
@@ -652,7 +661,7 @@ export async function registerRoutes(server: Server, app: Express) {
   // Send approval request for a specific post
   app.post("/api/posts/:id/notify", async (req, res) => {
     const post = storage.getPost(parseInt(req.params.id));
-    if (!post) return res.status(404).json({ error: "Not found" });
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
     const dealerships = storage.getDealerships();
     const dealer = dealerships.find(d => d.id === post.dealershipId);
     const success = await sendApprovalRequest(post, dealer?.name || "Unknown");
@@ -672,7 +681,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.post("/api/posts/:id/publish", async (req, res) => {
     const postId = parseInt(req.params.id);
     const post = storage.getPost(postId);
-    if (!post) return res.status(404).json({ error: "Not found" });
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
 
     try {
       archivePostSourceOrThrow(post, "scheduled", archiveFile);
@@ -690,7 +699,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ── DRIVE SCANNER ───────────────────────────────────────────
-  app.get("/api/drive/config", (_req, res) => {
+  app.get("/api/drive/config", (req, res) => {
     if (!driveConfigured()) {
       return res.json({
         configured: false,
@@ -714,6 +723,7 @@ export async function registerRoutes(server: Server, app: Express) {
             folders: folderConfig.folders,
           };
         })
+        .filter((item) => dashboardCanSeeDealership(req, item.id))
         .sort((a, b) => a.name.localeCompare(b.name));
 
       res.json({
@@ -735,7 +745,7 @@ export async function registerRoutes(server: Server, app: Express) {
     res.json({ paused, lastRunAt, lastRunCount, driveScan });
   });
 
-  app.get("/api/engine/reel-health", (_req, res) => {
+  app.get("/api/engine/reel-health", (req, res) => {
     try {
       const config = driveConfigured() ? loadFolders() : { dealerships: {} as Record<string, { id: number; folders: Record<string, string> }> };
       const dealerships = storage.getDealerships();
@@ -794,7 +804,7 @@ export async function registerRoutes(server: Server, app: Express) {
           unconfiguredRules,
           healthy: unconfiguredRules === 0 && shortfall === 0,
         };
-      });
+      }).filter((row) => dashboardCanSeeDealership(req, row.dealershipId));
 
       res.json({
         floorWeeks,
@@ -813,11 +823,17 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.post("/api/engine/pause", (req, res) => {
+    if (req.dashboardUser && req.dashboardUser.dealershipIds !== null) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
     storage.setAppSetting("imports_paused", "true");
     res.json({ success: true, paused: true });
   });
 
   app.post("/api/engine/resume", (req, res) => {
+    if (req.dashboardUser && req.dashboardUser.dealershipIds !== null) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
     storage.setAppSetting("imports_paused", "false");
     res.json({ success: true, paused: false });
   });
@@ -830,8 +846,8 @@ export async function registerRoutes(server: Server, app: Express) {
     return `caption_talking_points_updated_at.${dealershipId}`;
   }
 
-  app.get("/api/caption-brief", (_req, res) => {
-    const dealerships = storage.getDealerships();
+  app.get("/api/caption-brief", (req, res) => {
+    const dealerships = storage.getDealerships().filter((dealer) => dashboardCanSeeDealership(req, dealer.id));
     const stores = dealerships.map((d) => ({
       dealershipId: d.id,
       name: d.name,
@@ -855,7 +871,7 @@ export async function registerRoutes(server: Server, app: Express) {
       const saved: Array<{ dealershipId: number; talkingPoints: string; updatedAt: string }> = [];
       for (const row of bodyStores) {
         const id = Number(row?.dealershipId);
-        if (!Number.isInteger(id) || !dealershipIds.has(id)) continue;
+        if (!Number.isInteger(id) || !dealershipIds.has(id) || !dashboardCanSeeDealership(req, id)) continue;
         const talkingPoints = (typeof row?.talkingPoints === "string" ? row.talkingPoints : "")
           .trim()
           .slice(0, 4000);
@@ -872,7 +888,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
     // Single store: { dealershipId, talkingPoints }
     const id = Number(req.body?.dealershipId);
-    if (!Number.isInteger(id) || !storage.getDealership(id)) {
+    if (!Number.isInteger(id) || !storage.getDealership(id) || !dashboardCanSeeDealership(req, id)) {
       return res.status(400).json({ error: "dealershipId required (or pass stores[])" });
     }
     const talkingPoints = (typeof req.body?.talkingPoints === "string" ? req.body.talkingPoints : "")
@@ -959,6 +975,9 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.post("/api/drive/scan", async (req, res) => {
+    if (req.dashboardUser && req.dashboardUser.dealershipIds !== null) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
     if (!driveConfigured()) {
       console.error("[DriveScanner] Weekly scan skipped: drive not configured");
       return res.json({ skipped: true, reason: "drive not configured" });
@@ -1067,7 +1086,8 @@ export async function registerRoutes(server: Server, app: Express) {
   // ── CADENCE SETTINGS ─────────────────────────────────────────
   app.get("/api/cadence", (req, res) => {
     const { dealershipId } = req.query;
-    const settings = storage.getCadenceSettings(dealershipId ? parseInt(dealershipId as string) : undefined);
+    const settings = storage.getCadenceSettings(dealershipId ? parseInt(dealershipId as string) : undefined)
+      .filter((setting) => dashboardCanSeeDealership(req, setting.dealershipId));
     res.json(settings);
   });
 
@@ -1079,6 +1099,9 @@ export async function registerRoutes(server: Server, app: Express) {
         reelsEnabled: Boolean(req.body?.reelsEnabled),
         reelsPerWeek: Number(req.body?.reelsPerWeek || 0),
       });
+      if (!dashboardCanSeeDealership(req, parsed.dealershipId)) {
+        return res.status(404).json({ error: "Not found" });
+      }
       const setting = storage.createCadenceSetting(parsed);
       res.json(setting);
     } catch (e: any) {
@@ -1092,7 +1115,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.patch("/api/cadence/:id", (req, res) => {
     try {
       const existing = storage.getCadenceSettings().find((s) => s.id === parseInt(req.params.id));
-      if (!existing) return res.status(404).json({ error: "Not found" });
+      if (!existing || !dashboardCanSeeDealership(req, existing.dealershipId)) return res.status(404).json({ error: "Not found" });
       const merged = {
         dealershipId: existing.dealershipId,
         postType: existing.postType,
@@ -1125,6 +1148,8 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.delete("/api/cadence/:id", (req, res) => {
+    const existing = storage.getCadenceSettings().find((setting) => setting.id === parseInt(req.params.id));
+    if (!existing || !dashboardCanSeeDealership(req, existing.dealershipId)) return res.status(404).json({ error: "Not found" });
     const success = storage.deleteCadenceSetting(parseInt(req.params.id));
     if (!success) return res.status(404).json({ error: "Not found" });
     res.json({ success: true });
@@ -1132,16 +1157,23 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.get("/api/activity", (req, res) => {
     const limit = req.query.limit ? Number(req.query.limit) : 20;
-    const activity = storage.getActivityLog(limit);
+    const activity = storage.getActivityLog(limit).filter((row) => row.dealershipId == null || dashboardCanSeeDealership(req, row.dealershipId));
     res.json(activity);
   });
 
   // ---- Dashboard Stats ----
-  app.get("/api/dashboard", (_req, res) => {
-    const stats = storage.getPostStats();
-    const dealerships = storage.getDealerships();
-    const recentActivity = storage.getActivityLog(10);
-    const allPosts = storage.getPosts();
+  app.get("/api/dashboard", (req, res) => {
+    const dealerships = storage.getDealerships().filter((dealer) => dashboardCanSeeDealership(req, dealer.id));
+    const allowed = new Set(dealerships.map((dealer) => dealer.id));
+    const recentActivity = storage.getActivityLog(10).filter((row) => row.dealershipId == null || allowed.has(row.dealershipId));
+    const allPosts = storage.getPosts().filter((post) => allowed.has(post.dealershipId));
+    const stats = {
+      total: allPosts.length,
+      draft: allPosts.filter((post) => post.status === "draft").length,
+      queued: allPosts.filter((post) => post.status === "queued").length,
+      scheduled: allPosts.filter((post) => post.status === "scheduled").length,
+      published: allPosts.filter((post) => post.status === "published").length,
+    };
 
     // Posts per dealership
     const perDealership = dealerships.map(d => ({

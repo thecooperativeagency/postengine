@@ -144,13 +144,13 @@ Set these on the **web** service unless noted. Values stay out of git.
 
 Production (`npm start` / the Railway image) exits before it listens if any of these are missing:
 
-`ENGINE_DASHBOARD_PASSWORD`, `CRON_SECRET`, `ZERNIO_API_KEY`.
+`CRON_SECRET`, `ZERNIO_API_KEY`, and at least one of `ENGINE_DASHBOARD_PASSWORD` or `DASHBOARD_PINS_JSON`.
 
 `GOOGLE_SERVICE_ACCOUNT_JSON` and drive folder config (`DRIVE_FOLDERS_JSON` or a file at `DRIVE_FOLDERS_PATH`) are optional. If either is missing, or the key cannot sign, boot logs a warning and continues. The Friday scan then returns `{skipped:true, reason:"drive not configured"}` and does not call Drive.
 
-`BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` are not used. Managers still sign in with the same 5-digit PIN. The screen says "Enter the 5-digit PIN to open Post Engine." The browser stores it in sessionStorage under `engine-dashboard-password` and sends `X-Dashboard-Password`. That is the same before and after this branch.
+`BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` are not used. Each manager can have a PIN in `DASHBOARD_PINS_JSON`. `ENGINE_DASHBOARD_PASSWORD` remains an optional admin PIN that sees every store. The screen still says "Enter the 5-digit PIN to open Post Engine." The browser stores it in sessionStorage under `engine-dashboard-password` and sends `X-Dashboard-Password`. A successful login logs the person's name, not the PIN. Wrong attempts are limited to 10 per 15 minutes per IP.
 
-Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`, `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, `CAPTION_MODEL`, `GITHUB_TOKEN`, `GITHUB_MEDIA_UPLOAD`, `EPIDEMIC_SOUND_API_KEY`, `PORSCHE_SALES_EMAIL_DIR`, `PUBLIC_APP_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_SET_WEBHOOK`, `IMPORT_TOKEN`, `PUBLISH_ENABLED`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `DRIVE_FOLDERS_JSON`, `DRIVE_FOLDERS_PATH`. Telegram is dropped. If `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` is unset, startup logs once that notifications are off, sends are no-ops, `POST /api/telegram/webhook` returns 404, and the process does not call `setWebhook`. Captions default to `CAPTION_PROVIDER=nous` and `CAPTION_MODEL=anthropic/claude-haiku-4.5`, using `CAPTION_API_KEY` only. Requests do not send `max_tokens`. A model id containing `haiku-5` sends `reasoning: {enabled: false}`. `ANTHROPIC_API_KEY`, `GITHUB_MODELS_TOKEN`, `OPENAI_API_KEY`, and `NOUS_API_KEY` are not read. A missing key or a failed call uses a template. Nothing shells out to Hermes, `gog`, or the macOS Keychain.
+Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`, `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, `CAPTION_MODEL`, `GITHUB_TOKEN`, `GITHUB_MEDIA_UPLOAD`, `EPIDEMIC_SOUND_API_KEY`, `PORSCHE_SALES_EMAIL_DIR`, `PUBLIC_APP_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_SET_WEBHOOK`, `IMPORT_TOKEN`, `PUBLISH_ENABLED`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `DRIVE_FOLDERS_JSON`, `DRIVE_FOLDERS_PATH`, `ENGINE_DASHBOARD_PASSWORD`, `DASHBOARD_PINS_JSON`. One of the last two is still required. Telegram is dropped. If `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` is unset, startup logs once that notifications are off, sends are no-ops, `POST /api/telegram/webhook` returns 404, and the process does not call `setWebhook`. Captions default to `CAPTION_PROVIDER=nous` and `CAPTION_MODEL=anthropic/claude-haiku-4.5`, using `CAPTION_API_KEY` only. Requests do not send `max_tokens`. A model id containing `haiku-5` sends `reasoning: {enabled: false}`. `ANTHROPIC_API_KEY`, `GITHUB_MODELS_TOKEN`, `OPENAI_API_KEY`, and `NOUS_API_KEY` are not read. A missing key or a failed call uses a template. Nothing shells out to Hermes, `gog`, or the macOS Keychain.
 
 `npm run dev` does not apply that check.
 
@@ -170,7 +170,8 @@ Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`
 | `CAPTION_PROVIDER` | web | Optional. Default `nous`. Also `openai`, `openai-compatible`, `github-models`, `fallback`. |
 | `CAPTION_BASE_URL` | web | Optional. Used only for `openai-compatible`. Nous uses its own endpoint. |
 | `CAPTION_MODEL` | web | Optional. Default `anthropic/claude-haiku-4.5`. |
-| `ENGINE_DASHBOARD_PASSWORD` | web | Required in production. The same 5-digit PIN managers type today. |
+| `ENGINE_DASHBOARD_PASSWORD` | web | Optional shared admin PIN. Production requires this or `DASHBOARD_PINS_JSON`. Sees every store. |
+| `DASHBOARD_PINS_JSON` | web | Optional list of people. Example: `[{"name":"Jane Doe","pin":"48213","dealerships":["bhbmw"]}]`. `dealerships` omitted means every store. Duplicate PINs refuse boot. |
 | `EPIDEMIC_SOUND_API_KEY` | web | Optional. Live reels music. This branch's publisher does not call it. |
 | `GITHUB_MEDIA_UPLOAD` | web | Optional. Off unless set to `1`. The stored URL stays on the volume either way. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | web | Optional at boot. Service account key JSON. Needed before a real Drive scan. A missing or unusable key logs a warning and the scan skips. |
@@ -212,7 +213,7 @@ Also set `CRON_SECRET` on the cron service to the same value.
 
 1. **This branch is the live snapshot plus Railway.** `0556d952` is the app. Archive and `main` did not replace any snapshot file. Do not merge this PR to `main` until Lance says so.
 
-2. **Manager login is unchanged.** The live PIN gate (`ENGINE_DASHBOARD_PASSWORD`) is still the only dashboard login. There is no separate basic-auth prompt. `GET /api/health` and `/media/generated` stay public, as they are not manager pages. Production refuses to boot if the PIN is unset, so the gate cannot be left off by accident. When the same PIN is set, the screen and the header are the same as today.
+2. **The PIN screen looks the same.** Title ENGINE, text "Enter the 5-digit PIN to open Post Engine." There is no username field and no basic-auth prompt. Production refuses to boot unless `DASHBOARD_PINS_JSON` or `ENGINE_DASHBOARD_PASSWORD` is set. `GET /api/health` and `/media/generated` stay public.
 
 3. **Telegram is dropped.** Leave `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_WEBHOOK_URL` unset. Do not point a webhook at Ada's bot. Approval stays in the dashboard.
 

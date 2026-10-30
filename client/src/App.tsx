@@ -63,7 +63,13 @@ function DashboardAccessGate({ onAuthenticated }: { onAuthenticated: () => void 
     });
 
     if (!res.ok) {
-      throw new Error(res.status === 401 ? "Invalid PIN" : `Access check failed (${res.status})`);
+      throw new Error(
+        res.status === 401
+          ? "Invalid PIN"
+          : res.status === 429
+            ? "Too many attempts. Try again in a few minutes."
+            : `Access check failed (${res.status})`,
+      );
     }
 
     setDashboardPassword(trimmed);

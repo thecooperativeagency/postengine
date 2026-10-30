@@ -3,8 +3,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startPublishPoller } from "./zernio-publisher";
-import { DATABASE_PATH } from "./storage";
-import { requireDashboardPassword } from "./dashboard-auth";
+import { DATABASE_PATH, storage } from "./storage";
+import { dashboardAuthProblems, requireDashboardPassword, setDashboardDealerships } from "./dashboard-auth";
 import { getPublicMediaDir, PUBLIC_MEDIA_ROUTE_PREFIX } from "./public-media";
 import { handleAdminImport } from "./admin-import";
 import { publishEnabled } from "./publish-switch";
@@ -24,6 +24,7 @@ try {
 } catch {}
 
 const app = express();
+app.set("trust proxy", 1);
 const httpServer = createServer(app);
 
 declare module "http" {
@@ -96,7 +97,8 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  const problems = productionEnvProblems();
+  setDashboardDealerships(storage.getDealerships());
+  const problems = [...productionEnvProblems(), ...dashboardAuthProblems()];
   if (problems.length) {
     console.error(`Refusing to start. Missing or invalid production settings: ${problems.join(", ")}`);
     process.exit(1);

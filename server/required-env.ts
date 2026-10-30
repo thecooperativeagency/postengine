@@ -5,7 +5,6 @@
  */
 
 const REQUIRED_PRODUCTION_ENV = [
-  "ENGINE_DASHBOARD_PASSWORD",
   "CRON_SECRET",
   "ZERNIO_API_KEY",
 ] as const;
@@ -31,6 +30,8 @@ const OPTIONAL_ENV = [
   "GOOGLE_SERVICE_ACCOUNT_JSON",
   "DRIVE_FOLDERS_JSON",
   "DRIVE_FOLDERS_PATH",
+  "ENGINE_DASHBOARD_PASSWORD",
+  "DASHBOARD_PINS_JSON",
 ] as const;
 
 export function productionEnvProblems(): string[] {
