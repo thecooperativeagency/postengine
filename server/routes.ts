@@ -141,6 +141,9 @@ export async function registerRoutes(server: Server, app: Express) {
   // ── TELEGRAM ────────────────────────────────────────────
   // Telegram webhook — handles Approve/Reject button taps
   app.post("/api/telegram/webhook", async (req, res) => {
+    if (!process.env.TELEGRAM_BOT_TOKEN?.trim() || !process.env.TELEGRAM_CHAT_ID?.trim()) {
+      return res.status(404).json({ error: "Not found" });
+    }
     const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET || "";
     if (webhookSecret) {
       const presented = req.get("x-telegram-bot-api-secret-token") || "";

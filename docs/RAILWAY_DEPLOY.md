@@ -149,9 +149,9 @@ Set these on the **web** service unless noted. Values stay out of git.
 
 Production (`npm start` / the Railway image) exits before it listens if any of these are missing or if `GOOGLE_SERVICE_ACCOUNT_JSON` is not a key this process can sign with (`client_email` and `private_key`):
 
-`BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`, `CRON_SECRET`, `ZERNIO_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, `PUBLIC_APP_URL`, `GOOGLE_SERVICE_ACCOUNT_JSON`, and drive folder config (`DRIVE_FOLDERS_JSON` or a file at `DRIVE_FOLDERS_PATH`).
+`BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`, `CRON_SECRET`, `ZERNIO_API_KEY`, `PUBLIC_APP_URL`, `GOOGLE_SERVICE_ACCOUNT_JSON`, and drive folder config (`DRIVE_FOLDERS_JSON` or a file at `DRIVE_FOLDERS_PATH`).
 
-Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`, `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, `CAPTION_MODEL`, `GITHUB_TOKEN`, `GITHUB_MEDIA_UPLOAD`, `ENGINE_DASHBOARD_PASSWORD`, `EPIDEMIC_SOUND_API_KEY`, `TELEGRAM_SET_WEBHOOK`. Captions default to `CAPTION_PROVIDER=nous` and `CAPTION_MODEL=anthropic/claude-haiku-4.5`, using `CAPTION_API_KEY` only. `ANTHROPIC_API_KEY`, `GITHUB_MODELS_TOKEN`, `OPENAI_API_KEY`, and `NOUS_API_KEY` are not read. A missing key or a failed call uses a template. Nothing shells out to Hermes.
+Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`, `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, `CAPTION_MODEL`, `GITHUB_TOKEN`, `GITHUB_MEDIA_UPLOAD`, `ENGINE_DASHBOARD_PASSWORD`, `EPIDEMIC_SOUND_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_SET_WEBHOOK`. Telegram is dropped. If `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` is unset, startup logs once that notifications are off, sends are no-ops, `POST /api/telegram/webhook` returns 404, and the process does not call `setWebhook`. Captions default to `CAPTION_PROVIDER=nous` and `CAPTION_MODEL=anthropic/claude-haiku-4.5`, using `CAPTION_API_KEY` only. `ANTHROPIC_API_KEY`, `GITHUB_MODELS_TOKEN`, `OPENAI_API_KEY`, and `NOUS_API_KEY` are not read. A missing key or a failed call uses a template. Nothing shells out to Hermes.
 
 `npm run dev` does not apply that check.
 
@@ -175,11 +175,11 @@ Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`
 | `EPIDEMIC_SOUND_API_KEY` | web | Optional. Live reels music. This branch's publisher does not call it. |
 | `GITHUB_MEDIA_UPLOAD` | web | Optional. Off unless set to `1`. The stored URL stays on the volume either way. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | web | Service account key JSON. Required in production. |
-| `TELEGRAM_BOT_TOKEN` | web | Dedicated PostEngine bot. Required in production. Do not reuse Ada's bot. |
-| `TELEGRAM_CHAT_ID` | web | Destination chat. Required in production. |
-| `TELEGRAM_WEBHOOK_SECRET` | web | Checked on `POST /api/telegram/webhook`. Required in production. |
-| `TELEGRAM_WEBHOOK_URL` | web | Public `https` URL of `/api/telegram/webhook`. Required in production. |
-| `TELEGRAM_SET_WEBHOOK` | web | Set to `1` to call Telegram `setWebhook` on boot. |
+| `TELEGRAM_BOT_TOKEN` | web | Optional. Unset means notifications are a no-op and the webhook route is 404. |
+| `TELEGRAM_CHAT_ID` | web | Optional. Required only if you still send Telegram messages. |
+| `TELEGRAM_WEBHOOK_SECRET` | web | Optional. Checked on the webhook only when the bot token is set. |
+| `TELEGRAM_WEBHOOK_URL` | web | Optional. `setWebhook` runs only when this, the bot token, and `TELEGRAM_SET_WEBHOOK=1` are all set. |
+| `TELEGRAM_SET_WEBHOOK` | web | Optional. Leave unset. Nothing calls `setWebhook` without it. |
 | `PUBLIC_APP_URL` | web | Origin for media URLs and the queue link in Telegram. Required in production. No localhost default there. |
 | `GITHUB_TOKEN` | web | Optional. Contents read, only for `POST /api/media/migrate-github` if GitHub raw URLs are private. |
 | `FFMPEG_PATH` | web | ffmpeg binary. Image uses `ffmpeg`. Homebrew path is still used on the Mini when that file exists. |
@@ -213,9 +213,9 @@ Also set `CRON_SECRET` on the cron service to the same value.
 
 1. **Diff the Mini tree before trusting this deploy.** Head `1fb3d6eb` is in git and does not contain the engine, reels, or PIN behavior described on the Mini. The archive branch has a later snapshot of some of that, and it is not on `main`. Treat both as clues, not as the live source.
 
-2. **Basic auth here is not the Mini's dashboard password.** Production requires `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`. `ENGINE_DASHBOARD_PASSWORD` is what the live app uses and is optional on this branch. `GET /api/health` and `/media/generated` stay public. The Telegram webhook checks `TELEGRAM_WEBHOOK_SECRET`.
+2. **Basic auth here is not the Mini's dashboard password.** Production requires `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`. `ENGINE_DASHBOARD_PASSWORD` is what the live app uses and is optional on this branch. `GET /api/health` and `/media/generated` stay public.
 
-3. **Telegram must be a new bot.** `setWebhook` on Ada's bot takes her updates. Set `TELEGRAM_SET_WEBHOOK=1` only for the new bot.
+3. **Telegram is dropped.** Leave `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_WEBHOOK_URL` unset. Do not point a webhook at Ada's bot. Approval stays in the dashboard.
 
 4. **Copy `~/.postengine/sqlite.db` before the first real boot.** An empty database seeds sample posts, including one `scheduled` post that the poller will publish. Checkpoint first: `sqlite3 ~/.postengine/sqlite.db "PRAGMA wal_checkpoint(TRUNCATE);"`. Copy to `/data/sqlite.db`. If a seeded file was created, stop the service and replace `sqlite.db`, `sqlite.db-wal`, and `sqlite.db-shm`.
 
@@ -239,7 +239,7 @@ Also set `CRON_SECRET` on the cron service to the same value.
 4. Checkpoint and copy `~/.postengine/sqlite.db` to `/data/sqlite.db` before the first production boot.
 5. Stop the Mini publisher **before** Railway starts its 60-second publish loop. Unload launchd so it does not restart the process: `launchctl bootout gui/$(id -u)/com.postengine`. If the label lives in `~/Library/LaunchAgents/com.postengine.plist`, `launchctl unload` that plist as well. Confirm `launchctl print gui/$(id -u)/com.postengine` does not show a running job. Killing node alone is not enough.
 6. Start Railway. Confirm `GET /api/health` and that the dashboard shows the copied posts, not seed data.
-7. Set `TELEGRAM_SET_WEBHOOK=1` for the new bot. Confirm an approval button updates a post.
+7. Leave the Telegram variables unset. Confirm startup logs `Telegram notifications are off` and `POST /api/telegram/webhook` returns 404.
 8. rsync `~/.postengine/public-media/` to `/data/media/generated/`. Then run `POST /api/media/migrate-github` only for posts that still use GitHub raw URLs. Confirm an existing `/media/generated/` URL returns the file with no basic auth.
 9. Run the Friday scan command once by hand. An empty folder is success with zero posts. An auth error is a failure.
 10. Point `friday-queue-reminder.sh` (Friday 10:45 America/Chicago) at `GET /api/reports/friday-queue` with `X-Cron-Secret` instead of opening the SQLite file. The endpoint returns queued total, queued by store, and scheduled posts in the next 14 days.

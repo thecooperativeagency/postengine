@@ -99,6 +99,9 @@ app.use((req, res, next) => {
   if (optional.length) {
     console.error(`Optional settings not set: ${optional.join(", ")}`);
   }
+  if (!process.env.TELEGRAM_BOT_TOKEN?.trim() || !process.env.TELEGRAM_CHAT_ID?.trim()) {
+    console.error("Telegram notifications are off");
+  }
 
   await registerRoutes(httpServer, app);
 
@@ -131,13 +134,9 @@ app.use((req, res, next) => {
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
   async function registerTelegramWebhookIfEnabled() {
-    if (process.env.TELEGRAM_SET_WEBHOOK !== "1") return;
-    const token = process.env.TELEGRAM_BOT_TOKEN || "";
-    const url = process.env.TELEGRAM_WEBHOOK_URL || "";
-    if (!token || !url) {
-      log("TELEGRAM_SET_WEBHOOK=1 but TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_URL is missing", "telegram");
-      return;
-    }
+    const token = process.env.TELEGRAM_BOT_TOKEN?.trim() || "";
+    const url = process.env.TELEGRAM_WEBHOOK_URL?.trim() || "";
+    if (process.env.TELEGRAM_SET_WEBHOOK !== "1" || !token || !url || !process.env.TELEGRAM_CHAT_ID?.trim()) return;
     const body: Record<string, string> = { url };
     if (process.env.TELEGRAM_WEBHOOK_SECRET) {
       body.secret_token = process.env.TELEGRAM_WEBHOOK_SECRET;

@@ -12,12 +12,14 @@ function chatId(): string {
   return process.env.TELEGRAM_CHAT_ID?.trim() || "";
 }
 
+/** Telegram is optional. Unset token or chat id means every send is a no-op. */
+export function telegramNotificationsEnabled(): boolean {
+  return Boolean(getBotToken() && chatId());
+}
+
 export async function sendApprovalRequest(post: any, dealershipName: string): Promise<boolean> {
   const token = getBotToken();
-  if (!token) {
-    console.warn("[Telegram] No bot token — skipping notification");
-    return false;
-  }
+  if (!telegramNotificationsEnabled()) return false;
 
   const caption = post.caption?.substring(0, 800) || "";
   const scheduledDate = post.scheduledFor
@@ -80,7 +82,7 @@ export async function sendApprovalRequest(post: any, dealershipName: string): Pr
 
 export async function sendWeeklySummary(posts: any[], dealerships: any[]): Promise<void> {
   const token = getBotToken();
-  if (!token) return;
+  if (!telegramNotificationsEnabled()) return;
 
   const byDealer: Record<string, any[]> = {};
   for (const post of posts) {
