@@ -31,6 +31,8 @@ const OPTIONAL_ENV = [
   "ENGINE_DASHBOARD_PASSWORD",
   "EPIDEMIC_SOUND_API_KEY",
   "TELEGRAM_SET_WEBHOOK",
+  "IMPORT_TOKEN",
+  "PUBLISH_ENABLED",
 ] as const;
 
 export function productionEnvProblems(): string[] {

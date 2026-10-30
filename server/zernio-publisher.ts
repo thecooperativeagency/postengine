@@ -9,6 +9,7 @@ import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 import { resolveBin } from "./local-bin";
+import { publishEnabled } from "./publish-switch";
 import { saveHostedMedia } from "./media-store";
 
 const ZERNIO_BASE = "https://zernio.com/api/v1";
@@ -238,6 +239,10 @@ async function zernioPost(payload: ZernioPostPayload): Promise<{ success: boolea
  * Publish a single post to all its platforms via Zernio.
  */
 export async function publishPost(postId: number): Promise<{ success: boolean; results: Record<string, any> }> {
+  if (!publishEnabled()) {
+    console.error("[Zernio] Publish skipped: PUBLISH_ENABLED is not true");
+    return { success: false, results: { error: "PUBLISH_ENABLED is not true" } };
+  }
   const post = storage.getPost(postId);
   if (!post) return { success: false, results: { error: "Post not found" } };
 
@@ -325,6 +330,10 @@ export async function publishPost(postId: number): Promise<{ success: boolean; r
  * Runs every minute.
  */
 export function startPublishPoller() {
+  if (!publishEnabled()) {
+    console.error("[Zernio] Publish loop not started: PUBLISH_ENABLED is not true");
+    return;
+  }
   console.log("[Zernio] Publisher poller started — checking every 60 seconds");
 
   setInterval(async () => {

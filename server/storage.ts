@@ -17,10 +17,45 @@ function resolveSqlitePath(): string {
 
 const sqlitePath = resolveSqlitePath();
 fs.mkdirSync(path.dirname(sqlitePath), { recursive: true });
-const sqlite = new Database(sqlitePath);
-sqlite.pragma("journal_mode = WAL");
-sqlite.pragma("busy_timeout = 5000");
-const db = drizzle(sqlite);
+let sqlite = openSqlite(sqlitePath);
+let db = drizzle(sqlite);
+
+function openSqlite(file: string) {
+  const database = new Database(file);
+  database.pragma("journal_mode = WAL");
+  database.pragma("busy_timeout = 5000");
+  return database;
+}
+
+export function sqliteFilePath(): string {
+  return sqlitePath;
+}
+
+/** Close the open handle so an import can replace the file. */
+export function closeDatabase(): void {
+  try {
+    sqlite.pragma("wal_checkpoint(TRUNCATE)");
+  } catch {
+    // The file may already be gone.
+  }
+  sqlite.close();
+}
+
+/** Attach to the database file again after it is replaced. */
+export function reopenDatabase(): void {
+  sqlite = openSqlite(sqlitePath);
+  db = drizzle(sqlite);
+  applySchema();
+}
+
+export function postCountsByStatus(): Record<string, number> {
+  const rows = sqlite.prepare(
+    "select status, count(*) as n from posts group by status",
+  ).all() as { status: string; n: number }[];
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.status] = row.n;
+  return counts;
+}
 
 export interface IStorage {
   // Dealerships
@@ -42,17 +77,8 @@ export interface IStorage {
   logActivity(data: InsertActivityLog): ActivityLog;
 }
 
-function ensureColumn(table: string, column: string, definition: string) {
-  const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
-  if (!cols.some((col) => col.name === column)) {
-    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
-  }
-}
-
-export class DatabaseStorage implements IStorage {
-  constructor() {
-    // Create tables
-    sqlite.exec(`
+function applySchema() {
+  sqlite.exec(`
       CREATE TABLE IF NOT EXISTS dealerships (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -108,11 +134,20 @@ export class DatabaseStorage implements IStorage {
         updated_at TEXT NOT NULL
       );
     `);
+  ensureColumn("posts", "caption_facebook", "caption_facebook TEXT");
+  ensureColumn("posts", "caption_gmb", "caption_gmb TEXT");
+}
 
-    // The live Mac Mini database grew these columns outside the original
-    // CREATE TABLE. A fresh Railway volume needs the same shape.
-    ensureColumn("posts", "caption_facebook", "caption_facebook TEXT");
-    ensureColumn("posts", "caption_gmb", "caption_gmb TEXT");
+function ensureColumn(table: string, column: string, definition: string) {
+  const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((col) => col.name === column)) {
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  }
+}
+
+export class DatabaseStorage implements IStorage {
+  constructor() {
+    applySchema();
 
     // Seed dealerships if empty
     const count = db.select({ count: sql<number>`count(*)` }).from(dealerships).get();

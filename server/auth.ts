@@ -22,7 +22,12 @@ export function cronAuthorized(req: Request): boolean {
  * A valid X-Cron-Secret bypasses basic auth for the weekly job.
  */
 export function requireBasicAuth(req: Request, res: Response, next: NextFunction) {
-  if (req.path === "/api/health" || req.path === "/api/telegram/webhook") return next();
+  if (
+    req.path === "/api/health" ||
+    req.path === "/api/telegram/webhook" ||
+    req.path === "/api/admin/import" ||
+    req.path === "/api/admin/import/status"
+  ) return next();
   if (cronAuthorized(req)) return next();
 
   const user = process.env.BASIC_AUTH_USER || "";

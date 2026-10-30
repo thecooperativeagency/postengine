@@ -3,6 +3,8 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { insertPostSchema, insertDealershipSchema } from "@shared/schema";
 import { scanDriveFolders, archiveFile } from "./drive-scanner";
+import { publishEnabled } from "./publish-switch";
+import { handleImportStatus } from "./admin-import";
 import { migrateGithubMedia } from "./migrate-github-media";
 import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
@@ -257,8 +259,21 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ── DRIVE SCANNER ───────────────────────────────────────────
+  app.get("/api/admin/import/status", (req, res) => {
+    handleImportStatus(req, res);
+  });
+
   app.post("/api/drive/scan", async (req, res) => {
     if (!requireCronSecret(req, res)) return;
+    if (!publishEnabled()) {
+      console.error("[DriveScanner] Weekly scan skipped: PUBLISH_ENABLED is not true");
+      return res.json({
+        success: true,
+        skipped: true,
+        newPosts: 0,
+        message: "PUBLISH_ENABLED is not true",
+      });
+    }
     try {
       const count = await scanDriveFolders();
       res.json({ success: true, newPosts: count, message: `Created ${count} new draft post(s) from Drive` });

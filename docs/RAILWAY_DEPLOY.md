@@ -166,6 +166,8 @@ Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`
 | `BASIC_AUTH_USER` | web | HTTP basic auth username. Required in production. This is not the Mini's dashboard password. |
 | `BASIC_AUTH_PASSWORD` | web | HTTP basic auth password. Required in production. |
 | `CRON_SECRET` | web and cron | Shared secret. Header `X-Cron-Secret`. Required in production. Gates Drive scan, weekly summary, GitHub media migration, and `GET /api/reports/friday-queue`. Also bypasses basic auth. |
+| `PUBLISH_ENABLED` | web | Optional. The 60s publish loop and the Friday scan run only when this is exactly `true`. Any other value, including unset, leaves them off. |
+| `IMPORT_TOKEN` | web | Optional. Bearer token for `POST /api/admin/import` and `GET /api/admin/import/status`. Unset rejects both. |
 | `ZERNIO_API_KEY` | web | Bearer token for the Zernio API. Required in production. |
 | `CAPTION_API_KEY` | web | Optional at boot. The only caption credential. Unset or a failed call uses a template. Put the former Nous key here. |
 | `CAPTION_PROVIDER` | web | Optional. Default `nous`. Also `openai`, `openai-compatible`, `github-models`, `fallback`. |
@@ -217,7 +219,7 @@ Also set `CRON_SECRET` on the cron service to the same value.
 
 3. **Telegram is dropped.** Leave `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_WEBHOOK_URL` unset. Do not point a webhook at Ada's bot. Approval stays in the dashboard.
 
-4. **Copy `~/.postengine/sqlite.db` before the first real boot.** An empty database seeds sample posts, including one `scheduled` post that the poller will publish. Checkpoint first: `sqlite3 ~/.postengine/sqlite.db "PRAGMA wal_checkpoint(TRUNCATE);"`. Copy to `/data/sqlite.db`. If a seeded file was created, stop the service and replace `sqlite.db`, `sqlite.db-wal`, and `sqlite.db-shm`.
+4. **Do not turn publishing on until the Mini process is stopped.** `PUBLISH_ENABLED` defaults off. The 60-second loop and the Friday scan do nothing unless it is exactly `true`. Boot Railway that way, import data, then stop the Mini, then set `PUBLISH_ENABLED=true` and redeploy.
 
 5. **One replica, one volume, web service only.** The cron job uses HTTP. Two web replicas will corrupt SQLite.
 
@@ -236,12 +238,19 @@ Also set `CRON_SECRET` on the cron service to the same value.
 1. On the Mini, in the nested checkout that is actually running, record `git rev-parse HEAD` and `git status`. Create a branch from that checkout and commit the app files that are not on GitHub (`server/`, `client/`, `shared/`, `package.json`, `package-lock.json`, and any `reel-pipeline.ts`). Do not add `.env`, `sqlite.db`, or credential JSON. Push that branch. Diff it against this PR and against `origin/archive/pre-engine-hub-content-cut-2026-08-03`. Do not cut over until that diff is reviewed. This PR does not guess those files.
 2. Merge PR #2 and this PR only after that diff says this server is the one to run, or after the missing Mini files are brought onto the deploy branch on purpose.
 3. Create the service account, share the Postengine parent folder, and set every required env var including the Drive folder map. Review `railway config plan` before apply. That creates the web service, the 8192 MB volume, and the Friday 13:00 UTC scan. It does not create Postgres, Redis, or a bucket.
-4. Checkpoint and copy `~/.postengine/sqlite.db` to `/data/sqlite.db` before the first production boot.
-5. Stop the Mini publisher **before** Railway starts its 60-second publish loop. Unload launchd so it does not restart the process: `launchctl bootout gui/$(id -u)/com.postengine`. If the label lives in `~/Library/LaunchAgents/com.postengine.plist`, `launchctl unload` that plist as well. Confirm `launchctl print gui/$(id -u)/com.postengine` does not show a running job. Killing node alone is not enough.
-6. Start Railway. Confirm `GET /api/health` and that the dashboard shows the copied posts, not seed data.
+4. Start Railway with `PUBLISH_ENABLED` unset or any value other than `true`. Confirm the log says the publish loop and weekly scan will not run. Set `IMPORT_TOKEN` before the import. Leave it unset again after the import if you do not want the endpoint left open.
+5. Stop the Mini publisher. Unload launchd so it does not restart the process: `launchctl bootout gui/$(id -u)/com.postengine`. If the label lives in `~/Library/LaunchAgents/com.postengine.plist`, `launchctl unload` that plist as well. Confirm `launchctl print gui/$(id -u)/com.postengine` does not show a running job. Killing node alone is not enough.
+6. On the Mini, after that process is stopped, checkpoint the database so the tar contains one file and not a stale WAL:
+
+```bash
+sqlite3 ~/.postengine/sqlite.db 'PRAGMA wal_checkpoint(TRUNCATE);'
+tar czf - -C ~/.postengine sqlite.db public-media | curl -H 'Authorization: Bearer …' --data-binary @- https://<railway-host>/api/admin/import
+```
+
+`public-media` is `~/.postengine/public-media` (about 2 GB, 567 files). The server streams the archive to disk, writes those files under `/data/media/generated/`, and replaces the volume database. The response includes the media file count and the sha256 of `sqlite.db`. `GET /api/admin/import/status` with the same header returns post counts by status and the media file count. Both calls are rejected when `IMPORT_TOKEN` is unset. The import is refused while `PUBLISH_ENABLED` is `true`.
 7. Leave the Telegram variables unset. Confirm startup logs `Telegram notifications are off` and `POST /api/telegram/webhook` returns 404.
-8. rsync `~/.postengine/public-media/` to `/data/media/generated/`. Then run `POST /api/media/migrate-github` only for posts that still use GitHub raw URLs. Confirm an existing `/media/generated/` URL returns the file with no basic auth.
-9. Run the Friday scan command once by hand. An empty folder is success with zero posts. An auth error is a failure.
+8. Confirm a `/media/generated/` URL returns a file with no basic auth. Run `POST /api/media/migrate-github` only for posts that still use GitHub raw URLs.
+9. Set `PUBLISH_ENABLED=true` only after the Mini process is stopped, then redeploy. Run the Friday scan once by hand. An empty folder is success with zero posts. An auth error is a failure. While the flag is not `true`, the scan returns success with `skipped: true` and does not touch Drive.
 10. Point `friday-queue-reminder.sh` (Friday 10:45 America/Chicago) at `GET /api/reports/friday-queue` with `X-Cron-Secret` instead of opening the SQLite file. The endpoint returns queued total, queued by store, and scheduled posts in the next 14 days.
 11. Disable the Mini crontab entry for `scripts/weekly-scan.sh`. Leave Ada's other agents on the Mini.
 12. Point `postengine.thecoopbrla.com` at Railway and set `PUBLIC_APP_URL` to that origin. Do this only after step 5, or the tunnel and Railway will both be attached to publishers.

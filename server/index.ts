@@ -7,6 +7,8 @@ import { startPublishPoller } from "./zernio-publisher";
 import { requireBasicAuth } from "./auth";
 import { generatedMediaDir } from "./media-store";
 import { optionalEnvUnset, productionEnvProblems } from "./required-env";
+import { handleAdminImport } from "./admin-import";
+import { publishEnabled } from "./publish-switch";
 // Load .env manually
 import { readFileSync } from "fs";
 try {
@@ -27,6 +29,11 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+// Before the body parsers so a multi-gigabyte tar.gz is not buffered.
+app.post("/api/admin/import", (req, res) => {
+  void handleAdminImport(req, res);
+});
 
 app.use(
   express.json({
@@ -101,6 +108,9 @@ app.use((req, res, next) => {
   }
   if (!process.env.TELEGRAM_BOT_TOKEN?.trim() || !process.env.TELEGRAM_CHAT_ID?.trim()) {
     console.error("Telegram notifications are off");
+  }
+  if (!publishEnabled()) {
+    console.error("Publishing is off (PUBLISH_ENABLED is not true). The 60s publish loop and weekly scan will not run.");
   }
 
   await registerRoutes(httpServer, app);
