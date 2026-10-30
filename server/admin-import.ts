@@ -12,7 +12,7 @@ import { createGunzip } from "zlib";
 import { extract } from "tar-stream";
 import type { Request, Response } from "express";
 import { safeEqual } from "./auth";
-import { generatedMediaDir } from "./media-store";
+import { getPublicMediaDir } from "./public-media";
 import { publishEnabled } from "./publish-switch";
 import { closeDatabase, postCountsByStatus, reopenDatabase, sqliteFilePath } from "./storage";
 
@@ -45,13 +45,13 @@ function mediaDest(name: string): string | null {
   if (!name.startsWith(prefix)) return null;
   const rel = name.slice(prefix.length);
   if (!rel || rel.endsWith("/")) return null;
-  const root = path.resolve(generatedMediaDir());
+  const root = path.resolve(getPublicMediaDir());
   const dest = path.resolve(root, rel);
   if (dest !== root && !dest.startsWith(root + path.sep)) return null;
   return dest;
 }
 
-export function countMediaFiles(dir = generatedMediaDir()): number {
+export function countMediaFiles(dir = getPublicMediaDir()): number {
   if (!fs.existsSync(dir)) return 0;
   let count = 0;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -74,7 +74,7 @@ export async function handleAdminImport(req: Request, res: Response): Promise<vo
   const dbPath = sqliteFilePath();
   const incoming = `${dbPath}.incoming`;
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  fs.mkdirSync(generatedMediaDir(), { recursive: true });
+  fs.mkdirSync(getPublicMediaDir(), { recursive: true });
   fs.rmSync(incoming, { force: true });
 
   const hash = createHash("sha256");

@@ -20,8 +20,8 @@ The running app is:
 | `server/drive-scanner.ts` | Friday import. Lists, downloads, and archives Drive files through the Drive API. |
 | `server/media-host.ts` | Stores downloaded images on the app volume and returns a URL on `PUBLIC_APP_URL`. |
 | `server/drive-api.ts` | Service-account client for Drive. |
-| `server/caption-writer.ts` | Writes captions with the Anthropic API. Template fallback if the key is absent. |
-| `server/telegram-notify.ts` | Approval cards and the weekly summary. |
+| `server/caption-writer.ts` | Writes captions through `CAPTION_API_KEY`. Default provider is Nous. Template fallback if the key is absent. |
+| `server/telegram-notify.ts` | Approval cards and the weekly summary. No-op when the bot token or chat id is unset. |
 | `shared/schema.ts` | Drizzle table definitions. |
 | `script/build.ts` | Vite client build + esbuild server bundle to `dist/index.cjs`. |
 | `start.sh` | Mac Mini dev start. Loads `.env` and runs `PORT=3456 npm run dev`. |
@@ -38,8 +38,8 @@ External APIs the server calls:
 
 - Zernio `https://zernio.com/api/v1` for Instagram, Facebook, and Google Business posts.
 - Google Drive API with a service account, for list, download, and archive.
-- Anthropic Messages API for captions.
-- Telegram Bot API for approval buttons and the weekly summary.
+- Caption API (`CAPTION_PROVIDER`, default Nous) for captions.
+- Telegram Bot API for approval buttons and the weekly summary, only when both Telegram variables are set.
 - This app's own `/media/generated/` URLs for images Zernio must fetch. GitHub upload is off unless `GITHUB_MEDIA_UPLOAD=1`, and the stored URL is still the volume URL.
 
 Database: one SQLite file. There is no Postgres and no Redis in this app. Do not add those plugins for PostEngine. The investment monitor in this repo uses Postgres and Redis. That app is not PostEngine.
@@ -81,7 +81,7 @@ Config lives in `.railway/railway.ts` (TypeScript project config). There is no `
 | Cron service | `postengine-weekly-scan` | Same image and repo. Start `node scripts/railway-weekly-scan.mjs`. Schedule `0 13 * * 5` (13:00 UTC Friday). Restart policy never. No volume. |
 | Postgres | none | Not used. |
 | Redis | none | Not used. |
-| Bucket | none yet | See the media blocker below. |
+| Bucket | none | Generated media lives on the volume at `/data/media/generated`. |
 
 Watch patterns in `.railway/railway.ts` limit rebuilds to the app paths. They take effect only after the config is applied. Until then, a push to the connected branch rebuilds the service.
 
@@ -94,23 +94,18 @@ Build and start:
 
 - Builder: Dockerfile at the repo root.
 - Image start (web): `npm start` → `node dist/index.cjs`.
-- Health: `GET /api/health` returns `{"status":"ok","service":"postengine"}`. It is not behind basic auth.
+- Health: `GET /api/health` returns `{"status":"ok","service":"postengine"}`. It is not behind the dashboard PIN.
 - Port: Railway sets `PORT`. The process listens on `0.0.0.0`.
 
 Do not scale the web service past one replica. SQLite allows one writer.
 
-## The live Mac Mini app is not this branch
+## Source of truth
 
-The process on the Mini is one Node server on port 3456, started by launchd `com.postengine`, reached through a Cloudflare tunnel at `postengine.thecoopbrla.com`. It runs from a nested checkout, `postengine/social-post-manager`, whose git HEAD is commit `1fb3d6eb095c4e21b8f8f86cc3dd82c5e0d6be5d` (2026-04-20, "Fix review queue: filter on pending_review status not queued"). Its database file is `~/.postengine/sqlite.db`, not `./sqlite.db`.
+App behavior on this branch is `mini/live-snapshot-2026-10-30` at `0556d95236d1872e39ed32c28f92fc47231003ca`, plus the Railway overlay in this PR. That snapshot is the Mini tree that was built into the running dist on Oct 21. It includes `server/reel-pipeline.ts` and `server/specials-talking-sync.ts`.
 
-That commit is in this repository. It is an ancestor of `main`, of this branch, and of `origin/archive/pre-engine-hub-content-cut-2026-08-03`. The commit itself changes only `client/src/pages/review-queue.tsx` and one jpg. Its tree does not contain `server/reel-pipeline.ts`, an `engine_jobs` table, `GET /api/engine/status`, dashboard password auth, or the `~/.postengine/sqlite.db` path.
+`main` does not contain that tree. Commit `1fb3d6eb` (2026-04-20) is only a review-queue filter. The archive branch `origin/archive/pre-engine-hub-content-cut-2026-08-03` (`a5b1cb2d`, 2026-08-03) is older than the snapshot. Offer-scraper files that exist only on the archive (`audi-offers-detector.ts`, `bmw-offers-detector.ts`, `content-engine-build-manifest.ts`, `email-iteration-config.ts`, `email-iteration-offers.ts`) are not in the live process and are not restored here.
 
-Later commits that are **not** on `main` do contain related code:
-
-- `86953a3d` (2026-05-08) adds an engine hub. It is not on `main`.
-- `origin/archive/pre-engine-hub-content-cut-2026-08-03` (`a5b1cb2d`, 2026-08-03) contains `server/reel-pipeline.ts`, `engine_jobs`, `GET /api/engine/status`, `server/dashboard-auth.ts` (`ENGINE_DASHBOARD_PASSWORD`), and `scripts/friday-queue-reminder.sh` (reads `~/.postengine/sqlite.db`). `f6bd7864` then deletes the engine hub and offer scrapers; that cut is not on `main` either.
-
-This PR does not copy any of that code. A snapshot of the live Mini tree is expected on branch `mini/live-snapshot-2026-10-30` (commit `22625d00`). Code merge stays on hold until that branch is reviewed. Do not treat this PR as that snapshot.
+Nothing from archive or `main` replaces a snapshot file. The Railway overlay is Dockerfile, `.railway/railway.ts`, health, volume paths, the publish kill switch, the import endpoints, Drive via service account, the Friday cron, optional Telegram, Nous captions, the friday-queue report, and production env checks.
 
 ## Google Drive service account
 
@@ -141,7 +136,7 @@ rsync -a --info=stats ~/.postengine/public-media/ /path/to/volume/media/generate
 
 Copy the contents, not an extra nested `public-media` directory. A file that is `~/.postengine/public-media/abc.jpg` must be `/data/media/generated/abc.jpg`, which is `https://postengine.thecoopbrla.com/media/generated/abc.jpg` after DNS points at Railway.
 
-`POST /api/media/migrate-github` with header `X-Cron-Secret` still rewrites draft, queued, and scheduled posts whose `media_urls` are GitHub raw URLs. It stores those bytes under `/media/generated/` as well. Published posts that already use `/media/generated/` need the rsync, not this rewrite. `GITHUB_TOKEN` is optional and only used if those raw URLs are private.
+The live snapshot does not expose `POST /api/media/migrate-github`. Existing posts already use `/media/generated/` URLs. Copy the files with the import in the cutover section. `GITHUB_TOKEN` stays optional and unused unless a later route reads it.
 
 ## Environment variables
 
@@ -149,9 +144,11 @@ Set these on the **web** service unless noted. Values stay out of git.
 
 Production (`npm start` / the Railway image) exits before it listens if any of these are missing or if `GOOGLE_SERVICE_ACCOUNT_JSON` is not a key this process can sign with (`client_email` and `private_key`):
 
-`BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`, `CRON_SECRET`, `ZERNIO_API_KEY`, `PUBLIC_APP_URL`, `GOOGLE_SERVICE_ACCOUNT_JSON`, and drive folder config (`DRIVE_FOLDERS_JSON` or a file at `DRIVE_FOLDERS_PATH`).
+`ENGINE_DASHBOARD_PASSWORD`, `CRON_SECRET`, `ZERNIO_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, and drive folder config (`DRIVE_FOLDERS_JSON` or a file at `DRIVE_FOLDERS_PATH`).
 
-Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`, `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, `CAPTION_MODEL`, `GITHUB_TOKEN`, `GITHUB_MEDIA_UPLOAD`, `ENGINE_DASHBOARD_PASSWORD`, `EPIDEMIC_SOUND_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_SET_WEBHOOK`. Telegram is dropped. If `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` is unset, startup logs once that notifications are off, sends are no-ops, `POST /api/telegram/webhook` returns 404, and the process does not call `setWebhook`. Captions default to `CAPTION_PROVIDER=nous` and `CAPTION_MODEL=anthropic/claude-haiku-4.5`, using `CAPTION_API_KEY` only. `ANTHROPIC_API_KEY`, `GITHUB_MODELS_TOKEN`, `OPENAI_API_KEY`, and `NOUS_API_KEY` are not read. A missing key or a failed call uses a template. Nothing shells out to Hermes.
+`BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` are not used. Managers still sign in with the same 5-digit PIN. The screen says "Enter the 5-digit PIN to open Post Engine." The browser stores it in sessionStorage under `engine-dashboard-password` and sends `X-Dashboard-Password`. That is the same before and after this branch.
+
+Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`, `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, `CAPTION_MODEL`, `GITHUB_TOKEN`, `GITHUB_MEDIA_UPLOAD`, `EPIDEMIC_SOUND_API_KEY`, `PORSCHE_SALES_EMAIL_DIR`, `PUBLIC_APP_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_SET_WEBHOOK`, `IMPORT_TOKEN`, `PUBLISH_ENABLED`. Telegram is dropped. If `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` is unset, startup logs once that notifications are off, sends are no-ops, `POST /api/telegram/webhook` returns 404, and the process does not call `setWebhook`. Captions default to `CAPTION_PROVIDER=nous` and `CAPTION_MODEL=anthropic/claude-haiku-4.5`, using `CAPTION_API_KEY` only. Requests do not send `max_tokens`. A model id containing `haiku-5` sends `reasoning: {enabled: false}`. `ANTHROPIC_API_KEY`, `GITHUB_MODELS_TOKEN`, `OPENAI_API_KEY`, and `NOUS_API_KEY` are not read. A missing key or a failed call uses a template. Nothing shells out to Hermes, `gog`, or the macOS Keychain.
 
 `npm run dev` does not apply that check.
 
@@ -163,9 +160,7 @@ Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`
 | `RAILWAY_VOLUME_MOUNT_PATH` | web | Injected by Railway when a volume is mounted. |
 | `MEDIA_DIR` | web | Parent media directory. Railway value `/data/media`. |
 | `MEDIA_GENERATED_DIR` | web | Files served at `/media/generated`. Railway value `/data/media/generated`. |
-| `BASIC_AUTH_USER` | web | HTTP basic auth username. Required in production. This is not the Mini's dashboard password. |
-| `BASIC_AUTH_PASSWORD` | web | HTTP basic auth password. Required in production. |
-| `CRON_SECRET` | web and cron | Shared secret. Header `X-Cron-Secret`. Required in production. Gates Drive scan, weekly summary, GitHub media migration, and `GET /api/reports/friday-queue`. Also bypasses basic auth. |
+| `CRON_SECRET` | web and cron | Shared secret. Header `X-Cron-Secret`. Required in production. Lets the Friday cron call `POST /api/drive/scan` and `POST /api/notify/weekly` without the manager PIN. Also required by `GET /api/reports/friday-queue`. |
 | `PUBLISH_ENABLED` | web | Optional. The 60s publish loop and the Friday scan run only when this is exactly `true`. Any other value, including unset, leaves them off. |
 | `IMPORT_TOKEN` | web | Optional. Bearer token for `POST /api/admin/import` and `GET /api/admin/import/status`. Unset rejects both. |
 | `ZERNIO_API_KEY` | web | Bearer token for the Zernio API. Required in production. |
@@ -173,7 +168,7 @@ Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`
 | `CAPTION_PROVIDER` | web | Optional. Default `nous`. Also `openai`, `openai-compatible`, `github-models`, `fallback`. |
 | `CAPTION_BASE_URL` | web | Optional. Used only for `openai-compatible`. Nous uses its own endpoint. |
 | `CAPTION_MODEL` | web | Optional. Default `anthropic/claude-haiku-4.5`. |
-| `ENGINE_DASHBOARD_PASSWORD` | web | Optional here. The live Mini uses it as the dashboard gate. This branch uses `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` until the Mini snapshot is merged. |
+| `ENGINE_DASHBOARD_PASSWORD` | web | Required in production. The same 5-digit PIN managers type today. |
 | `EPIDEMIC_SOUND_API_KEY` | web | Optional. Live reels music. This branch's publisher does not call it. |
 | `GITHUB_MEDIA_UPLOAD` | web | Optional. Off unless set to `1`. The stored URL stays on the volume either way. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | web | Service account key JSON. Required in production. |
@@ -182,8 +177,8 @@ Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`
 | `TELEGRAM_WEBHOOK_SECRET` | web | Optional. Checked on the webhook only when the bot token is set. |
 | `TELEGRAM_WEBHOOK_URL` | web | Optional. `setWebhook` runs only when this, the bot token, and `TELEGRAM_SET_WEBHOOK=1` are all set. |
 | `TELEGRAM_SET_WEBHOOK` | web | Optional. Leave unset. Nothing calls `setWebhook` without it. |
-| `PUBLIC_APP_URL` | web | Origin for media URLs and the queue link in Telegram. Required in production. No localhost default there. |
-| `GITHUB_TOKEN` | web | Optional. Contents read, only for `POST /api/media/migrate-github` if GitHub raw URLs are private. |
+| `PUBLIC_APP_URL` | web | Optional origin for new media URLs. Unset uses `https://postengine.thecoopbrla.com`. |
+| `GITHUB_TOKEN` | web | Optional. Not read by the live snapshot routes. |
 | `FFMPEG_PATH` | web | ffmpeg binary. Image uses `ffmpeg`. Homebrew path is still used on the Mini when that file exists. |
 | `FFPROBE_PATH` | web | ffprobe binary. Same rule as ffmpeg. |
 | `DRIVE_FOLDERS_JSON` | web | Folder map as JSON text. Not committed. Either this or `DRIVE_FOLDERS_PATH` is required in production. |
@@ -200,22 +195,22 @@ Also set `CRON_SECRET` on the cron service to the same value.
 
 | Dependency | Used for | Railway plan |
 |---|---|---|
-| Nested checkout `social-post-manager` at `1fb3d6eb`, plus uncommitted files | The process that is actually live | Copy that working tree to a branch and diff before cutover. This PR does not include it. |
+| Nested checkout that produced `mini/live-snapshot-2026-10-30` @ `0556d952` | The process that is actually live | This branch is that snapshot plus the Railway overlay. |
 | `~/.postengine/sqlite.db` | Live posts | Copy this file to `/data/sqlite.db`. Not `./sqlite.db` from the git checkout. |
 | launchd `com.postengine` on port 3456 | Keeps the one Node process up. A killed process is restarted. | `launchctl bootout` before Railway's publish loop starts. |
 | Cloudflare tunnel `postengine.thecoopbrla.com` | Public hostname to localhost:3456 | Point the hostname at Railway only after the Mini process is stopped. |
 | `gog` | Old Drive access | Removed from this app. Service account replaces it. Ada can keep `gog` for mail and calendar. |
 | Homebrew ffmpeg | Instagram crop | In the image. |
 | `~/.postengine/public-media` (~2 GB, 567 files) | Live `/media/generated/` files | rsync onto `/data/media/generated` before the hostname moves. |
-| Ada's Telegram bot | Must not be the PostEngine webhook | New bot. |
+| Ada's Telegram bot | Must not be the PostEngine webhook | Leave the Telegram variables unset. Notifications stay off. |
 | Friday 08:00 CT Drive scan | Imports photos | Railway cron `0 13 * * 5`. See the schedule note below. |
 | Friday 10:45 CT `friday-queue-reminder.sh` | Reads SQLite and texts the queue | `GET /api/reports/friday-queue` returns queued count, queued by store, and scheduled posts in the next 14 days. Point that script at the API. This PR does not add a second cron for 10:45. |
 
 ## Blockers and open questions
 
-1. **Diff the Mini tree before trusting this deploy.** Head `1fb3d6eb` is in git and does not contain the engine, reels, or PIN behavior described on the Mini. The archive branch has a later snapshot of some of that, and it is not on `main`. Treat both as clues, not as the live source.
+1. **This branch is the live snapshot plus Railway.** `0556d952` is the app. Archive and `main` did not replace any snapshot file. Do not merge this PR to `main` until Lance says so.
 
-2. **Basic auth here is not the Mini's dashboard password.** Production requires `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`. `ENGINE_DASHBOARD_PASSWORD` is what the live app uses and is optional on this branch. `GET /api/health` and `/media/generated` stay public.
+2. **Manager login is unchanged.** The live PIN gate (`ENGINE_DASHBOARD_PASSWORD`) is still the only dashboard login. There is no separate basic-auth prompt. `GET /api/health` and `/media/generated` stay public, as they are not manager pages. Production refuses to boot if the PIN is unset, so the gate cannot be left off by accident. When the same PIN is set, the screen and the header are the same as today.
 
 3. **Telegram is dropped.** Leave `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_WEBHOOK_URL` unset. Do not point a webhook at Ada's bot. Approval stays in the dashboard.
 
@@ -223,11 +218,11 @@ Also set `CRON_SECRET` on the cron service to the same value.
 
 5. **One replica, one volume, web service only.** The cron job uses HTTP. Two web replicas will corrupt SQLite.
 
-6. **Media URLs need `PUBLIC_APP_URL` to be the public origin** Zernio can reach, with `/media/generated` not behind basic auth. Copy `~/.postengine/public-media` onto the volume or existing post URLs 404 after the hostname moves.
+6. **Media URLs stay `/media/generated`.** Unset `PUBLIC_APP_URL` keeps `https://postengine.thecoopbrla.com`. The path is not behind the PIN. Copy `~/.postengine/public-media` onto the volume or existing post URLs 404 after the hostname moves.
 
 7. **Every Zernio attachment is still sent as `type: "image"`.** Video posts are not given a video type.
 
-8. **No offers engine is deployed from this branch.** Offer review and engine hub commits exist off `main`. They are not imported here.
+8. **The live specials sync is included.** `server/specials-talking-sync.ts` comes from the snapshot. Older archive-only offer scrapers are not.
 
 9. **Friday scan cron is UTC.** Railway cron has no timezone field. `0 13 * * 5` is 13:00 UTC Friday, which is 08:00 America/Chicago during daylight time (CDT) and 07:00 during standard time (CST). The Friday 10:45 CT reminder is not a Railway cron in this PR. 10:45 CDT is 15:45 UTC (`45 15 * * 5`) and 10:45 CST is 16:45 UTC (`45 16 * * 5`).
 
@@ -235,9 +230,9 @@ Also set `CRON_SECRET` on the cron service to the same value.
 
 ## Cutover
 
-1. On the Mini, in the nested checkout that is actually running, record `git rev-parse HEAD` and `git status`. Create a branch from that checkout and commit the app files that are not on GitHub (`server/`, `client/`, `shared/`, `package.json`, `package-lock.json`, and any `reel-pipeline.ts`). Do not add `.env`, `sqlite.db`, or credential JSON. Push that branch. Diff it against this PR and against `origin/archive/pre-engine-hub-content-cut-2026-08-03`. Do not cut over until that diff is reviewed. This PR does not guess those files.
-2. Merge PR #2 and this PR only after that diff says this server is the one to run, or after the missing Mini files are brought onto the deploy branch on purpose.
-3. Create the service account, share the Postengine parent folder, and set every required env var including the Drive folder map. Review `railway config plan` before apply. That creates the web service, the 8192 MB volume, and the Friday 13:00 UTC scan. It does not create Postgres, Redis, or a bucket.
+1. This branch already contains snapshot `0556d952` plus the Railway overlay. Do not merge it until Lance asks. Do not deploy from this PR.
+2. Merge PR #2 (untrack secrets) before this PR if that branch is still the base. Retarget this PR to `main` only after #2 merges.
+3. Create the service account, share the Postengine parent folder, and set every required env var including the Drive folder map. Review `railway config plan` before apply. That creates the web service, the 8192 MB volume, and the Friday 13:00 UTC scan. It does not create Postgres, Redis, or a bucket. Set `CRON_SECRET` on the cron service to the same value as the web service.
 4. Start Railway with `PUBLISH_ENABLED` unset or any value other than `true`. Confirm the log says the publish loop and weekly scan will not run. Set `IMPORT_TOKEN` before the import. Leave it unset again after the import if you do not want the endpoint left open.
 5. Stop the Mini publisher. Unload launchd so it does not restart the process: `launchctl bootout gui/$(id -u)/com.postengine`. If the label lives in `~/Library/LaunchAgents/com.postengine.plist`, `launchctl unload` that plist as well. Confirm `launchctl print gui/$(id -u)/com.postengine` does not show a running job. Killing node alone is not enough.
 6. On the Mini, after that process is stopped, checkpoint the database so the tar contains one file and not a stale WAL:
@@ -249,7 +244,7 @@ tar czf - -C ~/.postengine sqlite.db public-media | curl -H 'Authorization: Bear
 
 `public-media` is `~/.postengine/public-media` (about 2 GB, 567 files). The server streams the archive to disk, writes those files under `/data/media/generated/`, and replaces the volume database. The response includes the media file count and the sha256 of `sqlite.db`. `GET /api/admin/import/status` with the same header returns post counts by status and the media file count. Both calls are rejected when `IMPORT_TOKEN` is unset. The import is refused while `PUBLISH_ENABLED` is `true`.
 7. Leave the Telegram variables unset. Confirm startup logs `Telegram notifications are off` and `POST /api/telegram/webhook` returns 404.
-8. Confirm a `/media/generated/` URL returns a file with no basic auth. Run `POST /api/media/migrate-github` only for posts that still use GitHub raw URLs.
+8. Confirm a `/media/generated/` URL returns a file with no PIN. The live snapshot has no GitHub media migration route.
 9. Set `PUBLISH_ENABLED=true` only after the Mini process is stopped, then redeploy. Run the Friday scan once by hand. An empty folder is success with zero posts. An auth error is a failure. While the flag is not `true`, the scan returns success with `skipped: true` and does not touch Drive.
 10. Point `friday-queue-reminder.sh` (Friday 10:45 America/Chicago) at `GET /api/reports/friday-queue` with `X-Cron-Secret` instead of opening the SQLite file. The endpoint returns queued total, queued by store, and scheduled posts in the next 14 days.
 11. Disable the Mini crontab entry for `scripts/weekly-scan.sh`. Leave Ada's other agents on the Mini.

@@ -12,13 +12,6 @@
 const headers = { "Content-Type": "application/json" };
 if (process.env.CRON_SECRET) headers["X-Cron-Secret"] = process.env.CRON_SECRET;
 
-if (process.env.BASIC_AUTH_USER && process.env.BASIC_AUTH_PASSWORD) {
-  const token = Buffer.from(
-    `${process.env.BASIC_AUTH_USER}:${process.env.BASIC_AUTH_PASSWORD}`,
-  ).toString("base64");
-  headers.Authorization = `Basic ${token}`;
-}
-
 function baseUrl() {
   if (process.env.POSTENGINE_URL) return process.env.POSTENGINE_URL.replace(/\/$/, "");
   const host = process.env.POSTENGINE_HOST;

@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
+import { PageHeader, PageShell } from "@/components/page-shell";
 import {
   Select,
   SelectContent,
@@ -75,6 +76,29 @@ function PlatformIcons({ platforms }: { platforms: string | null }) {
   );
 }
 
+function parsePlatforms(platforms: string | null) {
+  if (!platforms) return [] as string[];
+  try {
+    return JSON.parse(platforms) as string[];
+  } catch {
+    return [] as string[];
+  }
+}
+
+function formatSchedule(value: string | null) {
+  if (!value) return "Not scheduled";
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatPostType(value: string) {
+  return value?.replace(/-/g, " ") || "General";
+}
+
 const statusTabs = ["all", "draft", "queued", "scheduled", "published"];
 const postTypes = ["all", "inventory", "promo", "lifestyle", "announcement"];
 
@@ -104,11 +128,24 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
   const bulkApproveMutation = useMutation({
     mutationFn: async (ids: number[]) => {
       const res = await apiRequest("POST", "/api/posts/bulk-approve", { ids });
-      return res.json();
+      return res.json() as Promise<{ successful: Post[]; failed: Array<{ id: number; error: string; folderSource?: string }> }>;
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/posts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+
+      const failedIds = new Set(result.failed.map((item) => item.id));
+      setSelectedIds((prev) => prev.filter((id) => failedIds.has(id)));
+
+      if (result.failed.length > 0) {
+        toast({
+          title: `${result.successful.length} posts scheduled, ${result.failed.length} blocked`,
+          description: result.failed[0]?.error,
+          variant: "destructive",
+        });
+        return;
+      }
+
       setSelectedIds([]);
       toast({ title: "Posts approved and scheduled" });
     },
@@ -127,6 +164,11 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
 
   const getDealershipName = (id: number) => dealerships?.find((d) => d.id === id)?.name ?? "Unknown";
   const getDealershipColor = (id: number) => dealerships?.find((d) => d.id === id)?.color ?? "#888";
+  const activeFilters = [
+    dealershipFilter ? `Store: ${getDealershipName(dealershipFilter)}` : null,
+    statusFilter !== "all" ? `Status: ${statusFilter}` : null,
+    typeFilter !== "all" ? `Type: ${formatPostType(typeFilter)}` : null,
+  ].filter(Boolean) as string[];
 
   const toggleSelect = (id: number) => {
     setSelectedIds((prev) =>
@@ -148,71 +190,85 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
   );
 
   return (
-    <div className="p-6 space-y-4 max-w-[1400px]">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-display font-semibold" data-testid="text-posts-title">
-            Posts
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Manage all social media content
-          </p>
-        </div>
-        <Link href="/posts/new">
-          <Button size="sm" data-testid="button-create-post">
-            <PlusCircle className="h-4 w-4 mr-1.5" />
-            New Post
-          </Button>
-        </Link>
-      </div>
+    <PageShell className="max-w-[1280px] space-y-5">
+      <PageHeader
+        eyebrow="Engine / Post Engine"
+        title="Posts"
+        description="Manage the live social queue for Post Engine. Filter fast, scan status by client, and jump into edits without leaving the working list."
+        actions={
+          <Link href="/posts/new">
+            <Button data-testid="button-create-post">
+              <PlusCircle className="mr-1.5 h-4 w-4" />
+              New Post
+            </Button>
+          </Link>
+        }
+      />
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 items-center">
-        {/* Status tabs */}
-        <div className="flex gap-1 bg-muted rounded-lg p-1">
-          {statusTabs.map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md capitalize transition-colors ${
-                statusFilter === s
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              data-testid={`tab-status-${s}`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+      <Card>
+        <CardContent className="space-y-4 p-4 sm:p-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-foreground">Filter the working list</div>
+              <div className="flex flex-wrap gap-2">
+                {statusTabs.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setStatusFilter(s)}
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+                      statusFilter === s
+                        ? "bg-foreground text-background"
+                        : "bg-muted text-muted-foreground hover:text-foreground"
+                    }`}
+                    data-testid={`tab-status-${s}`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[150px] h-8 text-xs" data-testid="select-post-type">
-            <SelectValue placeholder="Post Type" />
-          </SelectTrigger>
-          <SelectContent>
-            {postTypes.map((t) => (
-              <SelectItem key={t} value={t} className="capitalize text-xs">
-                {t === "all" ? "All Types" : t}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
+                <SelectTrigger className="h-9 w-full text-xs sm:w-[160px]" data-testid="select-post-type">
+                  <SelectValue placeholder="Post Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {postTypes.map((t) => (
+                    <SelectItem key={t} value={t} className="capitalize text-xs">
+                      {t === "all" ? "All Types" : formatPostType(t)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-        {queuedSelected && queuedSelected.length > 0 && (
-          <Button
-            size="sm"
-            variant="default"
-            onClick={() => bulkApproveMutation.mutate(queuedSelected.map((p) => p.id))}
-            disabled={bulkApproveMutation.isPending}
-            data-testid="button-bulk-approve"
-          >
-            <CheckCircle2 className="h-4 w-4 mr-1.5" />
-            Approve {queuedSelected.length} Selected
-          </Button>
-        )}
-      </div>
+              {queuedSelected && queuedSelected.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="default"
+                  onClick={() => bulkApproveMutation.mutate(queuedSelected.map((p) => p.id))}
+                  disabled={bulkApproveMutation.isPending}
+                  data-testid="button-bulk-approve"
+                >
+                  <CheckCircle2 className="h-4 w-4 mr-1.5" />
+                  Approve {queuedSelected.length} selected
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              {activeFilters.length > 0 ? activeFilters.map((filter) => (
+                <Badge key={filter} variant="outline">{filter}</Badge>
+              )) : <Badge variant="outline">All stores · all statuses · all types</Badge>}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {posts?.length ?? 0} post{posts && posts.length === 1 ? "" : "s"} in view
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Table */}
       {isLoading ? (
@@ -234,76 +290,24 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">
-                    <Checkbox
-                      checked={selectedIds.length === posts.length && posts.length > 0}
-                      onCheckedChange={toggleSelectAll}
-                      data-testid="checkbox-select-all"
-                    />
-                  </TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Vehicle / Subject</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Platforms</TableHead>
-                  <TableHead>Scheduled</TableHead>
-                  <TableHead className="w-10"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {posts.map((post) => (
-                  <TableRow key={post.id} className="hover-elevate" data-testid={`row-post-${post.id}`}>
-                    <TableCell>
-                      <Checkbox
-                        checked={selectedIds.includes(post.id)}
-                        onCheckedChange={() => toggleSelect(post.id)}
-                        data-testid={`checkbox-post-${post.id}`}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-2 h-2 rounded-full"
-                          style={{ backgroundColor: getDealershipColor(post.dealershipId) }}
-                        />
-                        <span className="text-sm font-medium">
-                          {getDealershipName(post.dealershipId)}
-                        </span>
+        <div className="space-y-4">
+          <div className="grid gap-3 md:hidden">
+            {posts.map((post) => {
+              const platforms = parsePlatforms(post.platforms);
+              return (
+                <Card key={post.id} data-testid={`card-post-mobile-${post.id}`}>
+                  <CardContent className="space-y-3 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: getDealershipColor(post.dealershipId) }} />
+                          <span className="font-medium text-foreground">{getDealershipName(post.dealershipId)}</span>
+                        </div>
+                        <div className="text-sm font-medium text-foreground">{post.vehicleInfo || "Untitled post"}</div>
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-sm">{post.vehicleInfo || "--"}</span>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs capitalize text-muted-foreground">{post.postType}</span>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={post.status} />
-                    </TableCell>
-                    <TableCell>
-                      <PlatformIcons platforms={post.platforms} />
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-muted-foreground">
-                        {post.scheduledFor
-                          ? new Date(post.scheduledFor).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })
-                          : "--"}
-                      </span>
-                    </TableCell>
-                    <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0" data-testid={`button-actions-${post.id}`}>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0" data-testid={`button-actions-mobile-${post.id}`}>
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -314,23 +318,123 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                               Edit
                             </Link>
                           </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={() => deleteMutation.mutate(post.id)}
-                          >
+                          <DropdownMenuItem className="text-destructive" onClick={() => deleteMutation.mutate(post.id)}>
                             <Trash2 className="h-3.5 w-3.5 mr-2" />
                             Delete
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <StatusBadge status={post.status} />
+                      <Badge variant="outline" className="capitalize">{formatPostType(post.postType)}</Badge>
+                      <Badge variant="outline">{formatSchedule(post.scheduledFor)}</Badge>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span>Platforms</span>
+                      {platforms.length > 0 ? platforms.map((platform) => (
+                        <Badge key={platform} variant="secondary" className="text-[11px]">
+                          {platform === "googlebusiness" ? "GMB" : platform.charAt(0).toUpperCase() + platform.slice(1)}
+                        </Badge>
+                      )) : <span>None selected</span>}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
-        </Card>
+
+          <Card className="hidden md:block">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={selectedIds.length === posts.length && posts.length > 0}
+                        onCheckedChange={toggleSelectAll}
+                        data-testid="checkbox-select-all"
+                      />
+                    </TableHead>
+                    <TableHead>Client</TableHead>
+                    <TableHead>Vehicle / Subject</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Platforms</TableHead>
+                    <TableHead>Scheduled</TableHead>
+                    <TableHead className="w-10"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {posts.map((post) => (
+                    <TableRow key={post.id} className="hover-elevate" data-testid={`row-post-${post.id}`}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedIds.includes(post.id)}
+                          onCheckedChange={() => toggleSelect(post.id)}
+                          data-testid={`checkbox-post-${post.id}`}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: getDealershipColor(post.dealershipId) }}
+                          />
+                          <span className="text-sm font-medium">
+                            {getDealershipName(post.dealershipId)}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-sm">{post.vehicleInfo || "--"}</span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-xs capitalize text-muted-foreground">{formatPostType(post.postType)}</span>
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={post.status} />
+                      </TableCell>
+                      <TableCell>
+                        <PlatformIcons platforms={post.platforms} />
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-xs text-muted-foreground">{formatSchedule(post.scheduledFor)}</span>
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" data-testid={`button-actions-${post.id}`}>
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem asChild>
+                              <Link href={`/posts/${post.id}`}>
+                                <Pencil className="h-3.5 w-3.5 mr-2" />
+                                Edit
+                              </Link>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => deleteMutation.mutate(post.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </div>
       )}
-    </div>
+    </PageShell>
   );
 }

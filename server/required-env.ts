@@ -8,11 +8,9 @@ import { serviceAccountCanSign } from "./drive-api";
 import { driveFoldersConfigured } from "./drive-scanner";
 
 const REQUIRED_PRODUCTION_ENV = [
-  "BASIC_AUTH_USER",
-  "BASIC_AUTH_PASSWORD",
+  "ENGINE_DASHBOARD_PASSWORD",
   "CRON_SECRET",
   "ZERNIO_API_KEY",
-  "PUBLIC_APP_URL",
   "GOOGLE_SERVICE_ACCOUNT_JSON",
 ] as const;
 
@@ -28,8 +26,9 @@ const OPTIONAL_ENV = [
   "CAPTION_MODEL",
   "GITHUB_TOKEN",
   "GITHUB_MEDIA_UPLOAD",
-  "ENGINE_DASHBOARD_PASSWORD",
   "EPIDEMIC_SOUND_API_KEY",
+  "PORSCHE_SALES_EMAIL_DIR",
+  "PUBLIC_APP_URL",
   "TELEGRAM_SET_WEBHOOK",
   "IMPORT_TOKEN",
   "PUBLISH_ENABLED",

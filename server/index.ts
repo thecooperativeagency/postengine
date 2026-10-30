@@ -1,14 +1,15 @@
 import express, { type Request, Response, NextFunction } from "express";
-import fs from "fs";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startPublishPoller } from "./zernio-publisher";
-import { requireBasicAuth } from "./auth";
-import { generatedMediaDir } from "./media-store";
-import { optionalEnvUnset, productionEnvProblems } from "./required-env";
+import { DATABASE_PATH } from "./storage";
+import { requireDashboardPassword } from "./dashboard-auth";
+import { getPublicMediaDir, PUBLIC_MEDIA_ROUTE_PREFIX } from "./public-media";
 import { handleAdminImport } from "./admin-import";
 import { publishEnabled } from "./publish-switch";
+import { optionalEnvUnset, productionEnvProblems } from "./required-env";
+import fs from "fs";
 // Load .env manually
 import { readFileSync } from "fs";
 try {
@@ -30,13 +31,18 @@ declare module "http" {
   }
 }
 
-// Before the body parsers so a multi-gigabyte tar.gz is not buffered.
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({ status: "ok", service: "postengine" });
+});
+
+// Before body parsers so a multi-gigabyte tar.gz is not buffered.
 app.post("/api/admin/import", (req, res) => {
   void handleAdminImport(req, res);
 });
 
 app.use(
   express.json({
+    limit: "40mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -44,20 +50,12 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
-
-app.get("/api/health", (_req, res) => {
-  res.status(200).json({ status: "ok", service: "postengine" });
-});
-
-// Public so existing /media/generated URLs and Zernio fetches keep working.
-// No directory listing. Filenames are the files copied from the Mini.
-app.use("/media/generated", (req, res, next) => {
-  const dir = generatedMediaDir();
+app.use(PUBLIC_MEDIA_ROUTE_PREFIX, (req, res, next) => {
+  const dir = getPublicMediaDir();
   fs.mkdirSync(dir, { recursive: true });
   express.static(dir, { index: false, dotfiles: "deny", fallthrough: false })(req, res, next);
 });
-
-app.use(requireBasicAuth);
+app.use(requireDashboardPassword);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -143,28 +141,6 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
-  async function registerTelegramWebhookIfEnabled() {
-    const token = process.env.TELEGRAM_BOT_TOKEN?.trim() || "";
-    const url = process.env.TELEGRAM_WEBHOOK_URL?.trim() || "";
-    if (process.env.TELEGRAM_SET_WEBHOOK !== "1" || !token || !url || !process.env.TELEGRAM_CHAT_ID?.trim()) return;
-    const body: Record<string, string> = { url };
-    if (process.env.TELEGRAM_WEBHOOK_SECRET) {
-      body.secret_token = process.env.TELEGRAM_WEBHOOK_SECRET;
-    }
-    try {
-      const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json() as { ok?: boolean; description?: string };
-      if (data.ok) log("webhook registered", "telegram");
-      else log(`webhook registration failed: ${data.description || res.status}`, "telegram");
-    } catch (err) {
-      log(`webhook registration error: ${err instanceof Error ? err.message : "unknown"}`, "telegram");
-    }
-  }
-
   httpServer.listen(
     {
       port,
@@ -172,8 +148,8 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      log(`using sqlite database at ${DATABASE_PATH}`, "storage");
       startPublishPoller(); // Start Zernio publish poller
-      void registerTelegramWebhookIfEnabled();
     },
   );
 })();

@@ -1,8 +1,12 @@
 /**
  * Telegram Approval Notifications — PostEngine
  * Sends post previews to Lance via Telegram with Approve/Reject buttons.
- * Use a dedicated PostEngine bot. Do not reuse Ada's OpenClaw bot.
+ * Uses OpenClaw's Telegram bot token.
  */
+
+import fs from "fs";
+import path from "path";
+import { composePostContent } from "./post-composer";
 
 function getBotToken(): string {
   return process.env.TELEGRAM_BOT_TOKEN?.trim() || "";
@@ -12,16 +16,16 @@ function chatId(): string {
   return process.env.TELEGRAM_CHAT_ID?.trim() || "";
 }
 
-/** Telegram is optional. Unset token or chat id means every send is a no-op. */
-export function telegramNotificationsEnabled(): boolean {
+function telegramOn(): boolean {
   return Boolean(getBotToken() && chatId());
 }
 
 export async function sendApprovalRequest(post: any, dealershipName: string): Promise<boolean> {
   const token = getBotToken();
-  if (!telegramNotificationsEnabled()) return false;
+  if (!telegramOn()) return false;
 
-  const caption = post.caption?.substring(0, 800) || "";
+  const composed = composePostContent(post);
+  const caption = composed.instagram.substring(0, 800) || "";
   const scheduledDate = post.scheduledFor
     ? new Date(post.scheduledFor).toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : "ASAP";
@@ -82,7 +86,7 @@ export async function sendApprovalRequest(post: any, dealershipName: string): Pr
 
 export async function sendWeeklySummary(posts: any[], dealerships: any[]): Promise<void> {
   const token = getBotToken();
-  if (!telegramNotificationsEnabled()) return;
+  if (!telegramOn()) return;
 
   const byDealer: Record<string, any[]> = {};
   for (const post of posts) {
@@ -102,8 +106,7 @@ export async function sendWeeklySummary(posts: any[], dealerships: any[]): Promi
       text += `  • ${p.postType} — ${date}\n`;
     }
   }
-  const appUrl = (process.env.PUBLIC_APP_URL || "http://localhost:3456").replace(/\/$/, "");
-  text += `\nOpen PostEngine to review: ${appUrl}/#/queue`;
+  text += `\nOpen PostEngine to review: http://localhost:3456/#/queue`;
 
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
