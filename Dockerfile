@@ -1,4 +1,4 @@
-# PostEngine web service and the Sunday cron job share this image.
+# PostEngine web service and the Friday cron job share this image.
 # Playwright is a dependency of repo-root scraper scripts (Ada's workspace),
 # not of the PostEngine server. Skip its browser download.
 
@@ -25,6 +25,6 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY scripts/railway-weekly-scan.mjs ./scripts/railway-weekly-scan.mjs
-COPY .drive-folders.json .zernio-accounts.json ./
+COPY .zernio-accounts.json ./
 EXPOSE 5000
 CMD ["npm", "start"]

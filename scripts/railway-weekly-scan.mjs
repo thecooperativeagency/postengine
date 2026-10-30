@@ -1,11 +1,12 @@
 /**
- * Railway cron entrypoint for the Sunday PostEngine Drive scan.
+ * Railway cron entrypoint for the Friday PostEngine Drive scan.
  * Calls the web service over the private network, then sends the weekly
  * Telegram summary. Exits non-zero when the scan fails so the cron run
  * shows as failed.
  *
- * Schedule (set on the cron service): 07:00 UTC Sunday.
- * That is 02:00 America/Chicago during CDT and 01:00 during CST.
+ * Schedule (set on the cron service): 13:00 UTC Friday (`0 13 * * 5`).
+ * Railway cron is UTC only. That is 08:00 America/Chicago during CDT
+ * and 07:00 during CST.
  */
 
 const headers = { "Content-Type": "application/json" };

@@ -12,9 +12,27 @@ import { listMediaInFolder, moveDriveFile } from "./drive-api";
 import fs from "fs";
 import path from "path";
 
-function driveFoldersPath(): string {
-  return process.env.DRIVE_FOLDERS_PATH?.trim()
-    || path.join(process.cwd(), ".drive-folders.json");
+export function driveFoldersPath(): string {
+  if (process.env.DRIVE_FOLDERS_PATH?.trim()) return process.env.DRIVE_FOLDERS_PATH.trim();
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    return path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, ".drive-folders.json");
+  }
+  if (process.env.NODE_ENV === "production") return "/data/.drive-folders.json";
+  return path.join(process.cwd(), ".drive-folders.json");
+}
+
+/** True when folder config is present. Does not log folder ids. */
+export function driveFoldersConfigured(): boolean {
+  const inline = process.env.DRIVE_FOLDERS_JSON?.trim();
+  if (inline) {
+    try {
+      const parsed = JSON.parse(inline) as { dealerships?: unknown };
+      return Boolean(parsed && typeof parsed === "object" && parsed.dealerships);
+    } catch {
+      return false;
+    }
+  }
+  return fs.existsSync(driveFoldersPath());
 }
 
 interface DealershipFolders {
@@ -29,8 +47,19 @@ interface DriveFolders {
 }
 
 function loadFolders(): DriveFolders {
-  const raw = fs.readFileSync(driveFoldersPath(), "utf-8");
-  return JSON.parse(raw);
+  const inline = process.env.DRIVE_FOLDERS_JSON?.trim();
+  if (inline) {
+    try {
+      return JSON.parse(inline) as DriveFolders;
+    } catch {
+      throw new Error("DRIVE_FOLDERS_JSON is not valid JSON");
+    }
+  }
+  const file = driveFoldersPath();
+  if (!fs.existsSync(file)) {
+    throw new Error(`Drive folder config not found. Set DRIVE_FOLDERS_JSON or place the file at DRIVE_FOLDERS_PATH (${file}).`);
+  }
+  return JSON.parse(fs.readFileSync(file, "utf-8")) as DriveFolders;
 }
 
 async function listFolder(folderId: string) {

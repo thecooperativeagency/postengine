@@ -5,8 +5,8 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startPublishPoller } from "./zernio-publisher";
 import { requireBasicAuth } from "./auth";
-import { mediaDir } from "./media-store";
-import { productionEnvProblems } from "./required-env";
+import { generatedMediaDir } from "./media-store";
+import { optionalEnvUnset, productionEnvProblems } from "./required-env";
 // Load .env manually
 import { readFileSync } from "fs";
 try {
@@ -42,9 +42,10 @@ app.get("/api/health", (_req, res) => {
   res.status(200).json({ status: "ok", service: "postengine" });
 });
 
-// Public so Zernio can fetch images. Names are unguessable. No directory listing.
-app.use("/media/hosted", (req, res, next) => {
-  const dir = mediaDir();
+// Public so existing /media/generated URLs and Zernio fetches keep working.
+// No directory listing. Filenames are the files copied from the Mini.
+app.use("/media/generated", (req, res, next) => {
+  const dir = generatedMediaDir();
   fs.mkdirSync(dir, { recursive: true });
   express.static(dir, { index: false, dotfiles: "deny", fallthrough: false })(req, res, next);
 });
@@ -93,6 +94,10 @@ app.use((req, res, next) => {
   if (problems.length) {
     console.error(`Refusing to start. Missing or invalid production settings: ${problems.join(", ")}`);
     process.exit(1);
+  }
+  const optional = optionalEnvUnset();
+  if (optional.length) {
+    console.error(`Optional settings not set: ${optional.join(", ")}`);
   }
 
   await registerRoutes(httpServer, app);

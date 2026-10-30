@@ -1,7 +1,9 @@
 /**
  * Public media files live on the same disk as SQLite (the Railway volume)
- * and are served by this app at /media/hosted/. Zernio can fetch them from
- * PUBLIC_APP_URL without the GitHub repo staying public.
+ * and are served at /media/generated/, which is the path already stored on
+ * live posts (https://postengine.thecoopbrla.com/media/generated/...).
+ * GitHub upload is off unless GITHUB_MEDIA_UPLOAD=1, and even then a failed
+ * upload does not change the URL. The volume file is the one Zernio fetches.
  */
 
 import crypto from "crypto";
@@ -19,16 +21,28 @@ export function mediaDir(): string {
   return path.join(process.cwd(), "data", "media");
 }
 
+/** Live files from ~/.postengine/public-media land here. */
+export function generatedMediaDir(): string {
+  if (process.env.MEDIA_GENERATED_DIR?.trim()) {
+    return path.resolve(process.env.MEDIA_GENERATED_DIR.trim());
+  }
+  return path.join(mediaDir(), "generated");
+}
+
+export function githubMediaUploadEnabled(): boolean {
+  return process.env.GITHUB_MEDIA_UPLOAD?.trim() === "1";
+}
+
 export function publicAppUrl(): string {
   return (process.env.PUBLIC_APP_URL || "http://localhost:3456").replace(/\/$/, "");
 }
 
 export function publicMediaUrl(filename: string): string {
-  return `${publicAppUrl()}/media/hosted/${encodeURIComponent(filename)}`;
+  return `${publicAppUrl()}/media/generated/${encodeURIComponent(filename)}`;
 }
 
 export function saveHostedMedia(localPath: string, filename: string): string {
-  const dir = mediaDir();
+  const dir = generatedMediaDir();
   fs.mkdirSync(dir, { recursive: true });
   const safe = path.basename(filename)
     .replace(/[^a-zA-Z0-9._-]/g, "-")

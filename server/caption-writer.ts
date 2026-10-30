@@ -4,20 +4,25 @@
  * Follows the AutoCaption GPT instructions per dealership/brand.
  */
 
-import { execSync } from "child_process";
+/**
+ * Caption calls use only CAPTION_PROVIDER, CAPTION_BASE_URL, and CAPTION_MODEL,
+ * plus the key for that provider (ANTHROPIC_API_KEY or GITHUB_MODELS_TOKEN).
+ * There is no local Hermes/Nous lookup. Any failure returns a template.
+ */
 
-// Read key at call time so .env has time to load
-function getApiKey(): string {
-  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
-  // Fallback: read directly from .env file
-  try {
-    const fs = require('fs');
-    const path = require('path');
-    const envFile = fs.readFileSync(path.join(process.cwd(), '.env'), 'utf-8');
-    const match = envFile.match(/ANTHROPIC_API_KEY=(.+)/);
-    if (match) return match[1].trim();
-  } catch {}
-  return "";
+type CaptionSettings = {
+  provider: string;
+  model: string;
+  baseUrl: string;
+};
+
+function captionSettings(): CaptionSettings {
+  const provider = (process.env.CAPTION_PROVIDER || "anthropic").trim().toLowerCase();
+  const model = (process.env.CAPTION_MODEL || (provider === "anthropic" ? "claude-haiku-4-5" : "")).trim();
+  const baseUrl = (process.env.CAPTION_BASE_URL || (provider === "anthropic" ? "https://api.anthropic.com" : ""))
+    .trim()
+    .replace(/\/$/, "");
+  return { provider, model, baseUrl };
 }
 
 interface CaptionRequest {
@@ -129,36 +134,79 @@ function buildUserPrompt(req: CaptionRequest): string {
   return `${req.vehicleInfo} — ${context}. Tone: ${toneStr}.`;
 }
 
-export async function generateCaption(req: CaptionRequest): Promise<string> {
-  const ANTHROPIC_API_KEY = getApiKey();
-  if (!ANTHROPIC_API_KEY) {
-    // Fallback if no API key — use template
-    return buildFallbackCaption(req);
+async function requestCaption(systemPrompt: string, userPrompt: string): Promise<string | null> {
+  const { provider, model, baseUrl } = captionSettings();
+  if (!model || !baseUrl) {
+    console.error(`[CaptionWriter] ${provider} needs CAPTION_MODEL and CAPTION_BASE_URL; using template`);
+    return null;
   }
 
-  try {
-    const systemPrompt = buildSystemPrompt(req.brand, req.dealershipName);
-    const userPrompt = buildUserPrompt(req);
-
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+  if (provider === "anthropic") {
+    const key = process.env.ANTHROPIC_API_KEY?.trim() || "";
+    if (!key) {
+      console.error("[CaptionWriter] ANTHROPIC_API_KEY unset; using template");
+      return null;
+    }
+    const response = await fetch(`${baseUrl}/v1/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": getApiKey(),
+        "x-api-key": key,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5",
+        model,
         max_tokens: 500,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       }),
     });
+    if (!response.ok) {
+      console.error(`[CaptionWriter] anthropic failed (${response.status}); using template`);
+      return null;
+    }
+    const data = await response.json() as { content?: { text?: string }[] };
+    return data.content?.[0]?.text || null;
+  }
 
-    const data = await response.json() as any;
-    return data.content?.[0]?.text || buildFallbackCaption(req);
+  const key = process.env.GITHUB_MODELS_TOKEN?.trim() || "";
+  if (!key) {
+    console.error(`[CaptionWriter] ${provider} needs GITHUB_MODELS_TOKEN; using template`);
+    return null;
+  }
+  const url = baseUrl.endsWith("/chat/completions") ? baseUrl : `${baseUrl}/chat/completions`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 500,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    }),
+  });
+  if (!response.ok) {
+    console.error(`[CaptionWriter] ${provider} failed (${response.status}); using template`);
+    return null;
+  }
+  const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+  return data.choices?.[0]?.message?.content || null;
+}
+
+export async function generateCaption(req: CaptionRequest): Promise<string> {
+  try {
+    const text = await requestCaption(
+      buildSystemPrompt(req.brand, req.dealershipName),
+      buildUserPrompt(req),
+    );
+    return text?.trim() || buildFallbackCaption(req);
   } catch (e) {
-    console.error("[CaptionWriter] API error:", e);
+    console.error("[CaptionWriter] request failed; using template:", e instanceof Error ? e.message : "unknown");
     return buildFallbackCaption(req);
   }
 }

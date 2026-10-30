@@ -1,11 +1,10 @@
 #!/bin/bash
-# PostEngine Weekly Drive Scanner (Mac Mini crontab)
-# Runs every Sunday at 2:00 AM CDT
-# Scans all dealership folders, creates draft posts, assigns cadence-based schedule dates
+# PostEngine Drive scanner helper (Mac Mini crontab).
+# Live schedule is Friday 08:00 America/Chicago, not Sunday.
+# On Railway that job is scripts/railway-weekly-scan.mjs at 13:00 UTC Friday.
 #
-# This script is the old Mac Mini crontab helper. It curls localhost and a
-# path that is not this repo layout (postengine/social-post-manager).
-# On Railway the Sunday job is scripts/railway-weekly-scan.mjs.
+# This script curls localhost and a path that is not this repo layout
+# (postengine/social-post-manager).
 # See docs/RAILWAY_DEPLOY.md. Unload launchd com.postengine before Railway
 # starts publishing, or both processes will post the same queue.
 

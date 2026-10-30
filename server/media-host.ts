@@ -7,7 +7,7 @@
 import fs from "fs";
 import path from "path";
 import { downloadDriveFile } from "./drive-api";
-import { saveHostedMedia } from "./media-store";
+import { githubMediaUploadEnabled, saveHostedMedia } from "./media-store";
 
 export async function hostImage(fileId: string, filename: string): Promise<string | null> {
   const safeName = filename
@@ -20,6 +20,9 @@ export async function hostImage(fileId: string, filename: string): Promise<strin
   try {
     const downloaded = await downloadDriveFile(fileId, tmpPath);
     if (!downloaded) return null;
+    if (githubMediaUploadEnabled()) {
+      console.error("[MediaHost] GITHUB_MEDIA_UPLOAD=1; GitHub upload stays off. Using the volume URL.");
+    }
     return saveHostedMedia(tmpPath, safeName);
   } catch (e) {
     console.error("[MediaHost] Failed to host Drive file:", e instanceof Error ? e.message : "unknown");

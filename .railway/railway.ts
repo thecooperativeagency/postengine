@@ -24,7 +24,6 @@ const watchPatterns = [
   "postcss.config.js",
   "components.json",
   ".railway/**",
-  ".drive-folders.json",
   ".zernio-accounts.json",
 ];
 
@@ -35,7 +34,7 @@ const build = {
 };
 
 export default defineRailway(() => {
-  const data = volume("postengine-data", { sizeMB: 1024 });
+  const data = volume("postengine-data", { sizeMB: 8192 });
   const source = github("thecooperativeagency/postengine", { branch: "main" });
 
   const web = service("postengine", {
@@ -58,16 +57,19 @@ export default defineRailway(() => {
       FFMPEG_PATH: "ffmpeg",
       FFPROBE_PATH: "ffprobe",
       MEDIA_DIR: "/data/media",
+      MEDIA_GENERATED_DIR: "/data/media/generated",
+      DRIVE_FOLDERS_PATH: "/data/.drive-folders.json",
     },
   });
 
-  // 07:00 UTC Sunday = 02:00 CDT / 01:00 CST.
+  // Railway cron is UTC only. 13:00 UTC Friday = 08:00 CT during CDT
+  // and 07:00 CT during CST.
   const weekly = service("postengine-weekly-scan", {
     source: github("thecooperativeagency/postengine", { branch: "main" }),
     build: { ...build, watchPatterns: [...watchPatterns] },
     start: "node scripts/railway-weekly-scan.mjs",
     deploy: {
-      cronSchedule: "0 7 * * 0",
+      cronSchedule: "0 13 * * 5",
       restartPolicyType: "NEVER",
     },
     env: {
