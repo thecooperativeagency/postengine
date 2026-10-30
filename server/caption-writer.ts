@@ -1,235 +1,391 @@
 /**
  * AutoCaption Writer — PostEngine
- * Generates social media captions using Claude API.
- * Follows the AutoCaption GPT instructions per dealership/brand.
+ * Providers and prompts follow the archive caption writer
+ * (a5b1cb2d server/caption-writer.ts).
+ * The API key is CAPTION_API_KEY only. There is no Hermes/Nous local lookup.
+ * A missing key or a failed call returns a template.
  */
 
-/**
- * Caption calls use only CAPTION_PROVIDER, CAPTION_BASE_URL, and CAPTION_MODEL,
- * plus the key for that provider (ANTHROPIC_API_KEY or GITHUB_MODELS_TOKEN).
- * There is no local Hermes/Nous lookup. Any failure returns a template.
- */
+import * as fs from "node:fs";
+import * as path from "node:path";
 
-type CaptionSettings = {
-  provider: string;
-  model: string;
-  baseUrl: string;
-};
+export type CaptionProvider = "openai" | "github-models" | "nous" | "openai-compatible" | "fallback";
 
-function captionSettings(): CaptionSettings {
-  const provider = (process.env.CAPTION_PROVIDER || "anthropic").trim().toLowerCase();
-  const model = (process.env.CAPTION_MODEL || (provider === "anthropic" ? "claude-haiku-4-5" : "")).trim();
-  const baseUrl = (process.env.CAPTION_BASE_URL || (provider === "anthropic" ? "https://api.anthropic.com" : ""))
-    .trim()
-    .replace(/\/$/, "");
-  return { provider, model, baseUrl };
-}
-
-interface CaptionRequest {
+export interface CaptionRequest {
   dealershipName: string;
-  brand: string; // BMW, Audi, Porsche
-  postType: string; // New Cars, Pre-Owned Cars, Service, Parts & Accessories
-  vehicleInfo: string; // parsed from file name
-  platform: string; // instagram, facebook, googlebusiness
-  tone?: string; // minimal, punchy, detailed (default: punchy)
+  brand: string;
+  postType: string;
+  vehicleInfo: string;
+  platform: string;
+  tone?: string;
+  captionSpec?: string | null;
+  gmbSpec?: string | null;
+  rewriteDirection?: string | null;
+  currentCaption?: string | null;
+  talkingPoints?: string | null;
 }
 
-interface CaptionResult {
-  main: string;
-  twitter: string;
-  gmb: string;
+export interface CaptionRuntime {
+  provider: CaptionProvider;
+  model: string | null;
+  apiKey: string | null;
+  endpoint: string | null;
 }
 
-const BMW_CTA: Record<string, string> = {
-  "Brian Harris BMW": `Click here --> @brianharrisbmw then click the linkin.bio to browse and click on the link of this post.\n\nThank you for making Brian Harris BMW a 2024 Center of Excellence Dealer.`,
-  "BMW of Jackson": `Click here --> @bmwofjackson then click the linkin.bio to browse and click on the link of this post.`,
-};
+const OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
+const GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com/chat/completions";
+const NOUS_ENDPOINT = "https://inference-api.nousresearch.com/v1/chat/completions";
+const DEFAULT_OPENAI_MODEL = "gpt-5.4";
+const DEFAULT_GITHUB_MODEL = "gpt-4o-mini";
+const DEFAULT_NOUS_MODEL = "anthropic/claude-haiku-4.5";
+/** Cloudflare blocks bare Node fetch without a browser-like UA (error 1010). */
+const CAPTION_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 PostEngineCaption/1.0";
+let captionQueue: Promise<unknown> = Promise.resolve();
 
-const AUDI_CTA = `Click here --> @audibatonrouge then click the linkin.bio to browse and click on the link of this post.\n\nThank you for making Audi Baton Rouge your Magna Society Dealer.`;
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-const PORSCHE_CTA = `Click here --> @harris_porsche then click the linkin.bio to browse and click on the link of this post.\n\nExperience the Harris Family Difference.`;
+function enqueueCaptionTask<T>(task: () => Promise<T>): Promise<T> {
+  const next = captionQueue.then(task, task);
+  captionQueue = next.then(() => undefined, () => undefined);
+  return next;
+}
 
-function buildSystemPrompt(brand: string, dealershipName: string): string {
-  const bodyRules = `
-CAPTION BODY RULES (non-negotiable):
-- Maximum 2-3 sentences in the body. Never longer.
-- Lead with the vehicle — make, model, standout feature or emotion.
-- One strong hook: performance, lifestyle, prestige, or seasonal.
-- No filler phrases. No "We are excited to" or "Stop by today to".
-- Punchy over poetic. Short sentences hit harder.
-- Professional luxury tone — sharp, confident, never try-hard.
-`;
+function parseRetryDelayMs(message: string): number {
+  const secondsMatch = message.match(/wait\s+(\d+)\s+seconds?/i);
+  if (secondsMatch) return Math.max(Number(secondsMatch[1]) * 1000, 1000);
+  if (/rate limit/i.test(message)) return 15000;
+  if (/secure TLS connection was established/i.test(message) || /fetch failed/i.test(message)) return 5000;
+  return 0;
+}
 
-  if (brand === "Porsche") {
-    return `You are AutoCaption for Harris Porsche — a marketing director and luxury content strategist writing social media captions for a Porsche dealership. Your primary focus is to craft engaging, performance-driven captions that reflect the precision, heritage, and sporting spirit of Porsche. Write around 40 words per caption, highlighting standout specifications like horsepower, torque, acceleration, and engineering details when relevant. Weave in luxury, lifestyle, and seasonal references while maintaining an aspirational yet approachable tone.
-${bodyRules}
+function isRetryableCaptionError(message: string): boolean {
+  return /rate limit/i.test(message) || /fetch failed/i.test(message) || /secure TLS connection was established/i.test(message);
+}
 
-When given a Porsche model, reply immediately with the caption text only (no prefaces, labels, or quotes), followed by a Twitter-optimized version that's shorter, energetic, and includes a direct call-to-action. Each main caption should end with 6 trending hashtags related to Porsche, the model, and competitive marques, ensuring they're current on TikTok.
+function readEnvValue(key: string): string {
+  return process.env[key]?.trim() || "";
+}
 
-Between the caption and hashtags, insert this dealership line:
-
-${PORSCHE_CTA}
-
-If the prompt starts with 'GMB', write a Google My Business caption that fits update descriptions, omitting the 'Click here' line. Emphasize clarity, professionalism, and luxury storytelling while staying grounded in Porsche performance and prestige.
-
-Respond only with captions. No prefaces, labels, or quotation marks.`;
+function loadBrandRules(): string {
+  try {
+    return fs.readFileSync(path.join(process.cwd(), "notes", "brand-caption-rules.md"), "utf-8");
+  } catch {
+    return "";
   }
+}
 
-  if (brand === "Audi") {
-    return `You are AutoCaption — a marketing director at a luxury auto dealer, skilled in creating high-impact social media captions for luxury cars. Caption length, tone, and style are dynamically adjusted based on the user's instruction. Captions should highlight performance, luxury features, brand prestige, and relevant lifestyle or seasonal elements when appropriate. Keep wording sharp and intentional.
-${bodyRules}
-Provide tailored messaging for Audi vehicles.
+function buildSystemPrompt(brand: string, dealershipName: string, captionSpec?: string | null, gmbSpec?: string | null, platform?: string): string {
+  const brandRules = loadBrandRules();
+  const dealershipRules = captionSpec ? `\nDealership-specific rules:\n${captionSpec}\n` : "";
+  const gmbRules = gmbSpec ? `\nGMB-specific rules:\n${gmbSpec}\n` : "";
+  const platformName =
+    platform === "googlebusiness" ? "Google Business Profile" :
+    platform === "facebook" ? "Facebook" :
+    platform === "instagram" ? "Instagram" :
+    "social";
 
-End each caption with exactly 6 trending hashtags relevant to the vehicle, segment, and competitors.
+  return `Write ONE snappy, punchy caption for ${platformName} only. You are the brand manager for ${brand}, writing for ${dealershipName}.
 
-Immediately follow each caption with a shorter Twitter/X version: very concise, includes 1–2 hashtags and a clear call to action.
+Length:
+- Instagram/Facebook: max about two short lines / ~12-28 words
+- Google Business: max 220 characters
 
-Audi-specific requirement: Insert the following call-to-action after the main caption body and before hashtags, with spacing preserved:
+Use these supporting rules:
+${brandRules}
+${dealershipRules}${gmbRules}
 
-${AUDI_CTA}
-
-If the prompt begins with 'GMB', create a Google My Business caption without the CTA block.
-
-For the 2025 Audi Q5, incorporate key specs including 268 hp, quattro AWD, redesigned styling, OLED lighting, and advanced interior tech when relevant.
-
-Respond only with captions. No prefaces, labels, or quotation marks.`;
-  }
-
-  // BMW (default)
-  const bmwCta = BMW_CTA[dealershipName] || BMW_CTA["Brian Harris BMW"];
-  return `You are AutoCaption — a marketing director at a luxury auto dealer, skilled in creating high-impact social media captions for luxury cars. Caption length, tone, and style are dynamically adjusted based on the user's instruction. Captions should highlight performance, luxury features, brand prestige, and relevant lifestyle or seasonal elements when appropriate. Keep wording sharp and intentional.
-${bodyRules}
-Provide tailored messaging for BMW vehicles.
-
-End each caption with exactly 6 trending hashtags relevant to the vehicle, segment, and competitors.
-
-Immediately follow each caption with a shorter Twitter/X version: very concise, includes 1–2 hashtags and a clear call to action.
-
-BMW-specific requirement: Insert the following call-to-action after the main caption body and before hashtags, with spacing preserved:
-
-${bmwCta}
-
-If the prompt begins with 'GMB', create a Google My Business caption without the CTA block.
-
-Respond only with captions. No prefaces, labels, or quotation marks.`;
+Hard rules:
+- Return the final caption text only.
+- Do NOT label platforms.
+- Do NOT include Instagram/Facebook/GMB sections in one response.
+- Do NOT use markdown headings, bold markers, or bullet labels.
+- Never include camera serials, frame numbers, or dump codes (e.g. 33A9398, IMG_1234, DSC0123, UUID tails).
+- No hashtags.
+- No emoji.
+- No quotation marks around the caption.
+- No fake hype.
+- No generic luxury filler.
+- Never invent specs.`;
 }
 
 function buildUserPrompt(req: CaptionRequest): string {
   const toneStr = req.tone || "punchy";
   const isGMB = req.platform === "googlebusiness";
+  const normalizedVehicleInfo = req.vehicleInfo.toLowerCase();
+  const isPorscheLifestyle = req.brand === "Porsche" && (
+    normalizedVehicleInfo.includes("porschelifestyle") ||
+    normalizedVehicleInfo.includes("lifestyle") ||
+    normalizedVehicleInfo.includes("rexy") ||
+    normalizedVehicleInfo.includes("1948") ||
+    normalizedVehicleInfo.includes("collection")
+  );
 
   const typeContext: Record<string, string> = {
     "New Cars": "new vehicle available now",
     "Pre-Owned Cars": "pre-owned vehicle available",
     "Service": "service department promotion",
     "Parts & Accessories": "parts and accessories",
+    "Lifestyle": "lifestyle collection, apparel, merchandise, or branded accessories",
+    "Customer Media": "new customer delivery / welcome to the family moment — warm, genuine, dealership pride. Name the customer when present. Do not invent vehicle details not in the subject line.",
+    "Customer Delivery": "new customer delivery / welcome to the family moment — warm, genuine, dealership pride. Name the customer when present. Do not invent vehicle details not in the subject line.",
+    "Reels": "short-form vertical video reel — write like a reel caption, not a brochure",
   };
 
-  const context = typeContext[req.postType] || req.postType;
+  const context = isPorscheLifestyle
+    ? "Porsche Lifestyle collection for the owner: apparel, hats, bags, merch, and branded lifestyle accessories. This is not a car parts post. Do not mention vehicle upgrades, service parts, performance parts, OEM parts, or engineering components. Write about clothing, personal accessories, giftable merch, and brand lifestyle appeal."
+    : (typeContext[req.postType] || req.postType);
+
+  const direction = (req.rewriteDirection || "").trim();
+  const current = (req.currentCaption || "").trim();
+  const talking = (req.talkingPoints || "").trim();
+  const rewriteBlock = direction
+    ? `\n\nREWRITE DIRECTION FROM OPERATOR (follow this closely):\n${direction}${current ? `\n\nCURRENT CAPTION TO REWRITE:\n${current}` : ""}\n\nRewrite a fresh caption that keeps the same vehicle/subject but applies the operator direction. Do not reuse the old wording unless it still fits.`
+    : "";
+  const talkingBlock = talking
+    ? `\n\nWEEKLY TALKING POINTS / OFFERS (from operator — weave in naturally when relevant to this vehicle/post type; do not force every point into every caption; never invent pricing or terms not listed):\n${talking}`
+    : "";
 
   if (isGMB) {
-    return `GMB ${req.vehicleInfo} — ${context}. Write a professional Google My Business update post. Max 250 characters. No hashtags. No @ mentions. No CTA link. Professional luxury tone only.`;
+    return `Write ONE Google Business caption only for: ${req.vehicleInfo} — ${context}. Max 220 characters. No hashtags. No @ mentions. No CTA link. Professional luxury tone only.${req.gmbSpec ? ` Follow these dealership GMB rules: ${req.gmbSpec}` : ""}${talkingBlock}${rewriteBlock}`;
   }
 
-  return `${req.vehicleInfo} — ${context}. Tone: ${toneStr}.`;
+  return `Write ONE ${req.platform} caption only for: ${req.vehicleInfo} — ${context}. Tone: ${toneStr}.${req.captionSpec ? ` Dealership caption rules: ${req.captionSpec}` : ""}${talkingBlock}${rewriteBlock}`;
 }
 
-async function requestCaption(systemPrompt: string, userPrompt: string): Promise<string | null> {
-  const { provider, model, baseUrl } = captionSettings();
-  if (!model || !baseUrl) {
-    console.error(`[CaptionWriter] ${provider} needs CAPTION_MODEL and CAPTION_BASE_URL; using template`);
-    return null;
+function normalizeProvider(raw: string): CaptionProvider | null {
+  const value = raw.trim().toLowerCase();
+  if (!value) return null;
+  if (value === "openai") return "openai";
+  if (value === "github-models" || value === "github_models" || value === "github") return "github-models";
+  if (value === "nous" || value === "nous-portal" || value === "nous_portal") return "nous";
+  if (value === "openai-compatible" || value === "openai_compatible" || value === "compatible") return "openai-compatible";
+  if (value === "fallback") return "fallback";
+  return null;
+}
+
+function getCaptionApiKey(): string {
+  return readEnvValue("CAPTION_API_KEY");
+}
+
+function getCompatibleEndpoint(): string {
+  const base = readEnvValue("CAPTION_BASE_URL") || "https://inference-api.nousresearch.com/v1";
+  const trimmed = base.replace(/\/+$/, "");
+  return trimmed.endsWith("/chat/completions") ? trimmed : `${trimmed}/chat/completions`;
+}
+
+function getConfiguredModel(provider: Exclude<CaptionProvider, "fallback">): string {
+  const shared = readEnvValue("CAPTION_MODEL");
+  if (shared) return shared;
+  if (provider === "github-models") return DEFAULT_GITHUB_MODEL;
+  if (provider === "openai") return DEFAULT_OPENAI_MODEL;
+  return DEFAULT_NOUS_MODEL;
+}
+
+export function resolveCaptionRuntime(): CaptionRuntime {
+  const requested = normalizeProvider(readEnvValue("CAPTION_PROVIDER")) || "nous";
+  const apiKey = getCaptionApiKey();
+  if (requested === "fallback" || !apiKey) {
+    return { provider: "fallback", model: null, apiKey: null, endpoint: null };
   }
 
-  if (provider === "anthropic") {
-    const key = process.env.ANTHROPIC_API_KEY?.trim() || "";
-    if (!key) {
-      console.error("[CaptionWriter] ANTHROPIC_API_KEY unset; using template");
-      return null;
-    }
-    const response = await fetch(`${baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 500,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-      }),
-    });
-    if (!response.ok) {
-      console.error(`[CaptionWriter] anthropic failed (${response.status}); using template`);
-      return null;
-    }
-    const data = await response.json() as { content?: { text?: string }[] };
-    return data.content?.[0]?.text || null;
+  if (requested === "openai-compatible") {
+    return {
+      provider: "openai-compatible",
+      model: getConfiguredModel("openai-compatible"),
+      apiKey,
+      endpoint: getCompatibleEndpoint(),
+    };
   }
 
-  const key = process.env.GITHUB_MODELS_TOKEN?.trim() || "";
-  if (!key) {
-    console.error(`[CaptionWriter] ${provider} needs GITHUB_MODELS_TOKEN; using template`);
-    return null;
+  if (requested === "github-models") {
+    return {
+      provider: "github-models",
+      model: getConfiguredModel("github-models"),
+      apiKey,
+      endpoint: GITHUB_MODELS_ENDPOINT,
+    };
   }
-  const url = baseUrl.endsWith("/chat/completions") ? baseUrl : `${baseUrl}/chat/completions`;
-  const response = await fetch(url, {
+
+  if (requested === "openai") {
+    return {
+      provider: "openai",
+      model: getConfiguredModel("openai"),
+      apiKey,
+      endpoint: OPENAI_ENDPOINT,
+    };
+  }
+
+  return {
+    provider: "nous",
+    model: getConfiguredModel("nous"),
+    apiKey,
+    endpoint: NOUS_ENDPOINT,
+  };
+}
+
+async function requestCaption(runtime: Exclude<CaptionRuntime, { provider: "fallback" }>, systemPrompt: string, userPrompt: string): Promise<string | null> {
+  const body: Record<string, unknown> = {
+    model: runtime.model,
+    temperature: 0.8,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+  };
+  // Nous reasoning models spend a max_tokens budget on hidden reasoning and
+  // return an empty caption. Do not send max_tokens. Haiku 5 needs reasoning off.
+  if ((runtime.model || "").toLowerCase().includes("haiku-5")) {
+    body.reasoning = { enabled: false };
+  }
+
+  const response = await fetch(runtime.endpoint!, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
+      "Authorization": `Bearer ${runtime.apiKey}`,
+      "User-Agent": CAPTION_USER_AGENT,
+      "Accept": "application/json",
     },
-    body: JSON.stringify({
-      model,
-      max_tokens: 500,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-    }),
+    body: JSON.stringify(body),
   });
+
+  const data = await response.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+    error?: { message?: string };
+  };
+
   if (!response.ok) {
-    console.error(`[CaptionWriter] ${provider} failed (${response.status}); using template`);
-    return null;
+    const reason = data?.error?.message || `HTTP ${response.status}`;
+    throw new Error(reason);
   }
-  const data = await response.json() as { choices?: { message?: { content?: string } }[] };
-  return data.choices?.[0]?.message?.content || null;
+
+  return data.choices?.[0]?.message?.content?.trim() || null;
+}
+
+async function requestCaptionWithRetry(runtime: Exclude<CaptionRuntime, { provider: "fallback" }>, systemPrompt: string, userPrompt: string): Promise<string | null> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await requestCaption(runtime, systemPrompt, userPrompt);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : "unknown";
+      const delayMs = parseRetryDelayMs(message);
+      if (attempt === 2 || !isRetryableCaptionError(message) || delayMs <= 0) {
+        throw error;
+      }
+      console.warn(`[CaptionWriter] ${runtime.provider} retrying in ${Math.ceil(delayMs / 1000)}s (${responseStatus(message)})`);
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("caption request failed");
+}
+
+function responseStatus(message: string): string {
+  const http = message.match(/HTTP\s+\d+/i);
+  return http ? http[0] : "request failed";
 }
 
 export async function generateCaption(req: CaptionRequest): Promise<string> {
-  try {
-    const text = await requestCaption(
-      buildSystemPrompt(req.brand, req.dealershipName),
-      buildUserPrompt(req),
-    );
-    return text?.trim() || buildFallbackCaption(req);
-  } catch (e) {
-    console.error("[CaptionWriter] request failed; using template:", e instanceof Error ? e.message : "unknown");
+  const runtime = resolveCaptionRuntime();
+  if (runtime.provider === "fallback" || !runtime.apiKey || !runtime.endpoint) {
     return buildFallbackCaption(req);
   }
+
+  try {
+    const systemPrompt = buildSystemPrompt(req.brand, req.dealershipName, req.captionSpec, req.gmbSpec, req.platform);
+    const userPrompt = buildUserPrompt(req);
+    const caption = await enqueueCaptionTask(() => requestCaptionWithRetry(runtime as Exclude<CaptionRuntime, { provider: "fallback" }>, systemPrompt, userPrompt));
+    const cleaned = cleanCaptionOutput(caption || "", req.platform);
+    return cleaned || buildFallbackCaption(req);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "unknown";
+    console.error(`[CaptionWriter] ${runtime.provider} failed; using template (${responseStatus(message)})`);
+    return buildFallbackCaption(req);
+  }
+}
+
+export function cleanCaptionOutput(raw: string, platform: string): string {
+  let text = (raw || "").trim();
+  if (!text) return "";
+
+  text = text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .split("\n")
+    .filter((line) => !/wait,\s*i need to check/i.test(line))
+    .join("\n")
+    .trim();
+
+  text = text
+    .replace(/^\s*\*\*(instagram|facebook|google(?:\s*my)?\s*business|gmb)\*\*\s*:?\s*/gim, "")
+    .replace(/^\s*#+\s*(instagram|facebook|google(?:\s*my)?\s*business|gmb)\s*:?\s*/gim, "")
+    .replace(/^\s*(instagram|facebook|google(?:\s*my)?\s*business|gmb)\s*:\s*/gim, "")
+    .replace(/^["“]|["”]$/g, "")
+    .trim();
+
+  const sectionRe = /(?:^|\n)\s*(?:\*\*)?(instagram|facebook|google(?:\s*my)?\s*business|gmb)(?:\*\*)?\s*:?\s*\n([\s\S]*?)(?=(?:\n\s*(?:\*\*)?(?:instagram|facebook|google(?:\s*my)?\s*business|gmb)(?:\*\*)?\s*:?)|$)/gi;
+  const sections: Record<string, string> = {};
+  let match: RegExpExecArray | null;
+  while ((match = sectionRe.exec(raw)) !== null) {
+    const key = match[1].toLowerCase().replace(/\s+/g, "");
+    sections[key] = match[2].trim();
+  }
+  if (Object.keys(sections).length >= 2) {
+    if (platform === "instagram" && sections.instagram) {
+      text = sections.instagram;
+    } else if (platform === "facebook" && sections.facebook) {
+      text = sections.facebook;
+    } else if (platform === "googlebusiness" && (sections.gmb || sections.googlemybusiness || sections.googlebusiness)) {
+      text = sections.gmb || sections.googlemybusiness || sections.googlebusiness;
+    }
+  }
+
+  text = text
+    .replace(/\*\*/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .split("\n")
+    .filter((line) => !/wait,\s*i need to check/i.test(line))
+    .join("\n")
+    .trim();
+
+  if (platform === "googlebusiness" && text.length > 250) {
+    text = text.slice(0, 247).replace(/\s+\S*$/, "").trim() + "…";
+  }
+
+  return text;
 }
 
 function buildFallbackCaption(req: CaptionRequest): string {
   const { brand, dealershipName, vehicleInfo, postType, platform } = req;
   const isGMB = platform === "googlebusiness";
 
+  const normalizedVehicleInfo = vehicleInfo.toLowerCase();
+  const isPorscheLifestyle = brand === "Porsche" && (
+    normalizedVehicleInfo.includes("porschelifestyle") ||
+    normalizedVehicleInfo.includes("lifestyle") ||
+    normalizedVehicleInfo.includes("rexy") ||
+    normalizedVehicleInfo.includes("1948") ||
+    normalizedVehicleInfo.includes("collection")
+  );
+
   const intros: Record<string, string> = {
     "New Cars": `The ${vehicleInfo} is here.`,
     "Pre-Owned Cars": `Now available: ${vehicleInfo}.`,
     "Service": `${vehicleInfo} — trusted service at ${dealershipName}.`,
     "Parts & Accessories": `${vehicleInfo} — now in stock at ${dealershipName}.`,
+    "Lifestyle": `${vehicleInfo} — lifestyle gear now featured at ${dealershipName}.`,
   };
 
-  const intro = intros[postType] || `${vehicleInfo} at ${dealershipName}.`;
+  const intro = isPorscheLifestyle
+    ? `${vehicleInfo} — Porsche Lifestyle apparel and branded accessories for the owner.`
+    : (intros[postType] || `${vehicleInfo} at ${dealershipName}.`);
 
-  if (isGMB) return `${intro} Visit us at ${dealershipName} for more information.`; // No hashtags, no CTA link on GMB
+  if (isGMB) return `${intro} Visit ${dealershipName} for more information.`;
 
-  let cta = "";
-  if (brand === "Porsche") cta = `\n\n${PORSCHE_CTA}`;
-  else if (brand === "Audi") cta = `\n\n${AUDI_CTA}`;
-  else cta = `\n\n${BMW_CTA[dealershipName] || BMW_CTA["Brian Harris BMW"]}`;
-
-  return `${intro}${cta}`;
+  return `${intro}`;
 }

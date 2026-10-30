@@ -22,11 +22,10 @@ const REQUIRED_PRODUCTION_ENV = [
 
 /** Present on the Mini .env. Missing values do not stop production boot. */
 const OPTIONAL_ENV = [
-  "ANTHROPIC_API_KEY",
+  "CAPTION_API_KEY",
   "CAPTION_PROVIDER",
   "CAPTION_BASE_URL",
   "CAPTION_MODEL",
-  "GITHUB_MODELS_TOKEN",
   "GITHUB_TOKEN",
   "GITHUB_MEDIA_UPLOAD",
   "ENGINE_DASHBOARD_PASSWORD",

@@ -151,7 +151,7 @@ Production (`npm start` / the Railway image) exits before it listens if any of t
 
 `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`, `CRON_SECRET`, `ZERNIO_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, `PUBLIC_APP_URL`, `GOOGLE_SERVICE_ACCOUNT_JSON`, and drive folder config (`DRIVE_FOLDERS_JSON` or a file at `DRIVE_FOLDERS_PATH`).
 
-Optional names are logged at boot and do not stop the process: `ANTHROPIC_API_KEY`, `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, `CAPTION_MODEL`, `GITHUB_MODELS_TOKEN`, `GITHUB_TOKEN`, `GITHUB_MEDIA_UPLOAD`, `ENGINE_DASHBOARD_PASSWORD`, `EPIDEMIC_SOUND_API_KEY`, `TELEGRAM_SET_WEBHOOK`. Caption calls use `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, and `CAPTION_MODEL` only (plus `ANTHROPIC_API_KEY` or `GITHUB_MODELS_TOKEN`). A failed caption uses the template. Nothing shells out to Hermes.
+Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`, `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, `CAPTION_MODEL`, `GITHUB_TOKEN`, `GITHUB_MEDIA_UPLOAD`, `ENGINE_DASHBOARD_PASSWORD`, `EPIDEMIC_SOUND_API_KEY`, `TELEGRAM_SET_WEBHOOK`. Captions default to `CAPTION_PROVIDER=nous` and `CAPTION_MODEL=anthropic/claude-haiku-4.5`, using `CAPTION_API_KEY` only. `ANTHROPIC_API_KEY`, `GITHUB_MODELS_TOKEN`, `OPENAI_API_KEY`, and `NOUS_API_KEY` are not read. A missing key or a failed call uses a template. Nothing shells out to Hermes.
 
 `npm run dev` does not apply that check.
 
@@ -167,11 +167,10 @@ Optional names are logged at boot and do not stop the process: `ANTHROPIC_API_KE
 | `BASIC_AUTH_PASSWORD` | web | HTTP basic auth password. Required in production. |
 | `CRON_SECRET` | web and cron | Shared secret. Header `X-Cron-Secret`. Required in production. Gates Drive scan, weekly summary, GitHub media migration, and `GET /api/reports/friday-queue`. Also bypasses basic auth. |
 | `ZERNIO_API_KEY` | web | Bearer token for the Zernio API. Required in production. |
-| `ANTHROPIC_API_KEY` | web | Optional. Used when `CAPTION_PROVIDER` is `anthropic` (the default). Missing or failed calls use a template. |
-| `CAPTION_PROVIDER` | web | Optional. `anthropic` or another OpenAI-compatible provider. Default `anthropic`. |
-| `CAPTION_BASE_URL` | web | Optional. Default `https://api.anthropic.com` for anthropic. Required for any other provider or captioning fails soft. |
-| `CAPTION_MODEL` | web | Optional. Default `claude-haiku-4-5` for anthropic. |
-| `GITHUB_MODELS_TOKEN` | web | Optional. Bearer token when `CAPTION_PROVIDER` is not anthropic. |
+| `CAPTION_API_KEY` | web | Optional at boot. The only caption credential. Unset or a failed call uses a template. Put the former Nous key here. |
+| `CAPTION_PROVIDER` | web | Optional. Default `nous`. Also `openai`, `openai-compatible`, `github-models`, `fallback`. |
+| `CAPTION_BASE_URL` | web | Optional. Used only for `openai-compatible`. Nous uses its own endpoint. |
+| `CAPTION_MODEL` | web | Optional. Default `anthropic/claude-haiku-4.5`. |
 | `ENGINE_DASHBOARD_PASSWORD` | web | Optional here. The live Mini uses it as the dashboard gate. This branch uses `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` until the Mini snapshot is merged. |
 | `EPIDEMIC_SOUND_API_KEY` | web | Optional. Live reels music. This branch's publisher does not call it. |
 | `GITHUB_MEDIA_UPLOAD` | web | Optional. Off unless set to `1`. The stored URL stays on the volume either way. |
