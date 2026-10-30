@@ -1,12 +1,261 @@
 import type { Express } from "express";
+import { spawn } from "child_process";
+import fs from "fs";
 import type { Server } from "http";
+import path from "path";
 import { storage } from "./storage";
-import { insertPostSchema, insertDealershipSchema } from "@shared/schema";
-import { scanDriveFolders, archiveFile } from "./drive-scanner";
+import {
+  insertPostSchema,
+  insertDealershipSchema,
+  insertCadenceSchema,
+  REEL_INVENTORY_FLOOR_WEEKS,
+} from "@shared/schema";
+import { z } from "zod";
+import { scanDriveFolders, archiveFile, loadFolders, listFolder, isVideoMedia } from "./drive-scanner";
+import { generateCaption, generateCaptionsForPlatforms, normalizeCaptionPlatforms } from "./caption-writer";
 import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
+import { composePostContent } from "./post-composer";
+import {
+  ENGINE_DASHBOARD_PASSWORD_ENV,
+  isAuthorizedDashboardPassword,
+  isDashboardProtectionEnabled,
+  readDashboardPassword,
+} from "./dashboard-auth";
+import { findRecentVehicleDuplicate } from "./post-dedup";
+import { hostUploadedMedia, inferPostMediaType } from "./media-upload";
+import { SPECIALS_SOURCES, syncTalkingPointsFromSpecials } from "./specials-talking-sync";
+
+const ARCHIVE_REQUIRED_STATUSES = new Set(["scheduled", "published"]);
+const DEFAULT_HIDDEN_POST_STATUSES = new Set(["rejected"]);
+const DRIVE_SCAN_STALE_MS = 30 * 60 * 1000;
+function sweepStaleDriveScanJobs(now = Date.now()) {
+  const staleBefore = new Date(now - DRIVE_SCAN_STALE_MS).toISOString();
+  const runningJobs = storage.getRunningEngineJobsByType("drive-scan");
+  const activeJobs = [] as typeof runningJobs;
+
+  for (const job of runningJobs) {
+    const startedAt = job.startedAt ? Date.parse(job.startedAt) : NaN;
+    if (!Number.isFinite(startedAt) || startedAt >= now - DRIVE_SCAN_STALE_MS) {
+      activeJobs.push(job);
+      continue;
+    }
+
+    storage.updateEngineJob(job.id, {
+      status: "failed",
+      completedAt: new Date(now).toISOString(),
+      summary: "Drive scan marked failed after exceeding the stale-job window",
+      errorMessage: `Drive scan was still marked running after ${Math.floor(DRIVE_SCAN_STALE_MS / 60000)} minutes`,
+    });
+  }
+
+  return activeJobs;
+}
+
+function resolveDriveScanRunner() {
+  const tsxPath = path.join(process.cwd(), "node_modules", ".bin", "tsx");
+  const scriptPath = path.join(process.cwd(), "server", "run-drive-scan-job.ts");
+
+  if (!fs.existsSync(tsxPath)) {
+    throw new Error(`Drive scan runner missing tsx binary at ${tsxPath}`);
+  }
+
+  if (!fs.existsSync(scriptPath)) {
+    throw new Error(`Drive scan runner script not found at ${scriptPath}`);
+  }
+
+  return { tsxPath, scriptPath };
+}
+
+function runDriveScanJob(scanJobId: number, weeks: number) {
+  const { tsxPath, scriptPath } = resolveDriveScanRunner();
+  const stdoutFd = fs.openSync("/tmp/postengine.log", "a");
+  const stderrFd = fs.openSync("/tmp/postengine-error.log", "a");
+
+  try {
+    const child = spawn(tsxPath, [scriptPath, String(scanJobId), String(weeks)], {
+      cwd: process.cwd(),
+      detached: true,
+      env: process.env,
+      stdio: ["ignore", stdoutFd, stderrFd],
+    });
+
+    child.on("error", (error) => {
+      storage.updateEngineJob(scanJobId, {
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        summary: "Drive scan failed to start",
+        errorMessage: error.message,
+      });
+    });
+
+    child.unref();
+    return child.pid;
+  } finally {
+    fs.closeSync(stdoutFd);
+    fs.closeSync(stderrFd);
+  }
+}
+
+function getDriveScanStatus() {
+  const activeScans = sweepStaleDriveScanJobs();
+  const currentScan = activeScans[0] ?? null;
+
+  return {
+    running: Boolean(currentScan),
+    jobId: currentScan?.id ?? null,
+    startedAt: currentScan?.startedAt ?? null,
+  };
+}
+
+
+type PostArchiveCandidate = {
+  id: number;
+  dealershipId: number;
+  status: string;
+  folderSource: string | null;
+};
+
+export function archivePostSourceOrThrow(
+  existing: PostArchiveCandidate,
+  nextStatus: string | undefined,
+  archive: (dealershipId: number, folderSource: string) => boolean,
+): void {
+  if (!nextStatus || !ARCHIVE_REQUIRED_STATUSES.has(nextStatus)) return;
+  if (existing.status === nextStatus) return;
+
+  const folderSource = existing.folderSource?.trim();
+  if (!folderSource) return;
+
+  try {
+    const archived = archive(existing.dealershipId, folderSource);
+    if (!archived) {
+      // Do not block Approve/Reject if Drive already moved the file or is flaky.
+      console.warn(
+        `[Archive] Drive archive returned false for post ${existing.id} (${folderSource}) — continuing status change`,
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[Archive] Drive archive failed for post ${existing.id} (${folderSource}): ${message} — continuing status change`,
+    );
+  }
+}
+
+type BulkApproveDeps<TPost extends PostArchiveCandidate> = {
+  getPost(id: number): TPost | undefined;
+  updatePost(id: number, data: { status: "scheduled" }): TPost | undefined;
+  logScheduled(post: TPost): void;
+  archive(dealershipId: number, folderSource: string): boolean;
+  findDuplicate?(post: TPost): { id: number; vehicleInfo: string | null } | null;
+};
+
+function buildRecentDuplicateVehicleError(duplicate: { id: number; vehicleInfo: string | null }) {
+  return `Recent duplicate vehicle already active on post ${duplicate.id}: ${duplicate.vehicleInfo || "Unknown vehicle"}`;
+}
+
+function findRecentDuplicateForPost(post: {
+  id: number;
+  dealershipId: number;
+  vehicleInfo: string | null;
+  status: string;
+  scheduledFor?: string | null;
+  publishedAt?: string | null;
+  createdAt?: string | null;
+  postType?: string | null;
+  folderSource?: string | null;
+}) {
+  const posts = storage.getPosts({ dealershipId: post.dealershipId });
+  const duplicate = findRecentVehicleDuplicate(post, posts);
+  if (!duplicate || duplicate.id == null) return null;
+  return { id: duplicate.id, vehicleInfo: duplicate.vehicleInfo ?? null };
+}
+
+function assertNoRecentVehicleDuplicateOrThrow(post: { id: number; dealershipId: number; vehicleInfo: string | null; status: string; scheduledFor?: string | null; publishedAt?: string | null; createdAt?: string | null }) {
+  const duplicate = findRecentDuplicateForPost(post);
+  if (duplicate) {
+    throw new Error(buildRecentDuplicateVehicleError(duplicate));
+  }
+}
+
+export function bulkApprovePosts<TPost extends PostArchiveCandidate>(ids: number[], deps: BulkApproveDeps<TPost>) {
+  const successful: TPost[] = [];
+  const failed: Array<{ id: number; error: string; folderSource?: string }> = [];
+
+  for (const rawId of ids) {
+    const id = Number(rawId);
+    const existing = deps.getPost(id);
+    if (!existing) {
+      failed.push({ id, error: "Post not found" });
+      continue;
+    }
+
+    try {
+      archivePostSourceOrThrow(existing, "scheduled", deps.archive);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failed.push({ id, error: message, folderSource: existing.folderSource || undefined });
+      continue;
+    }
+
+    const duplicate = deps.findDuplicate?.(existing);
+    if (duplicate) {
+      failed.push({ id, error: buildRecentDuplicateVehicleError(duplicate), folderSource: existing.folderSource || undefined });
+      continue;
+    }
+
+    const updated = deps.updatePost(id, { status: "scheduled" });
+    if (!updated) {
+      failed.push({ id, error: "Failed to update post" });
+      continue;
+    }
+
+    deps.logScheduled(updated);
+    successful.push(updated);
+  }
+
+  return { successful, failed };
+}
+
+export function filterPostsForApi<T extends { status: string }>(
+  postsList: T[],
+  filters: { status?: string; includeRejected?: boolean },
+): T[] {
+  if (filters.status || filters.includeRejected) {
+    return postsList;
+  }
+
+  return postsList.filter((post) => !DEFAULT_HIDDEN_POST_STATUSES.has(post.status));
+}
 
 export async function registerRoutes(server: Server, app: Express) {
+  // ---- Dashboard auth ----
+  app.get("/api/auth/config", (_req, res) => {
+    res.json({
+      enabled: isDashboardProtectionEnabled(),
+      headerName: "X-Dashboard-Password",
+      authMode: "pin",
+      appName: "ENGINE",
+    });
+  });
+
+  app.post("/api/auth/check", (req, res) => {
+    if (!isDashboardProtectionEnabled()) {
+      return res.json({ ok: true, enabled: false });
+    }
+
+    if (!isAuthorizedDashboardPassword(readDashboardPassword(req))) {
+      return res.status(401).json({
+        ok: false,
+        error: "Unauthorized",
+        message: "Valid dashboard PIN required",
+      });
+    }
+
+    return res.json({ ok: true, enabled: true });
+  });
+
   // ---- Dealerships ----
   app.get("/api/dealerships", (_req, res) => {
     const dealerships = storage.getDealerships();
@@ -35,14 +284,21 @@ export async function registerRoutes(server: Server, app: Express) {
     res.json(updated);
   });
 
+  app.delete("/api/dealerships/:id", (req, res) => {
+    const deleted = storage.deleteDealership(Number(req.params.id));
+    if (!deleted) return res.status(404).json({ error: "Not found" });
+    res.json({ ok: true });
+  });
+
   // ---- Posts ----
   app.get("/api/posts", (req, res) => {
     const filters: any = {};
     if (req.query.dealershipId) filters.dealershipId = Number(req.query.dealershipId);
     if (req.query.status) filters.status = req.query.status as string;
     if (req.query.postType) filters.postType = req.query.postType as string;
+    const includeRejected = req.query.includeRejected === "true";
     const postsList = storage.getPosts(filters);
-    res.json(postsList);
+    res.json(filterPostsForApi(postsList, { status: filters.status, includeRejected }));
   });
 
   app.get("/api/posts/stats", (_req, res) => {
@@ -53,7 +309,44 @@ export async function registerRoutes(server: Server, app: Express) {
   app.get("/api/posts/:id", (req, res) => {
     const post = storage.getPost(Number(req.params.id));
     if (!post) return res.status(404).json({ error: "Not found" });
-    res.json(post);
+    res.json({ ...post, composedContent: composePostContent(post) });
+  });
+
+  app.post("/api/media/upload", async (req, res) => {
+    try {
+      const filesInput = Array.isArray(req.body?.files)
+        ? req.body.files
+        : req.body?.filename || req.body?.contentBase64
+          ? [req.body]
+          : [];
+
+      if (filesInput.length === 0) {
+        return res.status(400).json({ error: "No files provided. Pass files[] or filename + contentBase64." });
+      }
+      if (filesInput.length > 12) {
+        return res.status(400).json({ error: "Too many files (max 12)." });
+      }
+
+      const uploaded = [];
+      for (const file of filesInput) {
+        const filename = typeof file?.filename === "string" ? file.filename : "";
+        const contentBase64 = typeof file?.contentBase64 === "string" ? file.contentBase64 : "";
+        const mimeType = typeof file?.mimeType === "string" ? file.mimeType : undefined;
+        if (!filename || !contentBase64) {
+          return res.status(400).json({ error: "Each file needs filename and contentBase64." });
+        }
+        uploaded.push(await hostUploadedMedia({ filename, contentBase64, mimeType }));
+      }
+
+      res.status(201).json({
+        success: true,
+        files: uploaded,
+        urls: uploaded.map((item) => item.url),
+        mediaType: inferPostMediaType(uploaded.map((item) => item.mediaType)),
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || "Upload failed" });
+    }
   });
 
   app.post("/api/posts", (req, res) => {
@@ -68,13 +361,21 @@ export async function registerRoutes(server: Server, app: Express) {
       });
       res.status(201).json(post);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      const status = err?.name === "DuplicateFolderSourceError" ? 409 : 400;
+      res.status(status).json({ error: err.message });
     }
   });
 
   app.patch("/api/posts/:id", (req, res) => {
     const existing = storage.getPost(Number(req.params.id));
     if (!existing) return res.status(404).json({ error: "Not found" });
+
+    try {
+      archivePostSourceOrThrow(existing, req.body.status, archiveFile);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(409).json({ error: message });
+    }
 
     const updated = storage.updatePost(Number(req.params.id), req.body);
     if (!updated) return res.status(500).json({ error: "Failed to update" });
@@ -87,19 +388,145 @@ export async function registerRoutes(server: Server, app: Express) {
         action: req.body.status,
         details: `Post ${req.body.status}: ${updated.vehicleInfo || updated.postType}`,
       });
-
-      // Archive Drive file when post is scheduled or published
-      if ((req.body.status === "scheduled" || req.body.status === "published") && updated.folderSource) {
-        try {
-          archiveFile(updated.dealershipId, updated.folderSource);
-          console.log(`[Archive] Moved file to _Archive for post ${updated.id}`);
-        } catch (e) {
-          console.error(`[Archive] Failed to move file:`, e);
-        }
-      }
     }
 
     res.json(updated);
+  });
+
+  app.post("/api/captions/generate", async (req, res) => {
+    try {
+      const dealershipId = Number(req.body?.dealershipId);
+      if (!Number.isInteger(dealershipId) || dealershipId <= 0) {
+        return res.status(400).json({ error: "dealershipId is required" });
+      }
+      const dealership = storage.getDealership(dealershipId);
+      if (!dealership) return res.status(404).json({ error: "Dealership not found" });
+
+      const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+      if (!prompt) {
+        return res.status(400).json({ error: "Caption prompt is required" });
+      }
+      if (prompt.length > 1200) {
+        return res.status(400).json({ error: "Caption prompt is too long (max 1200 characters)" });
+      }
+
+      const platforms = normalizeCaptionPlatforms(req.body?.platforms);
+      if (platforms.length === 0) {
+        return res.status(400).json({ error: "Select at least one supported platform (instagram, facebook, googlebusiness, tiktok)" });
+      }
+
+      const postType = typeof req.body?.postType === "string" && req.body.postType.trim()
+        ? req.body.postType.trim()
+        : "inventory";
+      const vehicleInfo = typeof req.body?.vehicleInfo === "string" && req.body.vehicleInfo.trim()
+        ? req.body.vehicleInfo.trim()
+        : postType;
+      const mediaType = typeof req.body?.mediaType === "string" ? req.body.mediaType : null;
+      const talkingPoints = typeof req.body?.talkingPoints === "string" ? req.body.talkingPoints : null;
+      const currentCaptions = req.body?.currentCaptions && typeof req.body.currentCaptions === "object"
+        ? req.body.currentCaptions
+        : undefined;
+
+      const captions = await generateCaptionsForPlatforms({
+        dealershipName: dealership.name,
+        brand: dealership.brand,
+        postType,
+        vehicleInfo,
+        platforms,
+        prompt,
+        mediaType,
+        captionSpec: (dealership as any).captionSpec,
+        gmbSpec: (dealership as any).gmbSpec,
+        talkingPoints,
+        currentCaptions,
+      });
+
+      res.json({
+        success: true,
+        platforms,
+        captions,
+        // Convenience aliases for the New Post form field names
+        caption: captions.instagram || captions.tiktok || "",
+        captionFacebook: captions.facebook || "",
+        captionGmb: captions.googlebusiness || "",
+        captionTiktok: captions.tiktok || "",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Caption generation failed" });
+    }
+  });
+
+  app.post("/api/posts/:id/rewrite-caption", async (req, res) => {
+    try {
+      const postId = Number(req.params.id);
+      const post = storage.getPost(postId);
+      if (!post) return res.status(404).json({ error: "Not found" });
+
+      const direction = typeof req.body?.direction === "string" ? req.body.direction.trim() : "";
+      if (!direction) {
+        return res.status(400).json({ error: "Direction / topic is required to rewrite the caption." });
+      }
+      if (direction.length > 1200) {
+        return res.status(400).json({ error: "Direction is too long (max 1200 characters)." });
+      }
+
+      const dealership = storage.getDealership(post.dealershipId);
+      if (!dealership) return res.status(404).json({ error: "Dealership not found" });
+
+      const vehicleInfo = post.vehicleInfo || post.postType || "Featured vehicle";
+      const base = {
+        dealershipName: dealership.name,
+        brand: dealership.brand,
+        postType: post.postType,
+        vehicleInfo,
+        tone: "punchy" as const,
+        captionSpec: (dealership as any).captionSpec,
+        gmbSpec: (dealership as any).gmbSpec,
+        rewriteDirection: direction,
+      };
+
+      const [captionIG, captionFB, captionGMB] = await Promise.all([
+        generateCaption({
+          ...base,
+          platform: "instagram",
+          currentCaption: post.caption,
+        }),
+        generateCaption({
+          ...base,
+          platform: "facebook",
+          currentCaption: (post as any).captionFacebook || post.caption,
+        }),
+        generateCaption({
+          ...base,
+          platform: "googlebusiness",
+          tone: "professional",
+          currentCaption: (post as any).captionGmb || post.caption,
+        }),
+      ]);
+
+      const updated = storage.updatePost(postId, {
+        caption: captionIG,
+        captionFacebook: captionFB,
+        captionGmb: captionGMB,
+        notes: [
+          post.notes || "",
+          `Caption rewrite: ${direction.slice(0, 240)}`,
+        ].filter(Boolean).join(" | "),
+      });
+
+      if (!updated) return res.status(500).json({ error: "Failed to save rewritten captions" });
+
+      storage.logActivity({
+        postId: updated.id,
+        dealershipId: updated.dealershipId,
+        action: "edited",
+        details: `Caption rewritten from review queue: ${direction.slice(0, 160)}`,
+      });
+
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Caption rewrite failed" });
+    }
   });
 
   app.delete("/api/posts/:id", (req, res) => {
@@ -119,20 +546,26 @@ export async function registerRoutes(server: Server, app: Express) {
   app.post("/api/posts/bulk-approve", (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ error: "ids must be an array" });
-    const results = [];
-    for (const id of ids) {
-      const updated = storage.updatePost(id, { status: "scheduled" });
-      if (updated) {
+
+    const result = bulkApprovePosts(ids, {
+      getPost: (id) => storage.getPost(id),
+      updatePost: (id, data) => storage.updatePost(id, data),
+      archive: archiveFile,
+      findDuplicate: (post) => findRecentDuplicateForPost(post),
+      logScheduled: (updated) => {
         storage.logActivity({
           postId: updated.id,
           dealershipId: updated.dealershipId,
           action: "scheduled",
           details: `Post approved & scheduled: ${updated.vehicleInfo || updated.postType}`,
         });
-        results.push(updated);
-      }
-    }
-    res.json(results);
+      },
+    });
+
+    res.status(result.failed.length > 0 ? 207 : 200).json({
+      successful: result.successful,
+      failed: result.failed,
+    });
   });
 
   // ---- Activity ----
@@ -151,6 +584,24 @@ export async function registerRoutes(server: Server, app: Express) {
       const postId = parseInt(data.replace("approve_", ""));
       const post = storage.getPost(postId);
       if (post) {
+        try {
+          archivePostSourceOrThrow(post, "scheduled", archiveFile);
+          assertNoRecentVehicleDuplicateOrThrow(post);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, text: `⚠️ Could not schedule *${post.vehicleInfo}*: ${message}`, parse_mode: "Markdown" }),
+          });
+          await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ callback_query_id: callback_query.id }),
+          });
+          return res.json({ ok: false, error: message });
+        }
+
         storage.updatePost(postId, { status: "scheduled" });
         const result = await publishPost(postId);
         // Update Telegram message
@@ -218,6 +669,14 @@ export async function registerRoutes(server: Server, app: Express) {
     const post = storage.getPost(postId);
     if (!post) return res.status(404).json({ error: "Not found" });
 
+    try {
+      archivePostSourceOrThrow(post, "scheduled", archiveFile);
+      assertNoRecentVehicleDuplicateOrThrow(post);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(409).json({ error: message });
+    }
+
     // Set status to scheduled first
     storage.updatePost(postId, { status: "scheduled" });
 
@@ -226,34 +685,321 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ── DRIVE SCANNER ───────────────────────────────────────────
-  app.post("/api/drive/scan", async (req, res) => {
+  app.get("/api/drive/config", (_req, res) => {
     try {
-      const count = await scanDriveFolders();
-      res.json({ success: true, newPosts: count, message: `Created ${count} new draft post(s) from Drive` });
+      const config = loadFolders();
+      const dealerships = storage.getDealerships();
+      const items = Object.entries(config.dealerships)
+        .map(([name, folderConfig]) => {
+          const dealer = dealerships.find(d => d.id === folderConfig.id);
+          return {
+            id: folderConfig.id,
+            name,
+            brand: dealer?.brand ?? null,
+            rootFolderId: folderConfig.root,
+            folders: folderConfig.folders,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      res.json({
+        account: config.account,
+        parentFolderId: config.parentFolderId ?? null,
+        parentFolderName: config.parentFolderName ?? null,
+        dealerships: items,
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  // ── CONTENT ENGINE ──────────────────────────────────────────
-  app.get("/api/content-engine/cadence", (_req, res) => {
-    const settings = storage.getCadenceSettings();
-    const dealerships = storage.getDealerships();
-    const enriched = settings
-      .filter((s: any) => s.isActive)
-      .map((s: any) => {
-        const dealer = dealerships.find((d: any) => d.id === s.dealershipId);
+  app.get("/api/engine/status", (_req, res) => {
+    const paused = storage.getAppSetting("imports_paused") === "true";
+    const lastRunAt = storage.getAppSetting("last_scan_at") || null;
+    const lastRunCount = storage.getAppSetting("last_scan_count") || null;
+    const driveScan = getDriveScanStatus();
+    res.json({ paused, lastRunAt, lastRunCount, driveScan });
+  });
+
+  app.get("/api/engine/reel-health", (_req, res) => {
+    try {
+      const config = loadFolders();
+      const dealerships = storage.getDealerships();
+      const cadence = storage.getCadenceSettings().filter((s) => s.isActive);
+      const posts = storage.getPosts();
+      const floorWeeks = REEL_INVENTORY_FLOOR_WEEKS;
+
+      const rows = dealerships.map((dealer) => {
+        const dealerCadence = cadence.filter((c) => c.dealershipId === dealer.id);
+        const weeklyReelTarget = dealerCadence.reduce((sum, rule) => {
+          if (!rule.reelsEnabled) return sum;
+          return sum + Math.max(0, Number(rule.reelsPerWeek || 0));
+        }, 0);
+        const inventoryFloor = weeklyReelTarget * floorWeeks;
+        const unconfiguredRules = dealerCadence.filter((rule) => !rule.reelsConfigured).length;
+
+        const folderConfig = Object.values(config.dealerships).find((d) => d.id === dealer.id);
+        let driveVideosAvailable = 0;
+        if (folderConfig) {
+          const usedSources = new Set(
+            posts.filter((p) => p.dealershipId === dealer.id).map((p) => p.folderSource).filter(Boolean),
+          );
+          for (const [postType, folderId] of Object.entries(folderConfig.folders)) {
+            if (postType.startsWith("_") || postType === "Customer Media") continue;
+            try {
+              const media = listFolder(folderId);
+              driveVideosAvailable += media.filter(
+                (file) => isVideoMedia(file) && !usedSources.has(`${folderId}/${file.id}`),
+              ).length;
+            } catch {
+              // ignore folder list failures for health snapshot
+            }
+          }
+        }
+
+        const activeVideoPosts = posts.filter(
+          (p) =>
+            p.dealershipId === dealer.id &&
+            p.mediaType === "video" &&
+            ["draft", "queued", "scheduled"].includes(p.status),
+        ).length;
+
+        const available = driveVideosAvailable + activeVideoPosts;
+        const shortfall = Math.max(0, inventoryFloor - available);
+
         return {
-          dealershipName: dealer?.name ?? "Unknown",
-          postType: s.postType,
-          postsPerDay: s.postsPerDay,
-          daysOfWeek: s.daysOfWeek,
-          platforms: s.platforms,
-          isActive: s.isActive,
+          dealershipId: dealer.id,
+          dealershipName: dealer.name,
+          weeklyReelTarget,
+          inventoryFloorWeeks: floorWeeks,
+          inventoryFloor,
+          driveVideosAvailable,
+          activeVideoPosts,
+          available,
+          shortfall,
+          unconfiguredRules,
+          healthy: unconfiguredRules === 0 && shortfall === 0,
         };
-      })
-      .sort((a: any, b: any) => a.dealershipName.localeCompare(b.dealershipName));
-    res.json(enriched);
+      });
+
+      res.json({
+        floorWeeks,
+        totals: {
+          weeklyReelTarget: rows.reduce((s, r) => s + r.weeklyReelTarget, 0),
+          inventoryFloor: rows.reduce((s, r) => s + r.inventoryFloor, 0),
+          available: rows.reduce((s, r) => s + r.available, 0),
+          shortfall: rows.reduce((s, r) => s + r.shortfall, 0),
+          unconfiguredRules: rows.reduce((s, r) => s + r.unconfiguredRules, 0),
+        },
+        dealerships: rows,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/engine/pause", (req, res) => {
+    storage.setAppSetting("imports_paused", "true");
+    res.json({ success: true, paused: true });
+  });
+
+  app.post("/api/engine/resume", (req, res) => {
+    storage.setAppSetting("imports_paused", "false");
+    res.json({ success: true, paused: false });
+  });
+
+  // Weekly talking points / offers — per dealership (Generate New Posts)
+  function captionTalkingKey(dealershipId: number): string {
+    return `caption_talking_points.${dealershipId}`;
+  }
+  function captionTalkingUpdatedKey(dealershipId: number): string {
+    return `caption_talking_points_updated_at.${dealershipId}`;
+  }
+
+  app.get("/api/caption-brief", (_req, res) => {
+    const dealerships = storage.getDealerships();
+    const stores = dealerships.map((d) => ({
+      dealershipId: d.id,
+      name: d.name,
+      brand: d.brand,
+      color: d.color,
+      talkingPoints: storage.getAppSetting(captionTalkingKey(d.id)) || "",
+      updatedAt: storage.getAppSetting(captionTalkingUpdatedKey(d.id)) || null,
+    }));
+    // Legacy global key (pre store-level) — surface once so UI can migrate if needed
+    const legacyGlobal = storage.getAppSetting("caption_talking_points") || "";
+    res.json({ stores, legacyGlobal: legacyGlobal || null });
+  });
+
+  app.put("/api/caption-brief", (req, res) => {
+    const updatedAt = new Date().toISOString();
+    const bodyStores = Array.isArray(req.body?.stores) ? req.body.stores : null;
+
+    // Bulk: { stores: [{ dealershipId, talkingPoints }] }
+    if (bodyStores) {
+      const dealershipIds = new Set(storage.getDealerships().map((d) => d.id));
+      const saved: Array<{ dealershipId: number; talkingPoints: string; updatedAt: string }> = [];
+      for (const row of bodyStores) {
+        const id = Number(row?.dealershipId);
+        if (!Number.isInteger(id) || !dealershipIds.has(id)) continue;
+        const talkingPoints = (typeof row?.talkingPoints === "string" ? row.talkingPoints : "")
+          .trim()
+          .slice(0, 4000);
+        storage.setAppSetting(captionTalkingKey(id), talkingPoints);
+        storage.setAppSetting(captionTalkingUpdatedKey(id), updatedAt);
+        saved.push({ dealershipId: id, talkingPoints, updatedAt });
+      }
+      // Clear legacy global so it doesn't confuse future reads
+      if (storage.getAppSetting("caption_talking_points")) {
+        storage.setAppSetting("caption_talking_points", "");
+      }
+      return res.json({ success: true, savedCount: saved.length, stores: saved, updatedAt });
+    }
+
+    // Single store: { dealershipId, talkingPoints }
+    const id = Number(req.body?.dealershipId);
+    if (!Number.isInteger(id) || !storage.getDealership(id)) {
+      return res.status(400).json({ error: "dealershipId required (or pass stores[])" });
+    }
+    const talkingPoints = (typeof req.body?.talkingPoints === "string" ? req.body.talkingPoints : "")
+      .trim()
+      .slice(0, 4000);
+    storage.setAppSetting(captionTalkingKey(id), talkingPoints);
+    storage.setAppSetting(captionTalkingUpdatedKey(id), updatedAt);
+    res.json({ success: true, dealershipId: id, talkingPoints, updatedAt });
+  });
+
+  async function runSpecialsTalkingSync(force = false) {
+    const updatedAt = new Date().toISOString();
+    const stores = storage.getDealerships()
+      .filter((d) => SPECIALS_SOURCES[d.id])
+      .map((d) => ({ dealershipId: d.id, name: d.name, brand: d.brand }));
+    return syncTalkingPointsFromSpecials({
+      stores,
+      force,
+      getExisting: (id) => storage.getAppSetting(captionTalkingKey(id)) || "",
+      save: (id, talkingPoints) => {
+        storage.setAppSetting(captionTalkingKey(id), talkingPoints);
+        storage.setAppSetting(captionTalkingUpdatedKey(id), updatedAt);
+      },
+    });
+  }
+
+  app.post("/api/caption-brief/sync", async (req, res) => {
+    try {
+      const force = req.body?.force === true;
+      const results = await runSpecialsTalkingSync(force);
+      res.json({
+        success: true,
+        updatedAt: new Date().toISOString(),
+        results,
+        stores: storage.getDealerships().map((d) => ({
+          dealershipId: d.id,
+          name: d.name,
+          brand: d.brand,
+          color: d.color,
+          talkingPoints: storage.getAppSetting(captionTalkingKey(d.id)) || "",
+          updatedAt: storage.getAppSetting(captionTalkingUpdatedKey(d.id)) || null,
+        })),
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : "Specials sync failed",
+      });
+    }
+  });
+
+  app.post("/api/drive/scan", async (req, res) => {
+    try {
+      const requestedWeeks = Number(req.body?.weeks ?? 1);
+      const weeks = Number.isFinite(requestedWeeks) ? Math.min(4, Math.max(1, Math.trunc(requestedWeeks))) : 1;
+      const paused = storage.getAppSetting("imports_paused") === "true";
+      if (paused) {
+        return res.status(409).json({ error: "Imports are paused" });
+      }
+
+      // Refresh SALES mix from live specials before this scan (fail open).
+      try {
+        await runSpecialsTalkingSync();
+      } catch {
+        /* keep existing briefs */
+      }
+
+      // Persist per-store talking points before background runner starts
+      const dealershipIds = new Set(storage.getDealerships().map((d) => d.id));
+      const now = new Date().toISOString();
+      let storesWithPoints = 0;
+      const currentMonth = new Date()
+        .toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "America/Chicago" })
+        .toUpperCase();
+      const briefIsCurrent = (text: string) => Boolean(text.trim()) && text.toUpperCase().includes(currentMonth);
+
+      if (req.body?.talkingPointsByDealership && typeof req.body.talkingPointsByDealership === "object") {
+        for (const [rawId, rawPoints] of Object.entries(req.body.talkingPointsByDealership as Record<string, unknown>)) {
+          const id = Number(rawId);
+          if (!Number.isInteger(id) || !dealershipIds.has(id)) continue;
+          const talkingPoints = (typeof rawPoints === "string" ? rawPoints : "").trim().slice(0, 4000);
+          if (!briefIsCurrent(talkingPoints)) continue;
+          storage.setAppSetting(captionTalkingKey(id), talkingPoints);
+          storage.setAppSetting(captionTalkingUpdatedKey(id), now);
+        }
+      } else if (Array.isArray(req.body?.stores)) {
+        for (const row of req.body.stores) {
+          const id = Number(row?.dealershipId);
+          if (!Number.isInteger(id) || !dealershipIds.has(id)) continue;
+          const talkingPoints = (typeof row?.talkingPoints === "string" ? row.talkingPoints : "")
+            .trim()
+            .slice(0, 4000);
+          if (!briefIsCurrent(talkingPoints)) continue;
+          storage.setAppSetting(captionTalkingKey(id), talkingPoints);
+          storage.setAppSetting(captionTalkingUpdatedKey(id), now);
+        }
+      }
+      for (const id of Array.from(dealershipIds)) {
+        if ((storage.getAppSetting(captionTalkingKey(id)) || "").trim()) storesWithPoints += 1;
+      }
+
+      const driveScan = getDriveScanStatus();
+      if (driveScan.running) {
+        return res.status(409).json({
+          error: "Drive scan already running",
+          jobId: driveScan.jobId,
+          startedAt: driveScan.startedAt,
+        });
+      }
+
+      const startedAt = new Date().toISOString();
+      const scanJob = storage.createEngineJob({
+        moduleKey: "post-engine",
+        jobType: "drive-scan",
+        status: "running",
+        startedAt,
+        payload: JSON.stringify({
+          source: "manual-route",
+          weeks,
+          storesWithTalkingPoints: storesWithPoints,
+        }),
+        summary: storesWithPoints
+          ? `Drive scan started (${weeks}w) · talking points on ${storesWithPoints} store(s)`
+          : "Drive scan started from PostEngine route",
+        dealershipId: null,
+        completedAt: null,
+        errorMessage: null,
+      });
+
+      const runnerPid = runDriveScanJob(scanJob.id, weeks);
+      res.status(202).json({
+        success: true,
+        jobId: scanJob.id,
+        runnerPid,
+        message: storesWithPoints
+          ? `Drive scan started — captions will use store-level talking points (${storesWithPoints} store${storesWithPoints === 1 ? "" : "s"})`
+          : "Drive scan started in background",
+        storesWithTalkingPoints: storesWithPoints,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ── CADENCE SETTINGS ─────────────────────────────────────────
@@ -264,14 +1010,56 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.post("/api/cadence", (req, res) => {
-    const setting = storage.createCadenceSetting(req.body);
-    res.json(setting);
+    try {
+      const parsed = insertCadenceSchema.parse({
+        ...req.body,
+        reelsConfigured: Boolean(req.body?.reelsConfigured),
+        reelsEnabled: Boolean(req.body?.reelsEnabled),
+        reelsPerWeek: Number(req.body?.reelsPerWeek || 0),
+      });
+      const setting = storage.createCadenceSetting(parsed);
+      res.json(setting);
+    } catch (e: any) {
+      if (e?.name === "ZodError") {
+        return res.status(400).json({ error: e.errors?.[0]?.message || "Invalid cadence rule" });
+      }
+      res.status(400).json({ error: e.message || "Invalid cadence rule" });
+    }
   });
 
   app.patch("/api/cadence/:id", (req, res) => {
-    const setting = storage.updateCadenceSetting(parseInt(req.params.id), req.body);
-    if (!setting) return res.status(404).json({ error: "Not found" });
-    res.json(setting);
+    try {
+      const existing = storage.getCadenceSettings().find((s) => s.id === parseInt(req.params.id));
+      if (!existing) return res.status(404).json({ error: "Not found" });
+      const merged = {
+        dealershipId: existing.dealershipId,
+        postType: existing.postType,
+        daysOfWeek: existing.daysOfWeek,
+        postsPerDay: existing.postsPerDay,
+        autoTime: existing.autoTime,
+        manualTime: existing.manualTime,
+        platforms: existing.platforms,
+        isActive: existing.isActive,
+        reelsConfigured: existing.reelsConfigured,
+        reelsEnabled: existing.reelsEnabled,
+        reelsPerWeek: existing.reelsPerWeek,
+        ...req.body,
+      };
+      const parsed = insertCadenceSchema.parse({
+        ...merged,
+        reelsConfigured: Boolean(merged.reelsConfigured),
+        reelsEnabled: Boolean(merged.reelsEnabled),
+        reelsPerWeek: Number(merged.reelsPerWeek || 0),
+      });
+      const setting = storage.updateCadenceSetting(parseInt(req.params.id), parsed);
+      if (!setting) return res.status(404).json({ error: "Not found" });
+      res.json(setting);
+    } catch (e: any) {
+      if (e?.name === "ZodError") {
+        return res.status(400).json({ error: e.errors?.[0]?.message || "Invalid cadence rule" });
+      }
+      res.status(400).json({ error: e.message || "Invalid cadence rule" });
+    }
   });
 
   app.delete("/api/cadence/:id", (req, res) => {

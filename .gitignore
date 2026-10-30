@@ -10,3 +10,38 @@ pepper/pepper_tokens.env
 # Nested git repos (not submodules)
 claude/
 
+
+.DS_Store
+**/.DS_Store
+*.db.bak*
+sqlite.db.bak*
+.credentials.json
+.motive-credentials.json
+motive-browser/config.json
+.zernio-accounts.json
+.drive-folders.json
+.drive-*
+public-media/
+*.db*
+.env.*
+
+# OpenClaw leftovers — not PostEngine app source
+memory/
+MEMORY.md*
+state/
+.dreams/
+*.bak
+SOUL.md
+SOUL.md.bak*
+IDENTITY.md
+USER.md
+HEARTBEAT.md
+DREAMS.md
+AGENTS.md
+LAWS.md
+COMMITMENTS.md
+CLIENTS.md
+TASKS.md
+OPERATIONS.md
+TOOLS.md
+session-notes*.md
