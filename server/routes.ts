@@ -11,7 +11,7 @@ import {
   REEL_INVENTORY_FLOOR_WEEKS,
 } from "@shared/schema";
 import { z } from "zod";
-import { scanDriveFolders, archiveFile, loadFolders, listFolder, isVideoMedia } from "./drive-scanner";
+import { scanDriveFolders, archiveFile, loadFolders, listFolder, isVideoMedia, driveConfigured } from "./drive-scanner";
 import { publishEnabled } from "./publish-switch";
 import { handleImportStatus } from "./admin-import";
 import { generateCaption, generateCaptionsForPlatforms, normalizeCaptionPlatforms } from "./caption-writer";
@@ -691,6 +691,15 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // ── DRIVE SCANNER ───────────────────────────────────────────
   app.get("/api/drive/config", (_req, res) => {
+    if (!driveConfigured()) {
+      return res.json({
+        configured: false,
+        account: null,
+        parentFolderId: null,
+        parentFolderName: null,
+        dealerships: [],
+      });
+    }
     try {
       const config = loadFolders();
       const dealerships = storage.getDealerships();
@@ -728,7 +737,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.get("/api/engine/reel-health", (_req, res) => {
     try {
-      const config = loadFolders();
+      const config = driveConfigured() ? loadFolders() : { dealerships: {} as Record<string, { id: number; folders: Record<string, string> }> };
       const dealerships = storage.getDealerships();
       const cadence = storage.getCadenceSettings().filter((s) => s.isActive);
       const posts = storage.getPosts();
@@ -950,6 +959,10 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.post("/api/drive/scan", async (req, res) => {
+    if (!driveConfigured()) {
+      console.error("[DriveScanner] Weekly scan skipped: drive not configured");
+      return res.json({ skipped: true, reason: "drive not configured" });
+    }
     if (!publishEnabled()) {
       console.error("[DriveScanner] Weekly scan skipped: PUBLISH_ENABLED is not true");
       return res.json({

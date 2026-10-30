@@ -117,7 +117,7 @@ Setup:
 2. Create a service account and a JSON key. Do not commit the file.
 3. Put the key in `GOOGLE_SERVICE_ACCOUNT_JSON` as one JSON object. `jq -c . key.json` prints a single line. The object must include `client_email` and `private_key`.
 4. Share the Drive parent folder named `Postengine` (account `lance@thecoopbrla.com`) with that `client_email` as **Editor**. Viewer can list and download, and cannot move files into `_Archive`. Editor on the parent covers the children when inheritance is on. Each store uses New Cars, Pre-Owned Cars, Service, Parts & Accessories, Customer Media, and `_Archive`. Harris Porsche also has Reels. If a child was shared separately and inheritance is off, share that child as Editor too.
-5. Put the folder map in `DRIVE_FOLDERS_JSON` (the JSON text) or in a file at `DRIVE_FOLDERS_PATH` (Railway default `/data/.drive-folders.json`). Shape is `.drive-folders.example.json`. Do not commit real folder ids. Production will not start until this config is present and `GOOGLE_SERVICE_ACCOUNT_JSON` is a key the process can sign with.
+5. Put the folder map in `DRIVE_FOLDERS_JSON` (the JSON text) or in a file at `DRIVE_FOLDERS_PATH` (Railway default `/data/.drive-folders.json`). Shape is `.drive-folders.example.json`. Do not commit real folder ids. Both the key and the folder map are optional at boot. Until they are set, the process still starts, and `POST /api/drive/scan` returns `{skipped:true, reason:"drive not configured"}`. Dashboard, Zernio publishing, `/media/generated`, and the import endpoint do not need them. Set them before the first real Friday scan.
 
 A successful list with no images or videos is an empty folder. A token, permission, or network failure fails the scan. It does not report zero new posts.
 
@@ -142,13 +142,15 @@ The live snapshot does not expose `POST /api/media/migrate-github`. Existing pos
 
 Set these on the **web** service unless noted. Values stay out of git.
 
-Production (`npm start` / the Railway image) exits before it listens if any of these are missing or if `GOOGLE_SERVICE_ACCOUNT_JSON` is not a key this process can sign with (`client_email` and `private_key`):
+Production (`npm start` / the Railway image) exits before it listens if any of these are missing:
 
-`ENGINE_DASHBOARD_PASSWORD`, `CRON_SECRET`, `ZERNIO_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, and drive folder config (`DRIVE_FOLDERS_JSON` or a file at `DRIVE_FOLDERS_PATH`).
+`ENGINE_DASHBOARD_PASSWORD`, `CRON_SECRET`, `ZERNIO_API_KEY`.
+
+`GOOGLE_SERVICE_ACCOUNT_JSON` and drive folder config (`DRIVE_FOLDERS_JSON` or a file at `DRIVE_FOLDERS_PATH`) are optional. If either is missing, or the key cannot sign, boot logs a warning and continues. The Friday scan then returns `{skipped:true, reason:"drive not configured"}` and does not call Drive.
 
 `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` are not used. Managers still sign in with the same 5-digit PIN. The screen says "Enter the 5-digit PIN to open Post Engine." The browser stores it in sessionStorage under `engine-dashboard-password` and sends `X-Dashboard-Password`. That is the same before and after this branch.
 
-Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`, `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, `CAPTION_MODEL`, `GITHUB_TOKEN`, `GITHUB_MEDIA_UPLOAD`, `EPIDEMIC_SOUND_API_KEY`, `PORSCHE_SALES_EMAIL_DIR`, `PUBLIC_APP_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_SET_WEBHOOK`, `IMPORT_TOKEN`, `PUBLISH_ENABLED`. Telegram is dropped. If `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` is unset, startup logs once that notifications are off, sends are no-ops, `POST /api/telegram/webhook` returns 404, and the process does not call `setWebhook`. Captions default to `CAPTION_PROVIDER=nous` and `CAPTION_MODEL=anthropic/claude-haiku-4.5`, using `CAPTION_API_KEY` only. Requests do not send `max_tokens`. A model id containing `haiku-5` sends `reasoning: {enabled: false}`. `ANTHROPIC_API_KEY`, `GITHUB_MODELS_TOKEN`, `OPENAI_API_KEY`, and `NOUS_API_KEY` are not read. A missing key or a failed call uses a template. Nothing shells out to Hermes, `gog`, or the macOS Keychain.
+Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`, `CAPTION_PROVIDER`, `CAPTION_BASE_URL`, `CAPTION_MODEL`, `GITHUB_TOKEN`, `GITHUB_MEDIA_UPLOAD`, `EPIDEMIC_SOUND_API_KEY`, `PORSCHE_SALES_EMAIL_DIR`, `PUBLIC_APP_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_SET_WEBHOOK`, `IMPORT_TOKEN`, `PUBLISH_ENABLED`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `DRIVE_FOLDERS_JSON`, `DRIVE_FOLDERS_PATH`. Telegram is dropped. If `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` is unset, startup logs once that notifications are off, sends are no-ops, `POST /api/telegram/webhook` returns 404, and the process does not call `setWebhook`. Captions default to `CAPTION_PROVIDER=nous` and `CAPTION_MODEL=anthropic/claude-haiku-4.5`, using `CAPTION_API_KEY` only. Requests do not send `max_tokens`. A model id containing `haiku-5` sends `reasoning: {enabled: false}`. `ANTHROPIC_API_KEY`, `GITHUB_MODELS_TOKEN`, `OPENAI_API_KEY`, and `NOUS_API_KEY` are not read. A missing key or a failed call uses a template. Nothing shells out to Hermes, `gog`, or the macOS Keychain.
 
 `npm run dev` does not apply that check.
 
@@ -162,7 +164,7 @@ Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`
 | `MEDIA_GENERATED_DIR` | web | Files served at `/media/generated`. Railway value `/data/media/generated`. |
 | `CRON_SECRET` | web and cron | Shared secret. Header `X-Cron-Secret`. Required in production. Lets the Friday cron call `POST /api/drive/scan` and `POST /api/notify/weekly` without the manager PIN. Also required by `GET /api/reports/friday-queue`. |
 | `PUBLISH_ENABLED` | web | Optional. The 60s publish loop and the Friday scan run only when this is exactly `true`. Any other value, including unset, leaves them off. |
-| `IMPORT_TOKEN` | web | Optional. Bearer token for `POST /api/admin/import` and `GET /api/admin/import/status`. Unset rejects both. |
+| `IMPORT_TOKEN` | web | Optional. Bearer token for `POST /api/admin/import` and `GET /api/admin/import/status`. Unset returns 404 for both. A wrong token returns 401. |
 | `ZERNIO_API_KEY` | web | Bearer token for the Zernio API. Required in production. |
 | `CAPTION_API_KEY` | web | Optional at boot. The only caption credential. Unset or a failed call uses a template. Put the former Nous key here. |
 | `CAPTION_PROVIDER` | web | Optional. Default `nous`. Also `openai`, `openai-compatible`, `github-models`, `fallback`. |
@@ -171,7 +173,7 @@ Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`
 | `ENGINE_DASHBOARD_PASSWORD` | web | Required in production. The same 5-digit PIN managers type today. |
 | `EPIDEMIC_SOUND_API_KEY` | web | Optional. Live reels music. This branch's publisher does not call it. |
 | `GITHUB_MEDIA_UPLOAD` | web | Optional. Off unless set to `1`. The stored URL stays on the volume either way. |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | web | Service account key JSON. Required in production. |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | web | Optional at boot. Service account key JSON. Needed before a real Drive scan. A missing or unusable key logs a warning and the scan skips. |
 | `TELEGRAM_BOT_TOKEN` | web | Optional. Unset means notifications are a no-op and the webhook route is 404. |
 | `TELEGRAM_CHAT_ID` | web | Optional. Required only if you still send Telegram messages. |
 | `TELEGRAM_WEBHOOK_SECRET` | web | Optional. Checked on the webhook only when the bot token is set. |
@@ -181,8 +183,8 @@ Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`
 | `GITHUB_TOKEN` | web | Optional. Not read by the live snapshot routes. |
 | `FFMPEG_PATH` | web | ffmpeg binary. Image uses `ffmpeg`. Homebrew path is still used on the Mini when that file exists. |
 | `FFPROBE_PATH` | web | ffprobe binary. Same rule as ffmpeg. |
-| `DRIVE_FOLDERS_JSON` | web | Folder map as JSON text. Not committed. Either this or `DRIVE_FOLDERS_PATH` is required in production. |
-| `DRIVE_FOLDERS_PATH` | web | Path to the folder map file. Railway value `/data/.drive-folders.json`. Dev default is `./.drive-folders.json` when this and `DRIVE_FOLDERS_JSON` are unset. |
+| `DRIVE_FOLDERS_JSON` | web | Optional at boot. Folder map as JSON text. Not committed. Either this or `DRIVE_FOLDERS_PATH` is needed before a real Drive scan. |
+| `DRIVE_FOLDERS_PATH` | web | Optional at boot. Path to the folder map file. Railway value `/data/.drive-folders.json`. Dev default is `./.drive-folders.json` when this and `DRIVE_FOLDERS_JSON` are unset. |
 | `ZERNIO_ACCOUNTS_PATH` | web | Zernio account map. Default `./.zernio-accounts.json`, copied into the image. |
 | `POSTENGINE_URL` | cron | Full base URL of the web service. Optional if host and port are set. |
 | `POSTENGINE_HOST` | cron | Private hostname. `.railway/railway.ts` references `RAILWAY_PRIVATE_DOMAIN`. |
@@ -232,7 +234,7 @@ Also set `CRON_SECRET` on the cron service to the same value.
 
 1. This branch already contains snapshot `0556d952` plus the Railway overlay. Do not merge it until Lance asks. Do not deploy from this PR.
 2. Merge PR #2 (untrack secrets) before this PR if that branch is still the base. Retarget this PR to `main` only after #2 merges.
-3. Create the service account, share the Postengine parent folder, and set every required env var including the Drive folder map. Review `railway config plan` before apply. That creates the web service, the 8192 MB volume, and the Friday 13:00 UTC scan. It does not create Postgres, Redis, or a bucket. Set `CRON_SECRET` on the cron service to the same value as the web service.
+3. Create the service account, share the Postengine parent folder, and set the required env vars. Drive credentials can wait until before Friday Nov 6. Review `railway config plan` before apply. That creates the web service, the 8192 MB volume, and the Friday 13:00 UTC scan. It does not create Postgres, Redis, or a bucket. Set `CRON_SECRET` on the cron service to the same value as the web service.
 4. Start Railway with `PUBLISH_ENABLED` unset or any value other than `true`. Confirm the log says the publish loop and weekly scan will not run. Set `IMPORT_TOKEN` before the import. Leave it unset again after the import if you do not want the endpoint left open.
 5. Stop the Mini publisher. Unload launchd so it does not restart the process: `launchctl bootout gui/$(id -u)/com.postengine`. If the label lives in `~/Library/LaunchAgents/com.postengine.plist`, `launchctl unload` that plist as well. Confirm `launchctl print gui/$(id -u)/com.postengine` does not show a running job. Killing node alone is not enough.
 6. On the Mini, after that process is stopped, checkpoint the database so the tar contains one file and not a stale WAL:
@@ -242,7 +244,7 @@ sqlite3 ~/.postengine/sqlite.db 'PRAGMA wal_checkpoint(TRUNCATE);'
 tar czf - -C ~/.postengine sqlite.db public-media | curl -H 'Authorization: Bearer …' --data-binary @- https://<railway-host>/api/admin/import
 ```
 
-`public-media` is `~/.postengine/public-media` (about 2 GB, 567 files). The server streams the archive to disk, writes those files under `/data/media/generated/`, and replaces the volume database. The response includes the media file count and the sha256 of `sqlite.db`. `GET /api/admin/import/status` with the same header returns post counts by status and the media file count. Both calls are rejected when `IMPORT_TOKEN` is unset. The import is refused while `PUBLISH_ENABLED` is `true`.
+`public-media` is `~/.postengine/public-media` (about 2 GB, 567 files). The server streams the archive to disk, writes those files under `/data/media/generated/`, and replaces the volume database. The response includes the media file count and the sha256 of `sqlite.db`. `GET /api/admin/import/status` with the same header returns post counts by status and the media file count. Both calls return 404 when `IMPORT_TOKEN` is unset. A wrong bearer token returns 401. The import is refused while `PUBLISH_ENABLED` is `true`.
 7. Leave the Telegram variables unset. Confirm startup logs `Telegram notifications are off` and `POST /api/telegram/webhook` returns 404.
 8. Confirm a `/media/generated/` URL returns a file with no PIN. The live snapshot has no GitHub media migration route.
 9. Set `PUBLISH_ENABLED=true` only after the Mini process is stopped, then redeploy. Run the Friday scan once by hand. An empty folder is success with zero posts. An auth error is a failure. While the flag is not `true`, the scan returns success with `skipped: true` and does not touch Drive.

@@ -19,7 +19,7 @@ import { closeDatabase, postCountsByStatus, reopenDatabase, sqliteFilePath } fro
 export function authorizeImport(req: Request, res: Response): boolean {
   const expected = process.env.IMPORT_TOKEN?.trim() || "";
   if (!expected) {
-    res.status(401).json({ error: "Unauthorized" });
+    res.status(404).json({ error: "Not found" });
     return false;
   }
   const header = req.get("authorization") || "";

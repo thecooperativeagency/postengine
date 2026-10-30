@@ -9,6 +9,7 @@ import { getPublicMediaDir, PUBLIC_MEDIA_ROUTE_PREFIX } from "./public-media";
 import { handleAdminImport } from "./admin-import";
 import { publishEnabled } from "./publish-switch";
 import { optionalEnvUnset, productionEnvProblems } from "./required-env";
+import { driveConfigWarning } from "./drive-scanner";
 import fs from "fs";
 // Load .env manually
 import { readFileSync } from "fs";
@@ -110,6 +111,8 @@ app.use((req, res, next) => {
   if (!publishEnabled()) {
     console.error("Publishing is off (PUBLISH_ENABLED is not true). The 60s publish loop and weekly scan will not run.");
   }
+  const driveWarning = driveConfigWarning();
+  if (driveWarning) console.error(driveWarning);
 
   await registerRoutes(httpServer, app);
 

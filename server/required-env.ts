@@ -4,14 +4,10 @@
  * while Railway is being prepared.
  */
 
-import { serviceAccountCanSign } from "./drive-api";
-import { driveFoldersConfigured } from "./drive-scanner";
-
 const REQUIRED_PRODUCTION_ENV = [
   "ENGINE_DASHBOARD_PASSWORD",
   "CRON_SECRET",
   "ZERNIO_API_KEY",
-  "GOOGLE_SERVICE_ACCOUNT_JSON",
 ] as const;
 
 /** Present on the Mini .env. Missing values do not stop production boot. */
@@ -32,6 +28,9 @@ const OPTIONAL_ENV = [
   "TELEGRAM_SET_WEBHOOK",
   "IMPORT_TOKEN",
   "PUBLISH_ENABLED",
+  "GOOGLE_SERVICE_ACCOUNT_JSON",
+  "DRIVE_FOLDERS_JSON",
+  "DRIVE_FOLDERS_PATH",
 ] as const;
 
 export function productionEnvProblems(): string[] {
@@ -40,13 +39,7 @@ export function productionEnvProblems(): string[] {
   for (const name of REQUIRED_PRODUCTION_ENV) {
     if (!process.env[name]?.trim()) problems.push(name);
   }
-  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim() && !serviceAccountCanSign()) {
-    problems.push("GOOGLE_SERVICE_ACCOUNT_JSON");
-  }
-  if (!driveFoldersConfigured()) {
-    problems.push("DRIVE_FOLDERS_JSON or DRIVE_FOLDERS_PATH");
-  }
-  return Array.from(new Set(problems));
+  return problems;
 }
 
 export function optionalEnvUnset(): string[] {

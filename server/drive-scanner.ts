@@ -6,7 +6,7 @@
  */
 
 import { storage, isDuplicateFolderSourceError } from "./storage";
-import { downloadDriveFileSync, listDrivePageSync, moveDriveFileSync } from "./drive-api";
+import { downloadDriveFileSync, listDrivePageSync, moveDriveFileSync, serviceAccountCanSign } from "./drive-api";
 import { generateCaption } from "./caption-writer";
 import { hostImage } from "./media-host";
 import fs from "fs";
@@ -46,6 +46,23 @@ export function driveFoldersConfigured(): boolean {
     }
   }
   return fs.existsSync(driveFoldersPath());
+}
+
+/** Service account and folder map are both present. Missing either skips the scan. */
+export function driveConfigured(): boolean {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim()) return false;
+  if (!serviceAccountCanSign()) return false;
+  return driveFoldersConfigured();
+}
+
+export function driveConfigWarning(): string | null {
+  if (driveConfigured()) return null;
+  const key = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
+  const missing: string[] = [];
+  if (!key) missing.push("GOOGLE_SERVICE_ACCOUNT_JSON is not set");
+  else if (!serviceAccountCanSign()) missing.push("GOOGLE_SERVICE_ACCOUNT_JSON is set but cannot sign");
+  if (!driveFoldersConfigured()) missing.push("DRIVE_FOLDERS_JSON and DRIVE_FOLDERS_PATH are not configured");
+  return `Drive is not configured (${missing.join("; ")}). POST /api/drive/scan will return {skipped:true, reason:"drive not configured"}. Dashboard, Zernio publishing, media, and import do not need Drive.`;
 }
 const MAX_SUBFOLDER_DEPTH = 3;
 
@@ -867,6 +884,10 @@ export async function scanDriveFolders(weeks = 1): Promise<number> {
  * Non-Drive sources (e.g. reels-ready/* local masters) are no-ops that succeed.
  */
 export function archiveFile(dealershipId: number, folderSource: string): boolean {
+  if (!driveConfigured()) {
+    console.warn(`[DriveScanner] Drive archive skipped for post source ${folderSource}: drive not configured`);
+    return false;
+  }
   const config = loadFolders();
   const dealershipConfig = Object.values(config.dealerships).find(d => d.id === dealershipId);
   if (!dealershipConfig) return false;
