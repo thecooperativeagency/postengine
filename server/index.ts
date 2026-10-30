@@ -1,9 +1,12 @@
 import express, { type Request, Response, NextFunction } from "express";
+import fs from "fs";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startPublishPoller } from "./zernio-publisher";
 import { requireBasicAuth } from "./auth";
+import { mediaDir } from "./media-store";
+import { productionEnvProblems } from "./required-env";
 // Load .env manually
 import { readFileSync } from "fs";
 try {
@@ -37,6 +40,13 @@ app.use(express.urlencoded({ extended: false }));
 
 app.get("/api/health", (_req, res) => {
   res.status(200).json({ status: "ok", service: "postengine" });
+});
+
+// Public so Zernio can fetch images. Names are unguessable. No directory listing.
+app.use("/media/hosted", (req, res, next) => {
+  const dir = mediaDir();
+  fs.mkdirSync(dir, { recursive: true });
+  express.static(dir, { index: false, dotfiles: "deny", fallthrough: false })(req, res, next);
 });
 
 app.use(requireBasicAuth);
@@ -79,6 +89,12 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  const problems = productionEnvProblems();
+  if (problems.length) {
+    console.error(`Refusing to start. Missing or invalid production settings: ${problems.join(", ")}`);
+    process.exit(1);
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
@@ -142,9 +158,6 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
-      if (!process.env.BASIC_AUTH_USER || !process.env.BASIC_AUTH_PASSWORD) {
-        log("BASIC_AUTH_USER/BASIC_AUTH_PASSWORD unset — do not attach a public domain");
-      }
       startPublishPoller(); // Start Zernio publish poller
       void registerTelegramWebhookIfEnabled();
     },

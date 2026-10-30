@@ -5,21 +5,16 @@
  * On approval: moves image to _Archive folder.
  */
 
-import { execSync } from "child_process";
 import { storage } from "./storage";
 import { generateCaption } from "./caption-writer";
 import { hostImage } from "./media-host";
+import { listMediaInFolder, moveDriveFile } from "./drive-api";
 import fs from "fs";
 import path from "path";
-import { googleWorkspaceAccount, resolveBin } from "./local-bin";
 
 function driveFoldersPath(): string {
   return process.env.DRIVE_FOLDERS_PATH?.trim()
     || path.join(process.cwd(), ".drive-folders.json");
-}
-
-function gogBin(): string {
-  return resolveBin("GOG_BIN", "/opt/homebrew/bin/gog", "gog");
 }
 
 interface DealershipFolders {
@@ -38,54 +33,16 @@ function loadFolders(): DriveFolders {
   return JSON.parse(raw);
 }
 
-function gogCommand(args: string): any {
-  const bin = gogBin();
-  try {
-    const result = execSync(
-      `"${bin}" ${args} --account ${googleWorkspaceAccount()} --json --no-input`,
-      { encoding: "utf-8", timeout: 30000 },
-    );
-    return JSON.parse(result);
-  } catch (e: any) {
-    const msg = String(e?.message || "");
-    const missing = e?.code === "ENOENT"
-      || e?.status === 127
-      || /ENOENT|command not found|spawn .*gog/i.test(msg);
-    if (missing) {
-      throw new Error(
-        "Google Drive CLI (gog) is not available in this environment. The Mac Mini holds the gog login. Weekly import cannot run on Railway until Drive access is replaced. See docs/RAILWAY_DEPLOY.md.",
-      );
-    }
-    console.error("[DriveScanner] gog command failed");
-    return null;
-  }
+async function listFolder(folderId: string) {
+  return listMediaInFolder(folderId);
 }
 
-function listFolder(folderId: string): any[] {
-  const result = gogCommand(`drive ls --parent=${folderId}`);
-  if (result === null) {
-    throw new Error(
-      "Google Drive list failed. gog is missing, unauthenticated, or the folder is unreachable.",
-    );
-  }
-  const files = Array.isArray(result) ? result : result.files || [];
-  return files.filter((f: any) =>
-    f.mimeType && (
-      f.mimeType.startsWith("image/") ||
-      f.mimeType.startsWith("video/")
-    )
-  );
-}
-
-export function moveFile(fileId: string, targetFolderId: string): boolean {
+export async function moveFile(fileId: string, targetFolderId: string): Promise<boolean> {
   try {
-    execSync(`"${gogBin()}" drive move ${fileId} --parent=${targetFolderId} --account ${googleWorkspaceAccount()} --no-input`, {
-      encoding: "utf-8",
-      timeout: 30000,
-    });
+    await moveDriveFile(fileId, targetFolderId);
     return true;
   } catch (e) {
-    console.error(`[DriveScanner] Failed to move file ${fileId}:`, e);
+    console.error("[DriveScanner] Failed to move file:", e instanceof Error ? e.message : "unknown");
     return false;
   }
 }
@@ -201,7 +158,7 @@ export async function scanDriveFolders(): Promise<number> {
       const existingSourceFiles = new Set(existingPosts.map(p => p.folderSource).filter(Boolean));
 
       // List available images in the folder
-      const allFiles = listFolder(folderId);
+      const allFiles = await listFolder(folderId);
       const newFiles = allFiles.filter(f => !existingSourceFiles.has(`${folderId}/${f.id}`));
 
       if (newFiles.length === 0) {
@@ -265,7 +222,7 @@ export async function scanDriveFolders(): Promise<number> {
 /**
  * Move a file to _Archive after scheduling.
  */
-export function archiveFile(dealershipId: number, folderSource: string): boolean {
+export async function archiveFile(dealershipId: number, folderSource: string): Promise<boolean> {
   const config = loadFolders();
   const dealershipConfig = Object.values(config.dealerships).find(d => d.id === dealershipId);
   if (!dealershipConfig) return false;
@@ -277,5 +234,5 @@ export function archiveFile(dealershipId: number, folderSource: string): boolean
   const fileId = parts[parts.length - 1];
 
   console.log(`[DriveScanner] Archiving file ${fileId} to _Archive...`);
-  return moveFile(fileId, archiveFolderId);
+  return await moveFile(fileId, archiveFolderId);
 }

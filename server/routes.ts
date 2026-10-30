@@ -3,6 +3,7 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { insertPostSchema, insertDealershipSchema } from "@shared/schema";
 import { scanDriveFolders, archiveFile } from "./drive-scanner";
+import { migrateGithubMedia } from "./migrate-github-media";
 import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
 import { requireCronSecret, safeEqual } from "./auth";
@@ -73,7 +74,7 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  app.patch("/api/posts/:id", (req, res) => {
+  app.patch("/api/posts/:id", async (req, res) => {
     const existing = storage.getPost(Number(req.params.id));
     if (!existing) return res.status(404).json({ error: "Not found" });
 
@@ -92,10 +93,10 @@ export async function registerRoutes(server: Server, app: Express) {
       // Archive Drive file when post is scheduled or published
       if ((req.body.status === "scheduled" || req.body.status === "published") && updated.folderSource) {
         try {
-          archiveFile(updated.dealershipId, updated.folderSource);
+          await archiveFile(updated.dealershipId, updated.folderSource);
           console.log(`[Archive] Moved file to _Archive for post ${updated.id}`);
         } catch (e) {
-          console.error(`[Archive] Failed to move file:`, e);
+          console.error("[Archive] Failed to move file:", e instanceof Error ? e.message : "unknown");
         }
       }
     }
@@ -233,6 +234,23 @@ export async function registerRoutes(server: Server, app: Express) {
 
     const result = await publishPost(postId);
     res.json(result);
+  });
+
+  // Friday reminder used to read ~/.postengine/sqlite.db on the Mac Mini.
+  app.get("/api/reports/friday-queue", (req, res) => {
+    if (!requireCronSecret(req, res)) return;
+    res.json(storage.getFridayQueueReport());
+  });
+
+  // Copy GitHub raw image URLs onto the media volume. One-time cutover.
+  app.post("/api/media/migrate-github", async (req, res) => {
+    if (!requireCronSecret(req, res)) return;
+    try {
+      const result = await migrateGithubMedia();
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ── DRIVE SCANNER ───────────────────────────────────────────

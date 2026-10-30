@@ -349,6 +349,42 @@ export class DatabaseStorage implements IStorage {
       createdAt: new Date().toISOString(),
     }).returning().get();
   }
+
+  /**
+   * Same counts as scripts/friday-queue-reminder.sh on the archive branch:
+   * queued posts, queued by dealership, scheduled posts in the next 14 days.
+   * The live Friday 08:00 job was not in this git history. Point that job here
+   * after its SQL is confirmed against the Mini working tree.
+   */
+  getFridayQueueReport(): {
+    queued: number;
+    queuedByDealership: { name: string; count: number }[];
+    scheduledNext14Days: number;
+  } {
+    const queued = sqlite.prepare(
+      "select count(*) as n from posts where status = 'queued'",
+    ).get() as { n: number };
+    const queuedByDealership = sqlite.prepare(`
+      select d.name as name, count(p.id) as count
+      from posts p
+      join dealerships d on d.id = p.dealership_id
+      where p.status = 'queued'
+      group by d.name
+      order by d.name
+    `).all() as { name: string; count: number }[];
+    const scheduled = sqlite.prepare(`
+      select count(*) as n from posts
+      where status = 'scheduled'
+        and scheduled_for is not null
+        and date(scheduled_for) >= date('now', 'localtime')
+        and date(scheduled_for) < date('now', 'localtime', '+14 days')
+    `).get() as { n: number };
+    return {
+      queued: queued.n,
+      queuedByDealership,
+      scheduledNext14Days: scheduled.n,
+    };
+  }
 }
 
 export const storage = new DatabaseStorage();

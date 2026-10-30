@@ -55,14 +55,9 @@ export default defineRailway(() => {
     env: {
       NODE_ENV: "production",
       SQLITE_PATH: "/data/sqlite.db",
-      GITHUB_REPO: "thecooperativeagency/postengine",
-      // Keep image uploads off the deploy branch so a publish does not
-      // rebuild the service. Create this branch before the first scan.
-      GITHUB_MEDIA_BRANCH: "media",
       FFMPEG_PATH: "ffmpeg",
       FFPROBE_PATH: "ffprobe",
-      GOG_BIN: "gog",
-      GOOGLE_WORKSPACE_ACCOUNT: "lance@thecoopbrla.com",
+      MEDIA_DIR: "/data/media",
     },
   });
 

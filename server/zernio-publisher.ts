@@ -9,9 +9,9 @@ import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 import { resolveBin } from "./local-bin";
+import { saveHostedMedia } from "./media-store";
 
 const ZERNIO_BASE = "https://zernio.com/api/v1";
-const MEDIA_FOLDER = "media";
 
 function ffmpegBin(): string {
   return resolveBin("FFMPEG_PATH", "/opt/homebrew/bin/ffmpeg", "ffmpeg");
@@ -19,14 +19,6 @@ function ffmpegBin(): string {
 
 function ffprobeBin(): string {
   return resolveBin("FFPROBE_PATH", "/opt/homebrew/bin/ffprobe", "ffprobe");
-}
-
-function githubRepo(): string {
-  return process.env.GITHUB_REPO?.trim() || "thecooperativeagency/postengine";
-}
-
-function mediaBranch(): string {
-  return process.env.GITHUB_MEDIA_BRANCH?.trim() || "main";
 }
 
 function getZernioKey(): string {
@@ -95,73 +87,7 @@ function cropFor45(inputPath: string, outputPath: string): boolean {
 }
 
 /**
- * Upload a local file to GitHub and return its raw URL.
- */
-async function uploadCroppedToGithub(localPath: string, filename: string): Promise<string | null> {
-  let token = "";
-  if (process.env.GITHUB_TOKEN) {
-    token = process.env.GITHUB_TOKEN;
-  } else {
-    try {
-      const envFile = fs.readFileSync(path.join(process.cwd(), ".env"), "utf-8");
-      const match = envFile.match(/GITHUB_TOKEN=(.+)/);
-      if (match) token = match[1].trim();
-    } catch {}
-  }
-  if (!token) {
-    console.error("[Zernio] No GitHub token for upload");
-    return null;
-  }
-
-  try {
-    const content = fs.readFileSync(localPath);
-    const base64Content = content.toString("base64");
-    const githubPath = `${MEDIA_FOLDER}/${filename}`;
-
-    // Check if already exists
-    let sha: string | undefined;
-    const checkRes = await fetch(
-      `https://api.github.com/repos/${githubRepo()}/contents/${githubPath}?ref=${encodeURIComponent(mediaBranch())}`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" } }
-    );
-    if (checkRes.ok) {
-      const existing = await checkRes.json() as any;
-      sha = existing.sha;
-    }
-
-    const body: any = { message: `Add IG-cropped media: ${filename}`, content: base64Content, branch: mediaBranch() };
-    if (sha) body.sha = sha;
-
-    const uploadRes = await fetch(
-      `https://api.github.com/repos/${githubRepo()}/contents/${githubPath}`,
-      {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/vnd.github.v3+json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      }
-    );
-
-    if (uploadRes.ok) {
-      const rawUrl = `https://raw.githubusercontent.com/${githubRepo()}/${mediaBranch()}/${githubPath}`;
-      console.log(`[Zernio] ✅ Uploaded cropped image ${filename} → ${rawUrl}`);
-      return rawUrl;
-    } else {
-      const err = await uploadRes.json() as any;
-      console.error("[Zernio] GitHub upload failed:", err.message);
-      return null;
-    }
-  } catch (e: any) {
-    console.error("[Zernio] Upload error:", e.message);
-    return null;
-  }
-}
-
-/**
- * Given a GitHub raw image URL, check if it needs cropping for Instagram (ratio 0.75–1.91).
+ * Given an image URL, check if it needs cropping for Instagram (ratio 0.75–1.91).
  * If so, download, crop to 4:5, upload cropped version, return new URL.
  * If within range, return original URL.
  */
@@ -206,10 +132,11 @@ async function ensureInstagramSafeImage(imageUrl: string): Promise<string> {
       return imageUrl;
     }
 
-    // Upload to GitHub
-    const newUrl = await uploadCroppedToGithub(tmpOutput, croppedFilename);
-    if (!newUrl) {
-      console.warn(`[Zernio] Upload failed, using original`);
+    let newUrl: string;
+    try {
+      newUrl = saveHostedMedia(tmpOutput, croppedFilename);
+    } catch (e) {
+      console.warn("[Zernio] Could not store cropped image:", e instanceof Error ? e.message : "unknown");
       return imageUrl;
     }
 

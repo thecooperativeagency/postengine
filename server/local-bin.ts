@@ -11,7 +11,3 @@ export function resolveBin(envName: string, macHomebrewPath: string, command: st
   if (fs.existsSync(macHomebrewPath)) return macHomebrewPath;
   return command;
 }
-
-export function googleWorkspaceAccount(): string {
-  return process.env.GOOGLE_WORKSPACE_ACCOUNT?.trim() || "lance@thecoopbrla.com";
-}
