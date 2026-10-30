@@ -8,7 +8,28 @@ import fs from "fs";
 import path from "path";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "8767648441";
+
+function readDotEnv(name: string): string {
+  const candidates = [
+    path.join(process.cwd(), ".env"),
+    path.join(process.cwd(), "investment-monitor", "backend", ".env"),
+    path.resolve(__dirname, "../investment-monitor/backend/.env"),
+    path.resolve(__dirname, "../../investment-monitor/backend/.env"),
+  ];
+  const lineRe = new RegExp("^" + name + "=(.*)$", "m");
+  for (const envFile of candidates) {
+    try {
+      const text = fs.readFileSync(envFile, "utf-8");
+      const match = text.match(lineRe);
+      if (match && match[1].trim()) return match[1].trim();
+    } catch {
+      // file missing or unreadable
+    }
+  }
+  return "";
+}
+
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || readDotEnv("TELEGRAM_CHAT_ID");
 
 function getBotToken(): string {
   if (process.env.TELEGRAM_BOT_TOKEN) return process.env.TELEGRAM_BOT_TOKEN;
