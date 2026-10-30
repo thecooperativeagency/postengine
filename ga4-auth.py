@@ -1,16 +1,31 @@
 #!/usr/bin/env python3
 """
 One-time GA4 OAuth auth flow.
-Run this, log in as bhbmwecommerce@gmail.com, approve Analytics access.
+Run this, log in with GA4_LOGIN_EMAIL, approve Analytics access.
 Stores the refresh token in keychain for ga4-query.sh to use.
 """
 import subprocess, json, urllib.parse, http.server, threading, webbrowser
 
-CLIENT_ID = "3183077001-novu90sdpid6ttvtuh449ntiko8op4bb.apps.googleusercontent.com"
-CLIENT_SECRET = "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"
+import os
+from pathlib import Path
+
+def _load_ga4_env():
+    env_path = Path(__file__).with_name("ga4.env")
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+_load_ga4_env()
+CLIENT_ID = os.environ.get("GA4_CLIENT_ID", "")
+CLIENT_SECRET = os.environ.get("GA4_CLIENT_SECRET", "")
 REDIRECT_URI = "http://localhost:8765/oauth2callback"
 SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
-EMAIL = "bmwofjackson@thecoopbrla.com"
+EMAIL = os.environ.get("GA4_LOGIN_EMAIL", "")
 
 auth_code = None
 

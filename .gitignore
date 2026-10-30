@@ -1,11 +1,19 @@
 node_modules/
 .env
+.env.*
+!.env.example
 sqlite.db
 data.db
 *.db
 dist/
 pepper/pepper_tokens.env
 *.env
+
+# Credential stores. Examples (*.example.json, *.env.example) stay tracked.
+.credentials.json
+.motive-credentials.json
+motive-browser/config.json
+ga4.env
 
 # Nested git repos (not submodules)
 claude/

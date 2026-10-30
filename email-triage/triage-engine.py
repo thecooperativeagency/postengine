@@ -326,7 +326,22 @@ def send_telegram(message: str):
     import json
     config_path = Path.home() / ".openclaw" / "openclaw.json"
     token = None
-    chat_id = "8767648441"  # Lance's Telegram chat ID
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not chat_id:
+        env_candidates = [
+            Path(__file__).resolve().parents[1] / "investment-monitor" / "backend" / ".env",
+            Path.home() / ".openclaw" / "workspace" / "investment-monitor" / "backend" / ".env",
+        ]
+        for env_path in env_candidates:
+            try:
+                for line in env_path.read_text().splitlines():
+                    if line.startswith("TELEGRAM_CHAT_ID="):
+                        chat_id = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+            except OSError:
+                continue
+            if chat_id:
+                break
     
     try:
         with open(config_path) as f:

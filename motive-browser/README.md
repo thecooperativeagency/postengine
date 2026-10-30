@@ -48,7 +48,7 @@ node index.js switcher
 
 ## Config
 
-`config.json` stores credentials and the active tab ID:
+`config.json` stores credentials and the active tab ID. Copy `config.example.json` to `config.json` and fill in the blanks. `config.json` is gitignored:
 
 ```json
 {

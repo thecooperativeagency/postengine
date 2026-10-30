@@ -120,7 +120,7 @@ Export-based data aggregation + reporting system. Pulls weekly exports from:
 
 ## Model Switch — April 9, 2026 (ACTIVE)
 - Switched primary model from anthropic/claude-sonnet-4-6 to **xai/grok-4.1-fast**
-- xAI API key configured: xai-7pmnZpKvhfAGfYS0Zw81X75XKBq3P361RrnUlJ0c9l0Xt2pOTsbixloXPW5A73NiW2e2kRt63jsPsXGv
+- xAI API key configured: xai-REDACTED
 - Fallbacks: xai/grok-4.20 → anthropic/claude-sonnet-4-6
 - Pricing: Grok 4.1 Fast = $0.20/$0.50 per million tokens (vs $3/$15 for Claude Sonnet)
 - Grok has real-time X search built in via xai/grok-4 models

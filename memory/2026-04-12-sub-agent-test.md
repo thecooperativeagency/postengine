@@ -84,7 +84,7 @@ Sender (untrusted metadata):
 }
 ```
 
-curl -s https://api.x.ai/v1/models -H "Authorization: Bearer xai-qjXSPTckJ8YlTd0H5NcVqwZcV1cDCQgAfcDNhyc0ZSYCNWmuN6oC4MkQ31E8ThRoKQtAhpD9fiGoOru3" | python3 -m json.tool | grep '"id"'
+curl -s https://api.x.ai/v1/models -H "Authorization: Bearer xai-REDACTED" | python3 -m json.tool | grep '"id"'
 assistant: [[reply_to_current]]
 assistant: Available models on this key:
 
