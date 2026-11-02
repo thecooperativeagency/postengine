@@ -4,8 +4,15 @@
 # List accounts: ./ga4-query.sh <account_email> list-accounts
 # List properties: ./ga4-query.sh <account_email> list-properties <account_id>
 
-CLIENT_ID="3183077001-novu90sdpid6ttvtuh449ntiko8op4bb.apps.googleusercontent.com"
-CLIENT_SECRET="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"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/ga4.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$SCRIPT_DIR/ga4.env"
+  set +a
+fi
+CLIENT_ID="${GA4_CLIENT_ID:-}"
+CLIENT_SECRET="${GA4_CLIENT_SECRET:-}"
 
 EMAIL="$1"
 ACTION="$2"

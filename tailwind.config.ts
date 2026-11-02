@@ -6,9 +6,9 @@ export default {
   theme: {
     extend: {
       borderRadius: {
-        lg: ".5625rem",
-        md: ".375rem",
-        sm: ".1875rem",
+        lg: "0px",
+        md: "0px",
+        sm: "0px",
       },
       colors: {
         background: "hsl(var(--background) / <alpha-value>)",
@@ -82,8 +82,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ["Satoshi", "sans-serif"],
-        display: ["General Sans", "sans-serif"],
+        sans: ['"Helvetica Neue"', "Helvetica", "Arial", "sans-serif"],
+        display: ['"Instrument Serif"', "Georgia", "serif"],
         mono: ["Menlo", "monospace"],
       },
       keyframes: {

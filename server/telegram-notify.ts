@@ -6,28 +6,26 @@
 
 import fs from "fs";
 import path from "path";
-
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "8767648441";
+import { composePostContent } from "./post-composer";
 
 function getBotToken(): string {
-  if (process.env.TELEGRAM_BOT_TOKEN) return process.env.TELEGRAM_BOT_TOKEN;
-  try {
-    const envFile = fs.readFileSync(path.join(process.cwd(), ".env"), "utf-8");
-    const match = envFile.match(/TELEGRAM_BOT_TOKEN=(.+)/);
-    if (match) return match[1].trim();
-  } catch {}
-  return "";
+  return process.env.TELEGRAM_BOT_TOKEN?.trim() || "";
+}
+
+function chatId(): string {
+  return process.env.TELEGRAM_CHAT_ID?.trim() || "";
+}
+
+function telegramOn(): boolean {
+  return Boolean(getBotToken() && chatId());
 }
 
 export async function sendApprovalRequest(post: any, dealershipName: string): Promise<boolean> {
   const token = getBotToken();
-  if (!token) {
-    console.warn("[Telegram] No bot token — skipping notification");
-    return false;
-  }
+  if (!telegramOn()) return false;
 
-  const caption = post.caption?.substring(0, 800) || "";
+  const composed = composePostContent(post);
+  const caption = composed.instagram.substring(0, 800) || "";
   const scheduledDate = post.scheduledFor
     ? new Date(post.scheduledFor).toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : "ASAP";
@@ -51,7 +49,7 @@ export async function sendApprovalRequest(post: any, dealershipName: string): Pr
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          chat_id: TELEGRAM_CHAT_ID,
+          chat_id: chatId(),
           photo: imageUrl,
           caption: text,
           parse_mode: "Markdown",
@@ -72,7 +70,7 @@ export async function sendApprovalRequest(post: any, dealershipName: string): Pr
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
+        chat_id: chatId(),
         text,
         parse_mode: "Markdown",
         reply_markup: keyboard,
@@ -88,7 +86,7 @@ export async function sendApprovalRequest(post: any, dealershipName: string): Pr
 
 export async function sendWeeklySummary(posts: any[], dealerships: any[]): Promise<void> {
   const token = getBotToken();
-  if (!token) return;
+  if (!telegramOn()) return;
 
   const byDealer: Record<string, any[]> = {};
   for (const post of posts) {
@@ -114,7 +112,7 @@ export async function sendWeeklySummary(posts: any[], dealerships: any[]): Promi
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      chat_id: TELEGRAM_CHAT_ID,
+      chat_id: chatId(),
       text,
       parse_mode: "Markdown",
     }),

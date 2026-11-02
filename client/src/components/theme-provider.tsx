@@ -12,18 +12,18 @@ const ThemeContext = createContext<ThemeContextType>({
   toggleTheme: () => {},
 });
 
+const THEME_KEY = "pe-theme";
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(() =>
-    window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
-  );
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = window.localStorage.getItem(THEME_KEY);
+    return saved === "dark" ? "dark" : "light";
+  });
 
   useEffect(() => {
     const root = document.documentElement;
-    if (theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
+    root.classList.toggle("dark", theme === "dark");
+    window.localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
 
   const toggleTheme = () => {

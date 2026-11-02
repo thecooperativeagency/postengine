@@ -1,0 +1,64 @@
+{
+  "account": "lance@thecoopbrla.com",
+  "parentFolderName": "Postengine",
+  "dealerships": {
+    "BMW of Jackson": {
+      "id": 1,
+      "root": "DRIVE_FOLDER_ID",
+      "folders": {
+        "New Cars": "DRIVE_FOLDER_ID",
+        "Pre-Owned Cars": "DRIVE_FOLDER_ID",
+        "Service": "DRIVE_FOLDER_ID",
+        "Parts & Accessories": "DRIVE_FOLDER_ID",
+        "Customer Media": "DRIVE_FOLDER_ID",
+        "_Archive": "DRIVE_FOLDER_ID"
+      }
+    },
+    "Brian Harris BMW": {
+      "id": 2,
+      "root": "DRIVE_FOLDER_ID",
+      "folders": {
+        "New Cars": "DRIVE_FOLDER_ID",
+        "Pre-Owned Cars": "DRIVE_FOLDER_ID",
+        "Service": "DRIVE_FOLDER_ID",
+        "Parts & Accessories": "DRIVE_FOLDER_ID",
+        "Customer Media": "DRIVE_FOLDER_ID",
+        "_Archive": "DRIVE_FOLDER_ID"
+      }
+    },
+    "Audi Baton Rouge": {
+      "id": 3,
+      "root": "DRIVE_FOLDER_ID",
+      "folders": {
+        "New Cars": "DRIVE_FOLDER_ID",
+        "Pre-Owned Cars": "DRIVE_FOLDER_ID",
+        "Service": "DRIVE_FOLDER_ID",
+        "Parts & Accessories": "DRIVE_FOLDER_ID",
+        "Customer Media": "DRIVE_FOLDER_ID",
+        "_Archive": "DRIVE_FOLDER_ID"
+      }
+    },
+    "Harris Porsche": {
+      "id": 4,
+      "root": "DRIVE_FOLDER_ID",
+      "folders": {
+        "New Cars": "DRIVE_FOLDER_ID",
+        "Pre-Owned Cars": "DRIVE_FOLDER_ID",
+        "Service": "DRIVE_FOLDER_ID",
+        "Parts & Accessories": "DRIVE_FOLDER_ID",
+        "Customer Media": "DRIVE_FOLDER_ID",
+        "Reels": "DRIVE_FOLDER_ID",
+        "_Archive": "DRIVE_FOLDER_ID"
+      }
+    },
+    "Luc OpenCRAW": {
+      "id": 5,
+      "root": "DRIVE_FOLDER_ID",
+      "folders": {
+        "Posts": "DRIVE_FOLDER_ID",
+        "Customer Media": "DRIVE_FOLDER_ID",
+        "_Archive": "DRIVE_FOLDER_ID"
+      }
+    }
+  }
+}

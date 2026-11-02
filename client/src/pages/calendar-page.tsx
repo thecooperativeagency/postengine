@@ -81,7 +81,7 @@ export default function CalendarPage({ dealershipFilter }: { dealershipFilter: n
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-display font-semibold" data-testid="text-calendar-title">
+          <h1 className="font-display text-4xl" data-testid="text-calendar-title">
             Calendar
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
