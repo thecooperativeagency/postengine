@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { useEffect, useState } from "react";
 import {
   Save, Building2, Key, FolderOpen, Instagram, Facebook, Video,
-  Calendar, Plus, Trash2, Clock, CheckSquare, Camera, AlertCircle,
+  Calendar, Plus, Trash2, Clock, Camera, AlertCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { PageHeader, PageShell } from "@/components/page-shell";
+import { ShrinkSection } from "@/components/shrink-section";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -812,17 +813,17 @@ export default function Settings() {
   }
 
   const pageTitle = "Post Specs";
-  const pageEyebrow = "Engine / Post Engine";
+  const pageEyebrow = "The Cooperative";
 
   return (
     <PageShell className="max-w-[1100px]">
       <PageHeader
         eyebrow={pageEyebrow}
         title={pageTitle}
-        description="Cadence, client instructions, and integrations that shape how Post Engine schedules and writes social content."
+        description="Closed until you need to change how a store posts."
       />
 
-      {/* Cadence Manager */}
+      <ShrinkSection id="cadence" label="Cadence" hint="Days, reels, how often">
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
           <Calendar className="h-4 w-4" />
@@ -878,10 +879,11 @@ export default function Settings() {
           })}
         </div>
       </div>
+      </ShrinkSection>
 
       <Separator />
 
-      {/* Client Settings */}
+      <ShrinkSection id="clients" label="Stores" hint="Names, handles, calls to action">
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
           <Building2 className="h-4 w-4" />
@@ -894,10 +896,11 @@ export default function Settings() {
           ))}
         </div>
       </div>
+      </ShrinkSection>
 
       <Separator />
 
-      {/* Integrations */}
+      <ShrinkSection id="integrations" label="Drive and Zernio" hint="Where files come from, where posts go">
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Integrations</h2>
         <Card>
@@ -906,12 +909,11 @@ export default function Settings() {
               <Key className="h-4 w-4" />
               Zernio API
             </CardTitle>
-            <CardDescription className="text-xs">Connected — 12 accounts active across 4 dealerships</CardDescription>
+            <CardDescription className="text-xs">The publisher. The kill switch stays on the server.</CardDescription>
           </CardHeader>
           <CardContent>
-            <Input value="[REDACTED]" disabled className="max-w-md font-mono text-xs" />
-            <p className="text-xs text-green-500 mt-2 flex items-center gap-1">
-              <CheckSquare className="h-3 w-3" /> Connected — Instagram, Facebook, GMB for The Cooperative
+            <p className="text-xs text-muted-foreground">
+              The key stays in the server environment. This screen does not show it.
             </p>
           </CardContent>
         </Card>
@@ -926,11 +928,8 @@ export default function Settings() {
           <CardContent>
             <div className="space-y-3 text-xs text-muted-foreground">
               <div className="space-y-1">
-                <p><span className="font-medium text-foreground">Account:</span> {driveConfig?.account ?? "lance@thecoopbrla.com"}</p>
-                <p><span className="font-medium text-foreground">Parent folder:</span> {driveConfig?.parentFolderName ?? "Postengine"}</p>
-                {driveConfig?.parentFolderId && (
-                  <p className="font-mono text-[11px]">ID: {driveConfig.parentFolderId}</p>
-                )}
+                <p><span className="font-medium text-foreground">Account:</span> {driveConfig?.account ?? "Not set"}</p>
+                <p><span className="font-medium text-foreground">Library:</span> {driveConfig?.parentFolderName ?? "Not set"}</p>
               </div>
               <div className="space-y-2">
                 {visibleDriveDealerships.map((dealer) => {
@@ -947,6 +946,7 @@ export default function Settings() {
           </CardContent>
         </Card>
       </div>
+      </ShrinkSection>
     </PageShell>
   );
 }

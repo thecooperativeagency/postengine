@@ -28,7 +28,7 @@ export function PageHeader({ eyebrow, title, description, actions, className }: 
           </div>
         ) : null}
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-[1.75rem]">{title}</h1>
+          <h1 className="font-display text-4xl leading-none text-foreground sm:text-5xl">{title}</h1>
           {description ? (
             <div className="max-w-3xl text-sm leading-6 text-muted-foreground">{description}</div>
           ) : null}

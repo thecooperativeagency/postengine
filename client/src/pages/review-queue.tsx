@@ -34,6 +34,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Post, Dealership } from "@shared/schema";
 import { cn } from "@/lib/utils";
+import { ShrinkSection } from "@/components/shrink-section";
 
 function parseMediaUrls(raw: string | null | undefined): string[] {
   if (!raw) return [];
@@ -403,47 +404,47 @@ function ReviewPostCard({
             {post.caption}
           </p>
         )}
-        {(post as any).captionFacebook && (post as any).captionFacebook !== post.caption && (
-          <div className="rounded-md border bg-muted/20 p-2 space-y-1">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Facebook</p>
-            <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">
-              {(post as any).captionFacebook}
-            </p>
-          </div>
-        )}
-        {(post as any).captionGmb && (
-          <div className="rounded-md border bg-muted/20 p-2 space-y-1">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">GMB</p>
-            <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">
-              {(post as any).captionGmb}
-            </p>
-          </div>
-        )}
+        {((post as any).captionFacebook && (post as any).captionFacebook !== post.caption) || (post as any).captionGmb ? (
+          <ShrinkSection id={`other-captions-${post.id}`} label="Facebook and Google" hint="Other versions of this caption">
+            {(post as any).captionFacebook && (post as any).captionFacebook !== post.caption ? (
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Facebook</p>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed">{(post as any).captionFacebook}</p>
+              </div>
+            ) : null}
+            {(post as any).captionGmb ? (
+              <div className="mt-3 space-y-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Google</p>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed">{(post as any).captionGmb}</p>
+              </div>
+            ) : null}
+          </ShrinkSection>
+        ) : null}
 
-        <div className="space-y-2 rounded-lg border border-dashed border-border/80 bg-muted/10 p-3">
-          <Label htmlFor={`rewrite-${post.id}`} className="text-xs font-medium">
-            Rewrite prompt / topic
-          </Label>
-          <Textarea
-            id={`rewrite-${post.id}`}
-            value={direction}
-            onChange={(e) => setDirection(e.target.value)}
-            placeholder='e.g. "Focus on weekend getaway vibe, family SUV, soft luxury — skip horsepower talk"'
-            className="min-h-[72px] text-sm resize-y"
-            data-testid={`input-rewrite-${post.id}`}
-          />
-          <Button
-            size="sm"
-            variant="secondary"
-            className="w-full"
-            onClick={() => rewriteMutation.mutate()}
-            disabled={rewriteMutation.isPending || !direction.trim()}
-            data-testid={`button-rewrite-${post.id}`}
-          >
-            <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${rewriteMutation.isPending ? "animate-spin" : ""}`} />
-            {rewriteMutation.isPending ? "Rewriting…" : "Rewrite caption"}
-          </Button>
-        </div>
+        <ShrinkSection id={`rewrite-${post.id}`} label="Rewrite the caption" hint="Optional. Pull up when the line is wrong.">
+          <div className="space-y-2">
+            <Label htmlFor={`rewrite-${post.id}`} className="text-xs">Prompt</Label>
+            <Textarea
+              id={`rewrite-${post.id}`}
+              value={direction}
+              onChange={(e) => setDirection(e.target.value)}
+              placeholder="What should this say instead?"
+              className="min-h-[72px] resize-y text-sm"
+              data-testid={`input-rewrite-${post.id}`}
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              className="w-full"
+              onClick={() => rewriteMutation.mutate()}
+              disabled={rewriteMutation.isPending || !direction.trim()}
+              data-testid={`button-rewrite-${post.id}`}
+            >
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${rewriteMutation.isPending ? "animate-spin" : ""}`} />
+              {rewriteMutation.isPending ? "Rewriting…" : "Rewrite caption"}
+            </Button>
+          </div>
+        </ShrinkSection>
 
         <div className="flex items-center justify-between pt-2 border-t">
           <PlatformBadges platforms={post.platforms} />
@@ -491,7 +492,13 @@ function ReviewPostCard({
   );
 }
 
-export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: number | null }) {
+export default function ReviewQueue({
+  dealershipFilter,
+  onDealershipFilterChange,
+}: {
+  dealershipFilter: number | null;
+  onDealershipFilterChange?: (id: number | null) => void;
+}) {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const { toast } = useToast();
 
@@ -570,15 +577,25 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
   const getDealershipColor = (id: number) => dealerships?.find((d) => d.id === id)?.color ?? "#888";
 
   return (
-    <div className="p-6 space-y-4 max-w-[1200px]">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto max-w-[1100px] space-y-4 px-4 py-4 sm:px-6 sm:py-6">
+      <div className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-display font-semibold" data-testid="text-queue-title">
-            Review Queue
+          <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">The Cooperative</div>
+          <h1 className="font-display text-4xl sm:text-5xl" data-testid="text-queue-title">
+            Review
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Imported posts awaiting review — rewrite captions with a prompt, then approve
+          <p className="mt-1 text-sm text-muted-foreground">
+            Read the caption. Approve it, or open it and edit.
           </p>
+          {dealershipFilter ? (
+            <button
+              type="button"
+              className="mt-2 text-xs underline underline-offset-4"
+              onClick={() => onDealershipFilterChange?.(null)}
+            >
+              Show every store
+            </button>
+          ) : null}
         </div>
         {selectedIds.length > 0 && (
           <Button

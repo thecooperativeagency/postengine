@@ -5,14 +5,16 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
-import { ThemeProvider, useTheme } from "@/components/theme-provider";
+import { ThemeProvider } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { LockKeyhole, Moon, Sun } from "lucide-react";
+import { LockKeyhole } from "lucide-react";
+import { MobileDock } from "@/components/mobile-dock";
+import { DASHBOARD_USER_EVENT, DASHBOARD_USER_KEY } from "@/lib/section-memory";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Posts from "@/pages/posts";
@@ -32,27 +34,12 @@ type AccessState =
   | { status: "locked"; error?: string }
   | { status: "error"; message: string };
 
-function ThemeToggle() {
-  const { theme, toggleTheme } = useTheme();
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={toggleTheme}
-      className="h-8 w-8 p-0"
-      data-testid="button-theme-toggle"
-    >
-      {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-    </Button>
-  );
-}
-
 function DashboardAccessGate({ onAuthenticated }: { onAuthenticated: () => void }) {
   const [pin, setPin] = useState("");
   const [state, setState] = useState<AccessState>({ status: "loading" });
   const hostLabel = "Protected";
-  const gateTitle = "ENGINE";
-  const gateDescription = "Enter the 5-digit PIN to open Post Engine.";
+    const gateTitle = "Post Engine";
+    const gateDescription = "Five digits.";
 
   const verifyPin = async (candidate: string) => {
     const trimmed = candidate.trim();
@@ -72,6 +59,10 @@ function DashboardAccessGate({ onAuthenticated }: { onAuthenticated: () => void 
       );
     }
 
+    const payload = await res.json().catch(() => ({}));
+    const name = typeof payload?.name === "string" && payload.name.trim() ? payload.name.trim() : "owner";
+    window.sessionStorage.setItem(DASHBOARD_USER_KEY, name);
+    window.dispatchEvent(new Event(DASHBOARD_USER_EVENT));
     setDashboardPassword(trimmed);
     onAuthenticated();
     setState({ status: "ready" });
@@ -239,18 +230,17 @@ function AppContent() {
           onDealershipFilterChange={setDealershipFilter}
         />
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex items-center justify-between border-b border-border bg-background/80 px-4 py-2 backdrop-blur-sm">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <ThemeToggle />
+          <header className="flex items-center justify-between border-b border-border bg-background px-4 py-3 md:hidden">
+            <a href="#/" className="font-display text-2xl leading-none">Post Engine</a>
           </header>
-          <main className="flex-1 overflow-auto">
+          <main className="flex-1 overflow-auto pb-20 md:pb-0">
             <Router hook={useHashLocation}>
               <Switch>
-                <Route path="/" component={() => <Dashboard dealershipFilter={dealershipFilter} />} />
+                <Route path="/" component={() => <Dashboard dealershipFilter={dealershipFilter} onDealershipFilterChange={setDealershipFilter} />} />
                 <Route path="/posts" component={() => <Posts dealershipFilter={dealershipFilter} />} />
                 <Route path="/posts/new" component={PostForm} />
                 <Route path="/posts/:id" component={PostForm} />
-                <Route path="/queue" component={() => <ReviewQueue dealershipFilter={dealershipFilter} />} />
+                <Route path="/queue" component={() => <ReviewQueue dealershipFilter={dealershipFilter} onDealershipFilterChange={setDealershipFilter} />} />
                 <Route path="/calendar" component={() => <CalendarPage dealershipFilter={dealershipFilter} />} />
                 <Route path="/settings" component={Settings} />
                 <Route component={NotFound} />
@@ -258,6 +248,10 @@ function AppContent() {
             </Router>
           </main>
         </div>
+        <MobileDock
+          dealershipFilter={dealershipFilter}
+          onDealershipFilterChange={setDealershipFilter}
+        />
       </div>
     </SidebarProvider>
   );

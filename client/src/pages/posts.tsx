@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { PageHeader, PageShell } from "@/components/page-shell";
+import { ShrinkSection } from "@/components/shrink-section";
 import {
   Select,
   SelectContent,
@@ -194,7 +195,7 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
       <PageHeader
         eyebrow="Engine / Post Engine"
         title="Posts"
-        description="Manage the live social queue for Post Engine. Filter fast, scan status by client, and jump into edits without leaving the working list."
+        description="The full list. Review is faster when you only need what is waiting."
         actions={
           <Link href="/posts/new">
             <Button data-testid="button-create-post">
@@ -229,18 +230,22 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
             </div>
 
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="h-9 w-full text-xs sm:w-[160px]" data-testid="select-post-type">
-                  <SelectValue placeholder="Post Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {postTypes.map((t) => (
-                    <SelectItem key={t} value={t} className="capitalize text-xs">
-                      {t === "all" ? "All Types" : formatPostType(t)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="w-full sm:w-[220px]">
+                <ShrinkSection id="post-type-filter" label="Post type" hint={typeFilter === "all" ? "All types" : formatPostType(typeFilter)}>
+                  <Select value={typeFilter} onValueChange={setTypeFilter}>
+                    <SelectTrigger className="h-9 w-full text-xs" data-testid="select-post-type">
+                      <SelectValue placeholder="Post Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {postTypes.map((t) => (
+                        <SelectItem key={t} value={t} className="capitalize text-xs">
+                          {t === "all" ? "All Types" : formatPostType(t)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </ShrinkSection>
+              </div>
 
               {queuedSelected && queuedSelected.length > 0 && (
                 <Button

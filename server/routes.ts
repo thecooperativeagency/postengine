@@ -26,6 +26,7 @@ import {
 import { findRecentVehicleDuplicate } from "./post-dedup";
 import { hostUploadedMedia, inferPostMediaType } from "./media-upload";
 import { SPECIALS_SOURCES, syncTalkingPointsFromSpecials } from "./specials-talking-sync";
+import { driveArrivals, summarizeStore } from "@shared/store-health";
 
 const ARCHIVE_REQUIRED_STATUSES = new Set(["scheduled", "published"]);
 const DEFAULT_HIDDEN_POST_STATUSES = new Set(["rejected"]);
@@ -1175,18 +1176,16 @@ export async function registerRoutes(server: Server, app: Express) {
       published: allPosts.filter((post) => post.status === "published").length,
     };
 
-    // Posts per dealership
     const perDealership = dealerships.map(d => ({
       ...d,
-      postCount: allPosts.filter(p => p.dealershipId === d.id).length,
-      scheduledCount: allPosts.filter(p => p.dealershipId === d.id && p.status === "scheduled").length,
-      draftCount: allPosts.filter(p => p.dealershipId === d.id && p.status === "draft").length,
+      ...summarizeStore(allPosts.filter(p => p.dealershipId === d.id)),
     }));
 
     res.json({
       stats,
       dealerships: perDealership,
       recentActivity,
+      driveArrivals: driveArrivals(allPosts),
     });
   });
 }

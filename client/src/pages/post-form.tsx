@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ArrowLeft, Save, Send, CalendarDays, Eye, ImagePlus, Loader2, X, Sparkles } from "lucide-react";
+import { ShrinkSection } from "@/components/shrink-section";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -370,11 +371,11 @@ export default function PostForm() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-xl font-display font-semibold" data-testid="text-form-title">
-            {isEdit ? "Edit Post" : "Create New Post"}
+          <h1 className="font-display text-4xl" data-testid="text-form-title">
+            {isEdit ? "Edit" : "New post"}
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {isEdit ? "Update post details" : "Craft a new social media post"}
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {isEdit ? "Caption first. The rest can stay shut." : "Only if it did not come from Drive."}
           </p>
         </div>
       </div>
@@ -559,7 +560,8 @@ export default function PostForm() {
                     )}
                   </div>
 
-                  <div className="rounded-lg border bg-muted/15 p-3 space-y-2" data-testid="caption-prompt-panel">
+                  <ShrinkSection id="caption-prompt" label="Write with a prompt" hint="Optional">
+                  <div className="space-y-2" data-testid="caption-prompt-panel">
                     <div className="flex items-center justify-between gap-2">
                       <div>
                         <div className="text-sm font-medium">AI caption prompt</div>
@@ -591,6 +593,7 @@ export default function PostForm() {
                       data-testid="textarea-caption-prompt"
                     />
                   </div>
+                  </ShrinkSection>
 
                   <FormField
                     control={form.control}
@@ -615,6 +618,8 @@ export default function PostForm() {
                       </FormItem>
                     )}
                   />
+                  <ShrinkSection id="other-captions" label="Facebook, Google, and the CTA" hint="When one caption is not enough">
+                  <div className="space-y-4">
                   <FormField
                     control={form.control}
                     name="captionFacebook"
@@ -681,14 +686,13 @@ export default function PostForm() {
                       </FormItem>
                     )}
                   />
+                  </div>
+                  </ShrinkSection>
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium">Publishing</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
+              <ShrinkSection id="publishing" label="Publishing" hint="Platforms, time, notes">
+              <div className="space-y-4">
                   <FormField
                     control={form.control}
                     name="platforms"
@@ -775,8 +779,8 @@ export default function PostForm() {
                       </FormItem>
                     )}
                   />
-                </CardContent>
-              </Card>
+              </div>
+              </ShrinkSection>
 
               {/* Action buttons */}
               <div className="flex gap-2 flex-wrap">

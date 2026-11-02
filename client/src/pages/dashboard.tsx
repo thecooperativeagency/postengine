@@ -13,13 +13,14 @@ import {
   Pause,
   RefreshCw,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { PageHeader, PageShell } from "@/components/page-shell";
+import { ShrinkSection } from "@/components/shrink-section";
+import type { DriveArrival } from "@shared/store-health";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
@@ -43,8 +44,12 @@ interface DashboardData {
     postCount: number;
     scheduledCount: number;
     draftCount: number;
+    queuedCount?: number;
+    daysBehind?: number | null;
+    driveInCount?: number;
   })[];
   recentActivity: ActivityLog[];
+  driveArrivals?: DriveArrival[];
 }
 
 interface EngineStatus {
@@ -87,16 +92,21 @@ function getActionBadgeVariant(action: string): "default" | "secondary" | "destr
   }
 }
 
-export default function Dashboard({ dealershipFilter }: { dealershipFilter: number | null }) {
+export default function Dashboard({
+  dealershipFilter,
+  onDealershipFilterChange,
+}: {
+  dealershipFilter: number | null;
+  onDealershipFilterChange?: (id: number | null) => void;
+}) {
   const { toast } = useToast();
   const MAX_GENERATE_WEEKS = 4;
   const [weeksToGenerate, setWeeksToGenerate] = useState("1");
   /** dealershipId -> talking points text */
   const [talkingByStore, setTalkingByStore] = useState<Record<number, string>>({});
-  const dashboardTitle = "Dashboard";
-  const dashboardEyebrow = "Post Engine";
-  const dealerSectionTitle = "Dealerships";
-  const dealerSectionDescription = "Stores currently managed in Post Engine.";
+  const dashboardTitle = "Stores";
+  const dashboardEyebrow = "The Cooperative";
+  const dealerSectionTitle = "Stores";
   const { data, isLoading } = useQuery<DashboardData>({
     queryKey: ["/api/dashboard"],
   });
@@ -276,301 +286,233 @@ export default function Dashboard({ dealershipFilter }: { dealershipFilter: numb
 
   const storesWithPoints = talkingStores.filter((s) => (talkingByStore[s.dealershipId] || "").trim()).length;
 
+
+  const visibleStores = dealershipFilter
+    ? filteredDealerships.filter((dealer) => dealer.id === dealershipFilter)
+    : filteredDealerships;
+  const arrivals = (data.driveArrivals || []).filter((item) =>
+    !dealershipFilter || item.dealershipId === dealershipFilter,
+  );
+  const storeName = (id: number) => data.dealerships.find((dealer) => dealer.id === id)?.name ?? "Store";
+
+  const behindLabel = (days: number | null | undefined) => {
+    if (days == null) return "No schedule yet";
+    if (days === 0) return "On schedule";
+    return days === 1 ? "1 day behind" : `${days} days behind`;
+  };
+
   return (
-    <PageShell className="space-y-5 sm:space-y-6">
+    <PageShell className="space-y-8">
       <PageHeader
         eyebrow={dashboardEyebrow}
         title={dashboardTitle}
-        description="Quick read on the social pipeline inside ENGINE. Jump into intake, review, or new post creation without leaving the operating path."
+        description="Queue, days behind, and what just came in."
         actions={
-          <>
-            <Link href="/posts/new">
-              <Button data-testid="button-new-post">
-                <PlusCircle className="mr-1.5 h-4 w-4" />
-                New Post
-              </Button>
-            </Link>
-            <Link href="/queue">
-              <Button variant="outline" data-testid="button-review-queue">
-                <ClipboardCheck className="mr-1.5 h-4 w-4" />
-                Review Queue
-              </Button>
-            </Link>
-          </>
+          <Link href="/queue">
+            <Button data-testid="button-review-queue">
+              <ClipboardCheck className="mr-1.5 h-4 w-4" />
+              Review
+            </Button>
+          </Link>
         }
       />
 
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-1">
-              <CardTitle className="text-sm font-medium">Switchboard</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Intake controls for the live Post Engine path.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-              <Badge variant={engineStatus?.paused ? "secondary" : engineStatus?.driveScan?.running ? "outline" : "default"}>
-                {engineStatus?.paused ? "Paused" : engineStatus?.driveScan?.running ? "Scan running" : "Ready"}
-              </Badge>
-              <Badge variant="outline">
-                {engineStatus?.lastRunAt ? `${formatTimeAgo(engineStatus.lastRunAt)} · ${engineStatus.lastRunCount ?? "0"} imported` : "No recent run"}
-              </Badge>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1 min-w-0">
-                <Label className="text-xs font-medium">
-                  Weekly talking points / offers — by store
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  BMW/Audi pull live specials pages. Harris Porsche pulls the latest Coop monthly email (not the Porsche specials page). Military/service/rules stay unless you edit them.
-                </p>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => syncSpecialsMutation.mutate(true)}
-                  disabled={syncSpecialsMutation.isPending}
-                  data-testid="button-sync-talking-points"
-                >
-                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                  {syncSpecialsMutation.isPending ? "Syncing…" : "Sync from specials"}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="shrink-0"
-                  onClick={() => saveBriefMutation.mutate()}
-                  disabled={saveBriefMutation.isPending}
-                  data-testid="button-save-talking-points"
-                >
-                  {saveBriefMutation.isPending ? "Saving…" : "Save all"}
-                </Button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {talkingStores.map((store) => {
-                const value = talkingByStore[store.dealershipId] ?? store.talkingPoints ?? "";
-                const briefMeta = captionBrief?.stores?.find((s) => s.dealershipId === store.dealershipId);
-                return (
-                  <div
-                    key={store.dealershipId}
-                    className="rounded-lg border border-border overflow-hidden bg-card"
-                    data-testid={`talking-points-store-${store.dealershipId}`}
-                  >
-                    <div className="h-1" style={{ backgroundColor: store.color || "#888" }} />
-                    <div className="p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium truncate">{store.name}</p>
-                          <p className="text-[11px] text-muted-foreground">{store.brand}</p>
-                        </div>
-                        <Badge variant="outline" className="text-[10px] shrink-0">
-                          {value.trim() ? "Set" : "Empty"}
-                        </Badge>
-                      </div>
-                      <Textarea
-                        id={`weekly-talking-points-${store.dealershipId}`}
-                        value={value}
-                        onChange={(e) =>
-                          setTalkingByStore((prev) => ({
-                            ...prev,
-                            [store.dealershipId]: e.target.value,
-                          }))
-                        }
-                        placeholder={`e.g.\n• ${store.brand} lease / finance this week\n• Event or lot push for ${store.name}\n• Service special if relevant`}
-                        className="min-h-[96px] text-sm"
-                        maxLength={4000}
-                        data-testid={`textarea-weekly-talking-points-${store.dealershipId}`}
-                      />
-                      <p className="text-[11px] text-muted-foreground">
-                        {value.trim()
-                          ? `${value.trim().length}/4000 · applies to ${store.name} only`
-                          : "No points — vehicle-only captions"}
-                        {briefMeta?.updatedAt ? ` · saved ${formatTimeAgo(briefMeta.updatedAt)}` : ""}
-                      </p>
-                    </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {visibleStores.map((dealer) => {
+          const queued = dealer.queuedCount ?? 0;
+          const behind = behindLabel(dealer.daysBehind);
+          return (
+            <a
+              key={dealer.id}
+              href="#/queue"
+              onClick={() => onDealershipFilterChange?.(dealer.id)}
+              className="block border border-border bg-card"
+              data-testid={`card-dealership-${dealer.id}`}
+            >
+              <div className="h-1" style={{ backgroundColor: dealer.color }} />
+              <div className="space-y-3 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-display text-3xl leading-none">{dealer.name}</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">{dealer.location}</p>
                   </div>
-                );
-              })}
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              {storesWithPoints > 0
-                ? `${storesWithPoints} store${storesWithPoints === 1 ? "" : "s"} with talking points · saved on Generate or Save all`
-                : "No store talking points set yet"}
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-xs text-muted-foreground space-y-1">
-            <p>Status: {engineStatus?.paused ? "Paused" : engineStatus?.driveScan?.running ? "Fresh scan running in background" : "Ready for scans and approvals"}</p>
-            <p>
-              Next stop: {data.stats.queued > 0 ? "review queued posts" : data.stats.draft > 0 ? "finish draft cleanup" : "run the next scan when new assets land"}
-            </p>
-            <p>Limit: up to {MAX_GENERATE_WEEKS} weeks at a time.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={weeksToGenerate} onValueChange={setWeeksToGenerate}>
-              <SelectTrigger className="h-9 w-[160px]" data-testid="select-generate-weeks">
-                <SelectValue placeholder="1 week" />
-              </SelectTrigger>
-              <SelectContent>
-                {[
-                  ["1", "1 week"],
-                  ["2", "2 weeks"],
-                  ["3", "3 weeks"],
-                  ["4", "4 weeks"],
-                ].map(([value, label]) => (
-                  <SelectItem key={value} value={value}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              size="sm"
-              onClick={() => runFreshMutation.mutate(Math.min(MAX_GENERATE_WEEKS, Math.max(1, Number(weeksToGenerate))))}
-              disabled={!!engineStatus?.paused || !!engineStatus?.driveScan?.running || runFreshMutation.isPending}
-              data-testid="button-generate-new-posts"
-            >
-              <Play className="h-4 w-4 mr-1.5" />
-              Generate New Posts
-            </Button>
-            {engineStatus?.paused ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => resumeMutation.mutate()}
-                disabled={resumeMutation.isPending}
-                data-testid="button-resume-imports"
-              >
-                <Play className="h-4 w-4 mr-1.5" />
-                Resume
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => pauseMutation.mutate()}
-                disabled={pauseMutation.isPending}
-                data-testid="button-pause-imports"
-              >
-                <Pause className="h-4 w-4 mr-1.5" />
-                Pause
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={refreshAll}
-              data-testid="button-refresh-dashboard"
-            >
-              <RefreshCw className="h-4 w-4 mr-1.5" />
-              Refresh
-            </Button>
-          </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        {kpiItems.map(({ key, label, icon: Icon, color }) => (
-          <Card key={key} className="hover-elevate" data-testid={`card-kpi-${key}`}>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <Icon className={`h-4 w-4 ${color}`} />
-                <span className="text-2xl font-semibold font-display">
-                  {data.stats[key]}
-                </span>
+                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{dealer.brand}</span>
+                </div>
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <div className="font-display text-4xl leading-none">{queued}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">in review</div>
+                  </div>
+                  <div className={`text-sm ${dealer.daysBehind ? "text-destructive" : ""}`} data-testid={`days-behind-${dealer.id}`}>
+                    {behind}
+                  </div>
+                </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{label}</p>
-            </CardContent>
-          </Card>
-        ))}
+            </a>
+          );
+        })}
       </div>
 
-      {/* Account Cards + Activity */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Account cards */}
-        <div className="space-y-3 lg:col-span-2">
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-            {dealerSectionTitle}
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {filteredDealerships.map((d) => (
-              <Card key={d.id} className="hover-elevate overflow-hidden" data-testid={`card-dealership-${d.id}`}>
-                <div className="h-1" style={{ backgroundColor: d.color }} />
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="font-medium text-sm">{d.name}</h3>
-                      <p className="text-xs text-muted-foreground">{d.location}</p>
-                    </div>
-                    <Badge variant="secondary" className="text-xs">
-                      {d.brand}
-                    </Badge>
-                  </div>
-                  <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
-                    <span>
-                      <span className="font-medium text-foreground">{d.postCount}</span> posts
-                    </span>
-                    <span>
-                      <span className="font-medium text-primary">{d.scheduledCount}</span> scheduled
-                    </span>
-                    <span>
-                      <span className="font-medium text-foreground">{d.draftCount}</span> drafts
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
+      <section className="space-y-3" data-testid="drive-arrivals">
+        <h2 className="font-display text-3xl">From Drive</h2>
+        {arrivals.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing new from the library.</p>
+        ) : (
+          <div className="border border-border bg-card">
+            {arrivals.map((item) => (
+              <a
+                key={`${item.id}-${item.createdAt}`}
+                href={item.id ? `#/posts/${item.id}` : "#/queue"}
+                className="flex items-baseline justify-between gap-3 border-b border-border px-4 py-3 last:border-b-0"
+              >
+                <span className="min-w-0">
+                  <span className="block text-sm">{item.vehicleInfo || item.postType || "Untitled"}</span>
+                  <span className="text-xs text-muted-foreground">{storeName(item.dealershipId)}</span>
+                </span>
+                <span className="shrink-0 text-xs uppercase tracking-[0.12em] text-muted-foreground">{item.status}</span>
+              </a>
             ))}
           </div>
-        </div>
+        )}
+      </section>
 
-        {/* Activity feed */}
-        <div className="space-y-3">
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-            Recent Activity
-          </h2>
-          <Card>
-            <CardContent className="p-0">
-              {data.recentActivity.length === 0 ? (
-                <div className="p-6 text-center text-sm text-muted-foreground">
-                  <Activity className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                  No recent activity
-                </div>
-              ) : (
-                <div className="divide-y divide-border">
-                  {data.recentActivity.slice(0, 8).map((item) => (
-                    <div key={item.id} className="px-4 py-3 text-sm" data-testid={`activity-item-${item.id}`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <Badge variant={getActionBadgeVariant(item.action)} className="text-xs capitalize">
-                          {item.action}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {formatTimeAgo(item.createdAt)}
-                        </span>
-                      </div>
-                      {item.details && (
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                          {item.details}
-                        </p>
-                      )}
+      <ShrinkSection id="scan-controls" label="Scan and talking points" hint="Generate, pause, offers">
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <Badge variant={engineStatus?.paused ? "secondary" : engineStatus?.driveScan?.running ? "outline" : "default"}>
+              {engineStatus?.paused ? "Paused" : engineStatus?.driveScan?.running ? "Scan running" : "Ready"}
+            </Badge>
+            <Badge variant="outline">
+              {engineStatus?.lastRunAt ? `${formatTimeAgo(engineStatus.lastRunAt)} · ${engineStatus.lastRunCount ?? "0"} imported` : "No recent run"}
+            </Badge>
+          </div>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <Label className="text-xs font-medium">Weekly talking points, by store</Label>
+              <p className="text-xs text-muted-foreground">Live offer pages fill these. What you type stays until you change it.</p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => syncSpecialsMutation.mutate(true)} disabled={syncSpecialsMutation.isPending} data-testid="button-sync-talking-points">
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                {syncSpecialsMutation.isPending ? "Syncing…" : "Sync from specials"}
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => saveBriefMutation.mutate()} disabled={saveBriefMutation.isPending} data-testid="button-save-talking-points">
+                {saveBriefMutation.isPending ? "Saving…" : "Save all"}
+              </Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {talkingStores.map((store) => {
+              const value = talkingByStore[store.dealershipId] ?? store.talkingPoints ?? "";
+              const briefMeta = captionBrief?.stores?.find((item) => item.dealershipId === store.dealershipId);
+              return (
+                <div key={store.dealershipId} className="border border-border bg-background" data-testid={`talking-points-store-${store.dealershipId}`}>
+                  <div className="h-1" style={{ backgroundColor: store.color || "#111" }} />
+                  <div className="space-y-2 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm">{store.name}</p>
+                      <Badge variant="outline" className="text-[10px]">{value.trim() ? "Set" : "Empty"}</Badge>
                     </div>
-                  ))}
+                    <Textarea
+                      id={`weekly-talking-points-${store.dealershipId}`}
+                      value={value}
+                      onChange={(event) => setTalkingByStore((prev) => ({ ...prev, [store.dealershipId]: event.target.value }))}
+                      placeholder="This week's offer, event, or thing to leave out."
+                      className="min-h-[96px] text-sm"
+                      maxLength={4000}
+                      data-testid={`textarea-weekly-talking-points-${store.dealershipId}`}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      {value.trim() ? `${value.trim().length}/4000` : "Empty. Captions stay on the vehicle."}
+                      {briefMeta?.updatedAt ? ` · saved ${formatTimeAgo(briefMeta.updatedAt)}` : ""}
+                    </p>
+                  </div>
                 </div>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            {storesWithPoints > 0 ? `${storesWithPoints} store${storesWithPoints === 1 ? "" : "s"} with talking points` : "No talking points yet"}
+          </p>
+          <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">
+              {engineStatus?.paused ? "Imports are paused." : engineStatus?.driveScan?.running ? "A scan is running." : "Ready when new files land."} Up to {MAX_GENERATE_WEEKS} weeks.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={weeksToGenerate} onValueChange={setWeeksToGenerate}>
+                <SelectTrigger className="h-9 w-[140px]" data-testid="select-generate-weeks">
+                  <SelectValue placeholder="1 week" />
+                </SelectTrigger>
+                <SelectContent>
+                  {[["1", "1 week"], ["2", "2 weeks"], ["3", "3 weeks"], ["4", "4 weeks"]].map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button size="sm" onClick={() => runFreshMutation.mutate(Math.min(MAX_GENERATE_WEEKS, Math.max(1, Number(weeksToGenerate))))} disabled={!!engineStatus?.paused || !!engineStatus?.driveScan?.running || runFreshMutation.isPending} data-testid="button-generate-new-posts">
+                <Play className="mr-1.5 h-4 w-4" />
+                Generate
+              </Button>
+              {engineStatus?.paused ? (
+                <Button size="sm" variant="outline" onClick={() => resumeMutation.mutate()} disabled={resumeMutation.isPending} data-testid="button-resume-imports">
+                  <Play className="mr-1.5 h-4 w-4" />
+                  Resume
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" onClick={() => pauseMutation.mutate()} disabled={pauseMutation.isPending} data-testid="button-pause-imports">
+                  <Pause className="mr-1.5 h-4 w-4" />
+                  Pause
+                </Button>
               )}
-            </CardContent>
-          </Card>
+              <Button size="sm" variant="ghost" onClick={refreshAll} data-testid="button-refresh-dashboard">
+                <RefreshCw className="mr-1.5 h-4 w-4" />
+                Refresh
+              </Button>
+              <Link href="/posts/new">
+                <Button size="sm" variant="outline" data-testid="button-new-post">
+                  <PlusCircle className="mr-1.5 h-4 w-4" />
+                  New post
+                </Button>
+              </Link>
+            </div>
+          </div>
         </div>
-      </div>
+      </ShrinkSection>
+
+      <ShrinkSection id="totals" label="All counts" hint={dealerSectionTitle}>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          {kpiItems.map(({ key, label, icon: Icon }) => (
+            <div key={key} className="border border-border p-3" data-testid={`card-kpi-${key}`}>
+              <div className="flex items-center justify-between">
+                <Icon className="h-4 w-4" />
+                <span className="font-display text-3xl">{data.stats[key]}</span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{label}</p>
+            </div>
+          ))}
+        </div>
+      </ShrinkSection>
+
+      <ShrinkSection id="activity" label="Activity" hint="What the log recorded">
+        {data.recentActivity.length === 0 ? (
+          <div className="py-6 text-center text-sm text-muted-foreground">
+            <Activity className="mx-auto mb-2 h-8 w-8 opacity-40" />
+            No recent activity
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {data.recentActivity.slice(0, 8).map((item) => (
+              <div key={item.id} className="py-3 text-sm" data-testid={`activity-item-${item.id}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <Badge variant={getActionBadgeVariant(item.action)} className="text-xs capitalize">{item.action}</Badge>
+                  <span className="text-xs text-muted-foreground">{formatTimeAgo(item.createdAt)}</span>
+                </div>
+                {item.details ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.details}</p> : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </ShrinkSection>
     </PageShell>
   );
 }
