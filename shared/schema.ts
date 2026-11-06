@@ -34,7 +34,7 @@ export const posts = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     dealershipId: integer("dealership_id").notNull(),
-    status: text("status").notNull().default("draft"), // draft, queued, scheduled, published, rejected
+    status: text("status").notNull().default("draft"), // draft, queued, scheduled, approved, held, published, rejected
     postType: text("post_type").notNull().default("inventory"), // inventory, promo, lifestyle, announcement
     vehicleInfo: text("vehicle_info"), // e.g. "2026 BMW X5 M60"
     caption: text("caption"), // Instagram/Facebook caption
@@ -53,6 +53,11 @@ export const posts = sqliteTable(
     publishResults: text("publish_results"), // JSON object keyed by platform
     folderSource: text("folder_source"), // Drive folder path
     notes: text("notes"),
+    approvedAt: text("approved_at"),
+    approvedBy: text("approved_by"),
+    heldAt: text("held_at"),
+    heldReason: text("held_reason"),
+    statusBeforeHold: text("status_before_hold"),
     createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   },
   (table) => ({
@@ -62,7 +67,15 @@ export const posts = sqliteTable(
   }),
 );
 
-export const insertPostSchema = createInsertSchema(posts).omit({ id: true, createdAt: true });
+export const insertPostSchema = createInsertSchema(posts).omit({
+  id: true,
+  createdAt: true,
+  approvedAt: true,
+  approvedBy: true,
+  heldAt: true,
+  heldReason: true,
+  statusBeforeHold: true,
+});
 export type InsertPost = z.infer<typeof insertPostSchema>;
 export type Post = typeof posts.$inferSelect;
 

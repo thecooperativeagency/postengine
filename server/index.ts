@@ -7,7 +7,7 @@ import { DATABASE_PATH, storage } from "./storage";
 import { dashboardAuthProblems, requireDashboardPassword, setDashboardDealerships } from "./dashboard-auth";
 import { getPublicMediaDir, PUBLIC_MEDIA_ROUTE_PREFIX } from "./public-media";
 import { handleAdminImport } from "./admin-import";
-import { publishEnabled } from "./publish-switch";
+import { driveScanEnabled, publishEnabled } from "./publish-switch";
 import { optionalEnvUnset, productionEnvProblems } from "./required-env";
 import { driveConfigWarning } from "./drive-scanner";
 import fs from "fs";
@@ -111,7 +111,10 @@ app.use((req, res, next) => {
     console.error("Telegram notifications are off");
   }
   if (!publishEnabled()) {
-    console.error("Publishing is off (PUBLISH_ENABLED is not true). The 60s publish loop and weekly scan will not run.");
+    console.error("Publishing is off (PUBLISH_ENABLED is not true). The 60s publish loop will not run.");
+  }
+  if (!driveScanEnabled()) {
+    console.error("Drive scan is off (DRIVE_SCAN_ENABLED is not true). POST /api/drive/scan will not ingest.");
   }
   const driveWarning = driveConfigWarning();
   if (driveWarning) console.error(driveWarning);

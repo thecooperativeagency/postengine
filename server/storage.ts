@@ -173,9 +173,9 @@ export interface IStorage {
   getPosts(filters?: { dealershipId?: number; status?: string; postType?: string }): Post[];
   getPost(id: number): Post | undefined;
   createPost(data: InsertPost): Post;
-  updatePost(id: number, data: Partial<InsertPost>): Post | undefined;
+  updatePost(id: number, data: Partial<Omit<Post, "id" | "createdAt">>): Post | undefined;
   deletePost(id: number): void;
-  getPostStats(): { total: number; draft: number; queued: number; scheduled: number; published: number };
+  getPostStats(): { total: number; draft: number; queued: number; scheduled: number; approved: number; held: number; published: number };
 
   // App settings
   getAppSetting(key: string): string | undefined;
@@ -270,6 +270,11 @@ export class DatabaseStorage implements IStorage {
         publish_results TEXT,
         folder_source TEXT,
         notes TEXT,
+        approved_at TEXT,
+        approved_by TEXT,
+        held_at TEXT,
+        held_reason TEXT,
+        status_before_hold TEXT,
         created_at TEXT NOT NULL
       );
 
@@ -466,6 +471,21 @@ export class DatabaseStorage implements IStorage {
     }
     if (!postColumnNames.has("publish_results")) {
       sqlite.exec(`ALTER TABLE posts ADD COLUMN publish_results TEXT;`);
+    }
+    if (!postColumnNames.has("approved_at")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN approved_at TEXT;`);
+    }
+    if (!postColumnNames.has("approved_by")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN approved_by TEXT;`);
+    }
+    if (!postColumnNames.has("held_at")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN held_at TEXT;`);
+    }
+    if (!postColumnNames.has("held_reason")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN held_reason TEXT;`);
+    }
+    if (!postColumnNames.has("status_before_hold")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN status_before_hold TEXT;`);
     }
 
     const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;
@@ -975,7 +995,7 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  updatePost(id: number, data: Partial<InsertPost>): Post | undefined {
+  updatePost(id: number, data: Partial<Omit<Post, "id" | "createdAt">>): Post | undefined {
     const needsFolderSourceCheck = typeof data.folderSource !== "undefined" || typeof data.dealershipId !== "undefined";
     if (needsFolderSourceCheck) {
       const existing = this.getPost(id);
@@ -1006,13 +1026,15 @@ export class DatabaseStorage implements IStorage {
     db.delete(posts).where(eq(posts.id, id)).run();
   }
 
-  getPostStats(): { total: number; draft: number; queued: number; scheduled: number; published: number } {
+  getPostStats(): { total: number; draft: number; queued: number; scheduled: number; approved: number; held: number; published: number } {
     const all = db.select().from(posts).all();
     return {
       total: all.length,
       draft: all.filter(p => p.status === "draft").length,
       queued: all.filter(p => p.status === "queued").length,
       scheduled: all.filter(p => p.status === "scheduled").length,
+      approved: all.filter(p => p.status === "approved").length,
+      held: all.filter(p => p.status === "held").length,
       published: all.filter(p => p.status === "published").length,
     };
   }

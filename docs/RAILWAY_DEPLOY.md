@@ -163,7 +163,8 @@ Optional names are logged at boot and do not stop the process: `CAPTION_API_KEY`
 | `MEDIA_DIR` | web | Parent media directory. Railway value `/data/media`. |
 | `MEDIA_GENERATED_DIR` | web | Files served at `/media/generated`. Railway value `/data/media/generated`. |
 | `CRON_SECRET` | web and cron | Shared secret. Header `X-Cron-Secret`. Required in production. Lets the Friday cron call `POST /api/drive/scan` and `POST /api/notify/weekly` without the manager PIN. Also required by `GET /api/reports/friday-queue`. |
-| `PUBLISH_ENABLED` | web | Optional. The 60s publish loop and the Friday scan run only when this is exactly `true`. Any other value, including unset, leaves them off. |
+| `PUBLISH_ENABLED` | web | Optional. The 60s publish loop runs only when this is exactly `true`. Any other value, including unset, leaves publishing off. Approved posts still need `approved_at`/`approved_by`; merely scheduled or due posts do not go out. |
+| `DRIVE_SCAN_ENABLED` | web | Optional. `POST /api/drive/scan` ingests only when this is exactly `true`. Independent of `PUBLISH_ENABLED`. Unset or any other value skips the scan. |
 | `IMPORT_TOKEN` | web | Optional. Bearer token for `POST /api/admin/import` and `GET /api/admin/import/status`. Unset returns 404 for both. A wrong token returns 401. |
 | `ZERNIO_API_KEY` | web | Bearer token for the Zernio API. Required in production. |
 | `CAPTION_API_KEY` | web | Optional at boot. The only caption credential. Unset or a failed call uses a template. Put the former Nous key here. |
@@ -217,7 +218,7 @@ Also set `CRON_SECRET` on the cron service to the same value.
 
 3. **Telegram is dropped.** Leave `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_WEBHOOK_URL` unset. Do not point a webhook at Ada's bot. Approval stays in the dashboard.
 
-4. **Do not turn publishing on until the Mini process is stopped.** `PUBLISH_ENABLED` defaults off. The 60-second loop and the Friday scan do nothing unless it is exactly `true`. Boot Railway that way, import data, then stop the Mini, then set `PUBLISH_ENABLED=true` and redeploy.
+4. **Do not turn publishing on until the Mini process is stopped.** `PUBLISH_ENABLED` defaults off. The 60-second loop does nothing unless it is exactly `true`, and even then it publishes only explicitly approved posts. Drive ingest uses `DRIVE_SCAN_ENABLED`. Boot Railway with both unset, import data, then stop the Mini, then turn publishing on only with a separate OK.
 
 5. **One replica, one volume, web service only.** The cron job uses HTTP. Two web replicas will corrupt SQLite.
 
@@ -248,7 +249,7 @@ tar czf - -C ~/.postengine sqlite.db public-media | curl -H 'Authorization: Bear
 `public-media` is `~/.postengine/public-media` (about 2 GB, 567 files). The server streams the archive to disk, writes those files under `/data/media/generated/`, and replaces the volume database. The response includes the media file count and the sha256 of `sqlite.db`. `GET /api/admin/import/status` with the same header returns post counts by status and the media file count. Both calls return 404 when `IMPORT_TOKEN` is unset. A wrong bearer token returns 401. The import is refused while `PUBLISH_ENABLED` is `true`.
 7. Leave the Telegram variables unset. Confirm startup logs `Telegram notifications are off` and `POST /api/telegram/webhook` returns 404.
 8. Confirm a `/media/generated/` URL returns a file with no PIN. The live snapshot has no GitHub media migration route.
-9. Set `PUBLISH_ENABLED=true` only after the Mini process is stopped, then redeploy. Run the Friday scan once by hand. An empty folder is success with zero posts. An auth error is a failure. While the flag is not `true`, the scan returns success with `skipped: true` and does not touch Drive.
+9. Set `PUBLISH_ENABLED=true` only after the Mini process is stopped, then redeploy. Run the Friday scan once by hand. An empty folder is success with zero posts. An auth error is a failure. While `DRIVE_SCAN_ENABLED` is not `true`, the scan returns success with `skipped: true` and does not touch Drive.
 10. Point `friday-queue-reminder.sh` (Friday 10:45 America/Chicago) at `GET /api/reports/friday-queue` with `X-Cron-Secret` instead of opening the SQLite file. The endpoint returns queued total, queued by store, and scheduled posts in the next 14 days.
 11. Disable the Mini crontab entry for `scripts/weekly-scan.sh`. Leave Ada's other agents on the Mini.
 12. Point `postengine.thecoopbrla.com` at Railway and set `PUBLIC_APP_URL` to that origin. Do this only after step 5, or the tunnel and Railway will both be attached to publishers.

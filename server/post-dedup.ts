@@ -1,4 +1,4 @@
-const ACTIVE_DUPLICATE_STATUSES = new Set(["queued", "scheduled", "published"]);
+const ACTIVE_DUPLICATE_STATUSES = new Set(["queued", "scheduled", "approved", "held", "published"]);
 const RECENT_DUPLICATE_WINDOW_MS = 21 * 24 * 60 * 60 * 1000;
 /** Reel cadence is every 5 days; same-car variants are supposed to land ~10–20 days apart. */
 const REELS_ADJACENT_WINDOW_MS = 4 * 24 * 60 * 60 * 1000;
