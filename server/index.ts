@@ -3,6 +3,14 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startPublishPoller } from "./zernio-publisher";
+import { DATABASE_PATH, storage } from "./storage";
+import { dashboardAuthProblems, requireDashboardPassword, setDashboardDealerships } from "./dashboard-auth";
+import { getPublicMediaDir, PUBLIC_MEDIA_ROUTE_PREFIX } from "./public-media";
+import { handleAdminImport } from "./admin-import";
+import { driveScanEnabled, publishEnabled } from "./publish-switch";
+import { optionalEnvUnset, productionEnvProblems } from "./required-env";
+import { driveConfigWarning } from "./drive-scanner";
+import fs from "fs";
 // Load .env manually
 import { readFileSync } from "fs";
 try {
@@ -16,6 +24,7 @@ try {
 } catch {}
 
 const app = express();
+app.set("trust proxy", 1);
 const httpServer = createServer(app);
 
 declare module "http" {
@@ -24,8 +33,18 @@ declare module "http" {
   }
 }
 
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({ status: "ok", service: "postengine" });
+});
+
+// Before body parsers so a multi-gigabyte tar.gz is not buffered.
+app.post("/api/admin/import", (req, res) => {
+  void handleAdminImport(req, res);
+});
+
 app.use(
   express.json({
+    limit: "40mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -33,6 +52,12 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(PUBLIC_MEDIA_ROUTE_PREFIX, (req, res, next) => {
+  const dir = getPublicMediaDir();
+  fs.mkdirSync(dir, { recursive: true });
+  express.static(dir, { index: false, dotfiles: "deny", fallthrough: false })(req, res, next);
+});
+app.use(requireDashboardPassword);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -72,6 +97,28 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  setDashboardDealerships(storage.getDealerships());
+  const problems = [...productionEnvProblems(), ...dashboardAuthProblems()];
+  if (problems.length) {
+    console.error(`Refusing to start. Missing or invalid production settings: ${problems.join(", ")}`);
+    process.exit(1);
+  }
+  const optional = optionalEnvUnset();
+  if (optional.length) {
+    console.error(`Optional settings not set: ${optional.join(", ")}`);
+  }
+  if (!process.env.TELEGRAM_BOT_TOKEN?.trim() || !process.env.TELEGRAM_CHAT_ID?.trim()) {
+    console.error("Telegram notifications are off");
+  }
+  if (!publishEnabled()) {
+    console.error("Publishing is off (PUBLISH_ENABLED is not true). The 60s publish loop will not run.");
+  }
+  if (!driveScanEnabled()) {
+    console.error("Drive scan is off (DRIVE_SCAN_ENABLED is not true). POST /api/drive/scan will not ingest.");
+  }
+  const driveWarning = driveConfigWarning();
+  if (driveWarning) console.error(driveWarning);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
@@ -109,6 +156,7 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      log(`using sqlite database at ${DATABASE_PATH}`, "storage");
       startPublishPoller(); // Start Zernio publish poller
     },
   );

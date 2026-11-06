@@ -1,25 +1,300 @@
 import type { Express } from "express";
+import { spawn } from "child_process";
+import fs from "fs";
 import type { Server } from "http";
+import path from "path";
 import { storage } from "./storage";
-import { insertPostSchema, insertDealershipSchema } from "@shared/schema";
-import { scanDriveFolders, archiveFile } from "./drive-scanner";
+import {
+  insertPostSchema,
+  insertDealershipSchema,
+  insertCadenceSchema,
+  REEL_INVENTORY_FLOOR_WEEKS,
+} from "@shared/schema";
+import { z } from "zod";
+import { scanDriveFolders, archiveFile, loadFolders, listFolder, isVideoMedia, driveConfigured } from "./drive-scanner";
+import { driveScanEnabled, publishEnabled } from "./publish-switch";
+import {
+  buildApprovePublishPatch,
+  buildDuePreview,
+  buildHoldPatch,
+  buildReleaseHoldPatch,
+  evaluatePublishGate,
+  evaluatePublishIdempotency,
+  formatChicagoYmd,
+  shouldHoldPost,
+  type HoldScope,
+} from "./publish-gate";
+import {
+  NOV6_2026_APPROVE_NONCE,
+  NOV6_2026_READY_POST_IDS,
+  validateNov6PublishApproval,
+} from "./nov6-2026-publish-allowlist";
+import { handleImportStatus } from "./admin-import";
+import { generateCaption, generateCaptionsForPlatforms, normalizeCaptionPlatforms } from "./caption-writer";
 import { publishPost } from "./zernio-publisher";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
+import { composePostContent } from "./post-composer";
+import {
+  checkDashboardPin,
+  dashboardCanSeeDealership,
+  isDashboardProtectionEnabled,
+} from "./dashboard-auth";
+import { findRecentVehicleDuplicate } from "./post-dedup";
+import { hostUploadedMedia, inferPostMediaType } from "./media-upload";
+import { SPECIALS_SOURCES, syncTalkingPointsFromSpecials } from "./specials-talking-sync";
+
+const ARCHIVE_REQUIRED_STATUSES = new Set(["scheduled", "approved", "published"]);
+const PUBLISH_GATE_PATCH_FIELDS = new Set([
+  "approvedAt",
+  "approvedBy",
+  "heldAt",
+  "heldReason",
+  "statusBeforeHold",
+]);
+
+function requireAdmin(req: { dashboardUser?: { dealershipIds: number[] | null } }, res: { status: (code: number) => { json: (body: unknown) => unknown } }) {
+  if (req.dashboardUser && req.dashboardUser.dealershipIds !== null) {
+    res.status(403).json({ error: "Forbidden" });
+    return false;
+  }
+  return true;
+}
+
+function actorName(req: { dashboardUser?: { name?: string } }, fallback?: string) {
+  return (typeof fallback === "string" && fallback.trim()) || req.dashboardUser?.name || "unknown";
+}
+const DEFAULT_HIDDEN_POST_STATUSES = new Set(["rejected"]);
+const DRIVE_SCAN_STALE_MS = 30 * 60 * 1000;
+function sweepStaleDriveScanJobs(now = Date.now()) {
+  const staleBefore = new Date(now - DRIVE_SCAN_STALE_MS).toISOString();
+  const runningJobs = storage.getRunningEngineJobsByType("drive-scan");
+  const activeJobs = [] as typeof runningJobs;
+
+  for (const job of runningJobs) {
+    const startedAt = job.startedAt ? Date.parse(job.startedAt) : NaN;
+    if (!Number.isFinite(startedAt) || startedAt >= now - DRIVE_SCAN_STALE_MS) {
+      activeJobs.push(job);
+      continue;
+    }
+
+    storage.updateEngineJob(job.id, {
+      status: "failed",
+      completedAt: new Date(now).toISOString(),
+      summary: "Drive scan marked failed after exceeding the stale-job window",
+      errorMessage: `Drive scan was still marked running after ${Math.floor(DRIVE_SCAN_STALE_MS / 60000)} minutes`,
+    });
+  }
+
+  return activeJobs;
+}
+
+function resolveDriveScanRunner() {
+  const tsxPath = path.join(process.cwd(), "node_modules", ".bin", "tsx");
+  const scriptPath = path.join(process.cwd(), "server", "run-drive-scan-job.ts");
+
+  if (!fs.existsSync(tsxPath)) {
+    throw new Error(`Drive scan runner missing tsx binary at ${tsxPath}`);
+  }
+
+  if (!fs.existsSync(scriptPath)) {
+    throw new Error(`Drive scan runner script not found at ${scriptPath}`);
+  }
+
+  return { tsxPath, scriptPath };
+}
+
+function runDriveScanJob(scanJobId: number, weeks: number) {
+  const { tsxPath, scriptPath } = resolveDriveScanRunner();
+  const stdoutFd = fs.openSync("/tmp/postengine.log", "a");
+  const stderrFd = fs.openSync("/tmp/postengine-error.log", "a");
+
+  try {
+    const child = spawn(tsxPath, [scriptPath, String(scanJobId), String(weeks)], {
+      cwd: process.cwd(),
+      detached: true,
+      env: process.env,
+      stdio: ["ignore", stdoutFd, stderrFd],
+    });
+
+    child.on("error", (error) => {
+      storage.updateEngineJob(scanJobId, {
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        summary: "Drive scan failed to start",
+        errorMessage: error.message,
+      });
+    });
+
+    child.unref();
+    return child.pid;
+  } finally {
+    fs.closeSync(stdoutFd);
+    fs.closeSync(stderrFd);
+  }
+}
+
+function getDriveScanStatus() {
+  const activeScans = sweepStaleDriveScanJobs();
+  const currentScan = activeScans[0] ?? null;
+
+  return {
+    running: Boolean(currentScan),
+    jobId: currentScan?.id ?? null,
+    startedAt: currentScan?.startedAt ?? null,
+  };
+}
+
+
+type PostArchiveCandidate = {
+  id: number;
+  dealershipId: number;
+  status: string;
+  folderSource: string | null;
+};
+
+export function archivePostSourceOrThrow(
+  existing: PostArchiveCandidate,
+  nextStatus: string | undefined,
+  archive: (dealershipId: number, folderSource: string) => boolean,
+): void {
+  if (!nextStatus || !ARCHIVE_REQUIRED_STATUSES.has(nextStatus)) return;
+  if (existing.status === nextStatus) return;
+
+  const folderSource = existing.folderSource?.trim();
+  if (!folderSource) return;
+
+  try {
+    const archived = archive(existing.dealershipId, folderSource);
+    if (!archived) {
+      // Do not block Approve/Reject if Drive already moved the file or is flaky.
+      console.warn(
+        `[Archive] Drive archive returned false for post ${existing.id} (${folderSource}) — continuing status change`,
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[Archive] Drive archive failed for post ${existing.id} (${folderSource}): ${message} — continuing status change`,
+    );
+  }
+}
+
+type BulkApproveDeps<TPost extends PostArchiveCandidate> = {
+  getPost(id: number): TPost | undefined;
+  updatePost(id: number, data: { status: "scheduled" }): TPost | undefined;
+  logScheduled(post: TPost): void;
+  archive(dealershipId: number, folderSource: string): boolean;
+  findDuplicate?(post: TPost): { id: number; vehicleInfo: string | null } | null;
+};
+
+function buildRecentDuplicateVehicleError(duplicate: { id: number; vehicleInfo: string | null }) {
+  return `Recent duplicate vehicle already active on post ${duplicate.id}: ${duplicate.vehicleInfo || "Unknown vehicle"}`;
+}
+
+function findRecentDuplicateForPost(post: {
+  id: number;
+  dealershipId: number;
+  vehicleInfo: string | null;
+  status: string;
+  scheduledFor?: string | null;
+  publishedAt?: string | null;
+  createdAt?: string | null;
+  postType?: string | null;
+  folderSource?: string | null;
+}) {
+  const posts = storage.getPosts({ dealershipId: post.dealershipId });
+  const duplicate = findRecentVehicleDuplicate(post, posts);
+  if (!duplicate || duplicate.id == null) return null;
+  return { id: duplicate.id, vehicleInfo: duplicate.vehicleInfo ?? null };
+}
+
+function assertNoRecentVehicleDuplicateOrThrow(post: { id: number; dealershipId: number; vehicleInfo: string | null; status: string; scheduledFor?: string | null; publishedAt?: string | null; createdAt?: string | null }) {
+  const duplicate = findRecentDuplicateForPost(post);
+  if (duplicate) {
+    throw new Error(buildRecentDuplicateVehicleError(duplicate));
+  }
+}
+
+export function bulkApprovePosts<TPost extends PostArchiveCandidate>(ids: number[], deps: BulkApproveDeps<TPost>) {
+  const successful: TPost[] = [];
+  const failed: Array<{ id: number; error: string; folderSource?: string }> = [];
+
+  for (const rawId of ids) {
+    const id = Number(rawId);
+    const existing = deps.getPost(id);
+    if (!existing) {
+      failed.push({ id, error: "Post not found" });
+      continue;
+    }
+
+    try {
+      archivePostSourceOrThrow(existing, "scheduled", deps.archive);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failed.push({ id, error: message, folderSource: existing.folderSource || undefined });
+      continue;
+    }
+
+    const duplicate = deps.findDuplicate?.(existing);
+    if (duplicate) {
+      failed.push({ id, error: buildRecentDuplicateVehicleError(duplicate), folderSource: existing.folderSource || undefined });
+      continue;
+    }
+
+    const updated = deps.updatePost(id, { status: "scheduled" });
+    if (!updated) {
+      failed.push({ id, error: "Failed to update post" });
+      continue;
+    }
+
+    deps.logScheduled(updated);
+    successful.push(updated);
+  }
+
+  return { successful, failed };
+}
+
+export function filterPostsForApi<T extends { status: string }>(
+  postsList: T[],
+  filters: { status?: string; includeRejected?: boolean },
+): T[] {
+  if (filters.status || filters.includeRejected) {
+    return postsList;
+  }
+
+  return postsList.filter((post) => !DEFAULT_HIDDEN_POST_STATUSES.has(post.status));
+}
 
 export async function registerRoutes(server: Server, app: Express) {
+  // ---- Dashboard auth ----
+  app.get("/api/auth/config", (_req, res) => {
+    res.json({
+      enabled: isDashboardProtectionEnabled(),
+      headerName: "X-Dashboard-Password",
+      authMode: "pin",
+      appName: "ENGINE",
+    });
+  });
+
+  app.post("/api/auth/check", (req, res) => {
+    checkDashboardPin(req, res);
+  });
+
   // ---- Dealerships ----
-  app.get("/api/dealerships", (_req, res) => {
-    const dealerships = storage.getDealerships();
-    res.json(dealerships);
+  app.get("/api/dealerships", (req, res) => {
+    res.json(storage.getDealerships().filter((dealer) => dashboardCanSeeDealership(req, dealer.id)));
   });
 
   app.get("/api/dealerships/:id", (req, res) => {
     const dealership = storage.getDealership(Number(req.params.id));
-    if (!dealership) return res.status(404).json({ error: "Not found" });
+    if (!dealership || !dashboardCanSeeDealership(req, dealership.id)) return res.status(404).json({ error: "Not found" });
     res.json(dealership);
   });
 
   app.post("/api/dealerships", (req, res) => {
+    if (req.dashboardUser && req.dashboardUser.dealershipIds !== null) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
     try {
       const data = insertDealershipSchema.parse(req.body);
       const dealership = storage.createDealership(data);
@@ -30,9 +305,19 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.patch("/api/dealerships/:id", (req, res) => {
-    const updated = storage.updateDealership(Number(req.params.id), req.body);
+    const id = Number(req.params.id);
+    if (!dashboardCanSeeDealership(req, id)) return res.status(404).json({ error: "Not found" });
+    const updated = storage.updateDealership(id, req.body);
     if (!updated) return res.status(404).json({ error: "Not found" });
     res.json(updated);
+  });
+
+  app.delete("/api/dealerships/:id", (req, res) => {
+    const id = Number(req.params.id);
+    if (!dashboardCanSeeDealership(req, id)) return res.status(404).json({ error: "Not found" });
+    const deleted = storage.deleteDealership(id);
+    if (!deleted) return res.status(404).json({ error: "Not found" });
+    res.json({ ok: true });
   });
 
   // ---- Posts ----
@@ -41,24 +326,93 @@ export async function registerRoutes(server: Server, app: Express) {
     if (req.query.dealershipId) filters.dealershipId = Number(req.query.dealershipId);
     if (req.query.status) filters.status = req.query.status as string;
     if (req.query.postType) filters.postType = req.query.postType as string;
-    const postsList = storage.getPosts(filters);
-    res.json(postsList);
+    const includeRejected = req.query.includeRejected === "true";
+    const postsList = storage.getPosts(filters).filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
+    res.json(filterPostsForApi(postsList, { status: filters.status, includeRejected }));
   });
 
-  app.get("/api/posts/stats", (_req, res) => {
-    const stats = storage.getPostStats();
-    res.json(stats);
+  app.get("/api/posts/stats", (req, res) => {
+    const visible = storage.getPosts().filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
+    res.json({
+      total: visible.length,
+      draft: visible.filter((post) => post.status === "draft").length,
+      queued: visible.filter((post) => post.status === "queued").length,
+      scheduled: visible.filter((post) => post.status === "scheduled").length,
+      approved: visible.filter((post) => post.status === "approved").length,
+      held: visible.filter((post) => post.status === "held").length,
+      published: visible.filter((post) => post.status === "published").length,
+    });
+  });
+
+  app.get("/api/posts/preview-due", (req, res) => {
+    const rawDate = typeof req.query.date === "string" ? req.query.date : formatChicagoYmd(new Date());
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+      return res.status(400).json({ error: "date must be YYYY-MM-DD" });
+    }
+    const visible = storage.getPosts().filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
+    res.json(buildDuePreview({
+      posts: visible,
+      dealerships: storage.getDealerships(),
+      dateYmd: rawDate,
+      publishEnabled: publishEnabled(),
+      driveScanEnabled: driveScanEnabled(),
+    }));
   });
 
   app.get("/api/posts/:id", (req, res) => {
     const post = storage.getPost(Number(req.params.id));
-    if (!post) return res.status(404).json({ error: "Not found" });
-    res.json(post);
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
+    res.json({ ...post, composedContent: composePostContent(post) });
+  });
+
+  app.post("/api/media/upload", async (req, res) => {
+    try {
+      const filesInput = Array.isArray(req.body?.files)
+        ? req.body.files
+        : req.body?.filename || req.body?.contentBase64
+          ? [req.body]
+          : [];
+
+      if (filesInput.length === 0) {
+        return res.status(400).json({ error: "No files provided. Pass files[] or filename + contentBase64." });
+      }
+      if (filesInput.length > 12) {
+        return res.status(400).json({ error: "Too many files (max 12)." });
+      }
+
+      const uploaded = [];
+      for (const file of filesInput) {
+        const filename = typeof file?.filename === "string" ? file.filename : "";
+        const contentBase64 = typeof file?.contentBase64 === "string" ? file.contentBase64 : "";
+        const mimeType = typeof file?.mimeType === "string" ? file.mimeType : undefined;
+        if (!filename || !contentBase64) {
+          return res.status(400).json({ error: "Each file needs filename and contentBase64." });
+        }
+        uploaded.push(await hostUploadedMedia({ filename, contentBase64, mimeType }));
+      }
+
+      res.status(201).json({
+        success: true,
+        files: uploaded,
+        urls: uploaded.map((item) => item.url),
+        mediaType: inferPostMediaType(uploaded.map((item) => item.mediaType)),
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || "Upload failed" });
+    }
   });
 
   app.post("/api/posts", (req, res) => {
     try {
       const data = insertPostSchema.parse(req.body);
+      if (!dashboardCanSeeDealership(req, data.dealershipId)) {
+        return res.status(404).json({ error: "Not found" });
+      }
+      if (data.status === "approved" || data.status === "held") {
+        return res.status(400).json({
+          error: "Use the publish-approval or hold endpoints to change this status",
+        });
+      }
       const post = storage.createPost(data);
       storage.logActivity({
         postId: post.id,
@@ -68,43 +422,188 @@ export async function registerRoutes(server: Server, app: Express) {
       });
       res.status(201).json(post);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      const status = err?.name === "DuplicateFolderSourceError" ? 409 : 400;
+      res.status(status).json({ error: err.message });
     }
   });
 
   app.patch("/api/posts/:id", (req, res) => {
     const existing = storage.getPost(Number(req.params.id));
-    if (!existing) return res.status(404).json({ error: "Not found" });
+    if (!existing || !dashboardCanSeeDealership(req, existing.dealershipId)) return res.status(404).json({ error: "Not found" });
+    if (req.body?.dealershipId !== undefined && !dashboardCanSeeDealership(req, Number(req.body.dealershipId))) {
+      return res.status(404).json({ error: "Not found" });
+    }
 
-    const updated = storage.updatePost(Number(req.params.id), req.body);
+    const body = { ...req.body };
+    for (const field of PUBLISH_GATE_PATCH_FIELDS) delete body[field];
+    if (body.status === "approved" || body.status === "held") {
+      return res.status(400).json({
+        error: "Use the publish-approval or hold endpoints to change this status",
+      });
+    }
+
+    try {
+      archivePostSourceOrThrow(existing, body.status, archiveFile);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(409).json({ error: message });
+    }
+
+    const updated = storage.updatePost(Number(req.params.id), body);
     if (!updated) return res.status(500).json({ error: "Failed to update" });
 
     // Log status changes
-    if (req.body.status && req.body.status !== existing.status) {
+    if (body.status && body.status !== existing.status) {
       storage.logActivity({
         postId: updated.id,
         dealershipId: updated.dealershipId,
-        action: req.body.status,
-        details: `Post ${req.body.status}: ${updated.vehicleInfo || updated.postType}`,
+        action: body.status,
+        details: `Post ${body.status}: ${updated.vehicleInfo || updated.postType}`,
       });
-
-      // Archive Drive file when post is scheduled or published
-      if ((req.body.status === "scheduled" || req.body.status === "published") && updated.folderSource) {
-        try {
-          archiveFile(updated.dealershipId, updated.folderSource);
-          console.log(`[Archive] Moved file to _Archive for post ${updated.id}`);
-        } catch (e) {
-          console.error(`[Archive] Failed to move file:`, e);
-        }
-      }
     }
 
     res.json(updated);
   });
 
+  app.post("/api/captions/generate", async (req, res) => {
+    try {
+      const dealershipId = Number(req.body?.dealershipId);
+      if (!Number.isInteger(dealershipId) || dealershipId <= 0) {
+        return res.status(400).json({ error: "dealershipId is required" });
+      }
+      const dealership = storage.getDealership(dealershipId);
+      if (!dealership || !dashboardCanSeeDealership(req, dealership.id)) return res.status(404).json({ error: "Dealership not found" });
+
+      const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+      if (!prompt) {
+        return res.status(400).json({ error: "Caption prompt is required" });
+      }
+      if (prompt.length > 1200) {
+        return res.status(400).json({ error: "Caption prompt is too long (max 1200 characters)" });
+      }
+
+      const platforms = normalizeCaptionPlatforms(req.body?.platforms);
+      if (platforms.length === 0) {
+        return res.status(400).json({ error: "Select at least one supported platform (instagram, facebook, googlebusiness, tiktok)" });
+      }
+
+      const postType = typeof req.body?.postType === "string" && req.body.postType.trim()
+        ? req.body.postType.trim()
+        : "inventory";
+      const vehicleInfo = typeof req.body?.vehicleInfo === "string" && req.body.vehicleInfo.trim()
+        ? req.body.vehicleInfo.trim()
+        : postType;
+      const mediaType = typeof req.body?.mediaType === "string" ? req.body.mediaType : null;
+      const talkingPoints = typeof req.body?.talkingPoints === "string" ? req.body.talkingPoints : null;
+      const currentCaptions = req.body?.currentCaptions && typeof req.body.currentCaptions === "object"
+        ? req.body.currentCaptions
+        : undefined;
+
+      const captions = await generateCaptionsForPlatforms({
+        dealershipName: dealership.name,
+        brand: dealership.brand,
+        postType,
+        vehicleInfo,
+        platforms,
+        prompt,
+        mediaType,
+        captionSpec: (dealership as any).captionSpec,
+        gmbSpec: (dealership as any).gmbSpec,
+        talkingPoints,
+        currentCaptions,
+      });
+
+      res.json({
+        success: true,
+        platforms,
+        captions,
+        // Convenience aliases for the New Post form field names
+        caption: captions.instagram || captions.tiktok || "",
+        captionFacebook: captions.facebook || "",
+        captionGmb: captions.googlebusiness || "",
+        captionTiktok: captions.tiktok || "",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Caption generation failed" });
+    }
+  });
+
+  app.post("/api/posts/:id/rewrite-caption", async (req, res) => {
+    try {
+      const postId = Number(req.params.id);
+      const post = storage.getPost(postId);
+      if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
+
+      const direction = typeof req.body?.direction === "string" ? req.body.direction.trim() : "";
+      if (!direction) {
+        return res.status(400).json({ error: "Direction / topic is required to rewrite the caption." });
+      }
+      if (direction.length > 1200) {
+        return res.status(400).json({ error: "Direction is too long (max 1200 characters)." });
+      }
+
+      const dealership = storage.getDealership(post.dealershipId);
+      if (!dealership) return res.status(404).json({ error: "Dealership not found" });
+
+      const vehicleInfo = post.vehicleInfo || post.postType || "Featured vehicle";
+      const base = {
+        dealershipName: dealership.name,
+        brand: dealership.brand,
+        postType: post.postType,
+        vehicleInfo,
+        tone: "punchy" as const,
+        captionSpec: (dealership as any).captionSpec,
+        gmbSpec: (dealership as any).gmbSpec,
+        rewriteDirection: direction,
+      };
+
+      const [captionIG, captionFB, captionGMB] = await Promise.all([
+        generateCaption({
+          ...base,
+          platform: "instagram",
+          currentCaption: post.caption,
+        }),
+        generateCaption({
+          ...base,
+          platform: "facebook",
+          currentCaption: (post as any).captionFacebook || post.caption,
+        }),
+        generateCaption({
+          ...base,
+          platform: "googlebusiness",
+          tone: "professional",
+          currentCaption: (post as any).captionGmb || post.caption,
+        }),
+      ]);
+
+      const updated = storage.updatePost(postId, {
+        caption: captionIG,
+        captionFacebook: captionFB,
+        captionGmb: captionGMB,
+        notes: [
+          post.notes || "",
+          `Caption rewrite: ${direction.slice(0, 240)}`,
+        ].filter(Boolean).join(" | "),
+      });
+
+      if (!updated) return res.status(500).json({ error: "Failed to save rewritten captions" });
+
+      storage.logActivity({
+        postId: updated.id,
+        dealershipId: updated.dealershipId,
+        action: "edited",
+        details: `Caption rewritten from review queue: ${direction.slice(0, 160)}`,
+      });
+
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Caption rewrite failed" });
+    }
+  });
+
   app.delete("/api/posts/:id", (req, res) => {
     const post = storage.getPost(Number(req.params.id));
-    if (!post) return res.status(404).json({ error: "Not found" });
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
     storage.deletePost(Number(req.params.id));
     storage.logActivity({
       postId: post.id,
@@ -119,26 +618,39 @@ export async function registerRoutes(server: Server, app: Express) {
   app.post("/api/posts/bulk-approve", (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ error: "ids must be an array" });
-    const results = [];
-    for (const id of ids) {
-      const updated = storage.updatePost(id, { status: "scheduled" });
-      if (updated) {
+
+    const result = bulkApprovePosts(ids, {
+      getPost: (id) => {
+        const post = storage.getPost(id);
+        if (post && !dashboardCanSeeDealership(req, post.dealershipId)) return undefined;
+        return post;
+      },
+      updatePost: (id, data) => storage.updatePost(id, data),
+      archive: archiveFile,
+      findDuplicate: (post) => findRecentDuplicateForPost(post),
+      logScheduled: (updated) => {
         storage.logActivity({
           postId: updated.id,
           dealershipId: updated.dealershipId,
           action: "scheduled",
           details: `Post approved & scheduled: ${updated.vehicleInfo || updated.postType}`,
         });
-        results.push(updated);
-      }
-    }
-    res.json(results);
+      },
+    });
+
+    res.status(result.failed.length > 0 ? 207 : 200).json({
+      successful: result.successful,
+      failed: result.failed,
+    });
   });
 
   // ---- Activity ----
   // ── TELEGRAM ────────────────────────────────────────────
   // Telegram webhook — handles Approve/Reject button taps
   app.post("/api/telegram/webhook", async (req, res) => {
+    if (!process.env.TELEGRAM_BOT_TOKEN?.trim() || !process.env.TELEGRAM_CHAT_ID?.trim()) {
+      return res.status(404).json({ error: "Not found" });
+    }
     const { callback_query } = req.body;
     if (!callback_query) return res.json({ ok: true });
 
@@ -151,8 +663,26 @@ export async function registerRoutes(server: Server, app: Express) {
       const postId = parseInt(data.replace("approve_", ""));
       const post = storage.getPost(postId);
       if (post) {
+        try {
+          archivePostSourceOrThrow(post, "scheduled", archiveFile);
+          assertNoRecentVehicleDuplicateOrThrow(post);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, text: `⚠️ Could not schedule *${post.vehicleInfo}*: ${message}`, parse_mode: "Markdown" }),
+          });
+          await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ callback_query_id: callback_query.id }),
+          });
+          return res.json({ ok: false, error: message });
+        }
+
         storage.updatePost(postId, { status: "scheduled" });
-        const result = await publishPost(postId);
+        // Do not publish from Telegram. Calendar scheduling is not a publish approval.
         // Update Telegram message
         await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
           method: "POST",
@@ -196,7 +726,7 @@ export async function registerRoutes(server: Server, app: Express) {
   // Send approval request for a specific post
   app.post("/api/posts/:id/notify", async (req, res) => {
     const post = storage.getPost(parseInt(req.params.id));
-    if (!post) return res.status(404).json({ error: "Not found" });
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
     const dealerships = storage.getDealerships();
     const dealer = dealerships.find(d => d.id === post.dealershipId);
     const success = await sendApprovalRequest(post, dealer?.name || "Unknown");
@@ -216,65 +746,616 @@ export async function registerRoutes(server: Server, app: Express) {
   app.post("/api/posts/:id/publish", async (req, res) => {
     const postId = parseInt(req.params.id);
     const post = storage.getPost(postId);
-    if (!post) return res.status(404).json({ error: "Not found" });
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
 
-    // Set status to scheduled first
-    storage.updatePost(postId, { status: "scheduled" });
+    if (!publishEnabled()) {
+      if (post.status !== "approved" || !post.approvedAt?.trim() || !post.approvedBy?.trim()) {
+        return res.status(409).json({
+          error: "Manual publish requires status approved with approved_at and approved_by when PUBLISH_ENABLED is not true",
+        });
+      }
+    }
+    const gate = evaluatePublishGate(post);
+    if (!gate.ok) {
+      return res.status(409).json({ error: gate.reason });
+    }
+    const idem = evaluatePublishIdempotency(post);
+    if (!idem.ok) {
+      return res.status(409).json({ error: idem.reason, zernioIds: idem.zernioIds });
+    }
 
-    const result = await publishPost(postId);
+    try {
+      archivePostSourceOrThrow(post, "published", archiveFile);
+      assertNoRecentVehicleDuplicateOrThrow(post);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(409).json({ error: message });
+    }
+
+    const result = await publishPost(postId, { manual: true });
     res.json(result);
   });
 
-  // ── DRIVE SCANNER ───────────────────────────────────────────
-  app.post("/api/drive/scan", async (req, res) => {
+  app.post("/api/posts/hold-backlog", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const scope: HoldScope = req.body?.scope === "all_scheduled" ? "all_scheduled" : "due";
+    const reason = typeof req.body?.reason === "string" && req.body.reason.trim()
+      ? req.body.reason.trim().slice(0, 500)
+      : "backlog hold";
+    const dryRun = req.body?.dryRun === true;
+    const excludeIds = Array.isArray(req.body?.excludeIds)
+      ? req.body.excludeIds.map((id: unknown) => Number(id)).filter((id: number) => Number.isInteger(id))
+      : [];
+    const now = new Date();
+    const held = [];
+    const skipped = [];
+    for (const post of storage.getPosts()) {
+      if (!shouldHoldPost(post, now, scope, excludeIds)) {
+        continue;
+      }
+      const patch = buildHoldPatch(post, now, reason);
+      if (dryRun) {
+        held.push({ id: post.id, from: post.status, to: "held" });
+        continue;
+      }
+      const updated = storage.updatePost(post.id, patch as any);
+      if (!updated) {
+        skipped.push({ id: post.id, error: "Failed to update post" });
+        continue;
+      }
+      storage.logActivity({
+        postId: updated.id,
+        dealershipId: updated.dealershipId,
+        action: "held",
+        details: `Post held (was ${post.status}): ${updated.vehicleInfo || updated.postType}. ${reason}`,
+      });
+      held.push(updated);
+    }
+    res.json({ success: true, dryRun, scope, reason, excludeIds, count: held.length, held, skipped });
+  });
+
+  app.post("/api/posts/:id/release-hold", (req, res) => {
+    const postId = Number(req.params.id);
+    const post = storage.getPost(postId);
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
+    const patch = buildReleaseHoldPatch(post);
+    if (!patch) return res.status(409).json({ error: "Post is not held" });
+    const updated = storage.updatePost(postId, patch as any);
+    if (!updated) return res.status(500).json({ error: "Failed to update post" });
+    storage.logActivity({
+      postId: updated.id,
+      dealershipId: updated.dealershipId,
+      action: "released_hold",
+      details: `Hold released; status restored to ${updated.status}: ${updated.vehicleInfo || updated.postType}`,
+    });
+    res.json(updated);
+  });
+
+  app.post("/api/posts/approve-publish", (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((id: unknown) => Number(id)) : [];
+    if (ids.length === 0 || ids.some((id: number) => !Number.isInteger(id))) {
+      return res.status(400).json({ error: "ids must be an array of post IDs" });
+    }
+    const dateYmd = typeof req.body?.date === "string" ? req.body.date : formatChicagoYmd(new Date());
+    const nonce = typeof req.body?.nonce === "string" ? req.body.nonce : undefined;
+    if (nonce === NOV6_2026_APPROVE_NONCE) {
+      const allowed = validateNov6PublishApproval(ids, dateYmd, nonce);
+      if (!allowed.ok) return res.status(400).json({ error: allowed.reason });
+    }
+    const approvedBy = actorName(req, req.body?.approvedBy);
+    const now = new Date();
+    const successful = [];
+    const failed = [];
+    let patch;
     try {
-      const count = await scanDriveFolders();
-      res.json({ success: true, newPosts: count, message: `Created ${count} new draft post(s) from Drive` });
+      patch = buildApprovePublishPatch(approvedBy, now);
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+
+    for (const id of ids) {
+      const existing = storage.getPost(id);
+      if (!existing || !dashboardCanSeeDealership(req, existing.dealershipId)) {
+        failed.push({ id, error: "Post not found" });
+        continue;
+      }
+      if (existing.status === "held") {
+        failed.push({ id, error: "Release the hold before approving this post for publish" });
+        continue;
+      }
+      if (existing.status === "published" || existing.status === "rejected") {
+        failed.push({ id, error: `Cannot approve a ${existing.status} post` });
+        continue;
+      }
+      try {
+        archivePostSourceOrThrow(existing, "approved", archiveFile);
+      } catch (error) {
+        failed.push({ id, error: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
+      const updated = storage.updatePost(id, patch as any);
+      if (!updated) {
+        failed.push({ id, error: "Failed to update post" });
+        continue;
+      }
+      storage.logActivity({
+        postId: updated.id,
+        dealershipId: updated.dealershipId,
+        action: "approved",
+        details: `Publish approved by ${approvedBy}: ${updated.vehicleInfo || updated.postType}`,
+      });
+      successful.push(updated);
+    }
+
+    res.status(failed.length > 0 ? 207 : 200).json({
+      successful,
+      failed,
+      approvedBy,
+      date: dateYmd,
+      nonce: nonce || null,
+      allowlist: nonce === NOV6_2026_APPROVE_NONCE ? [...NOV6_2026_READY_POST_IDS] : null,
+    });
+  });
+
+  // ── DRIVE SCANNER ───────────────────────────────────────────
+  app.get("/api/drive/config", (req, res) => {
+    if (!driveConfigured()) {
+      return res.json({
+        configured: false,
+        account: null,
+        parentFolderId: null,
+        parentFolderName: null,
+        dealerships: [],
+      });
+    }
+    try {
+      const config = loadFolders();
+      const dealerships = storage.getDealerships();
+      const items = Object.entries(config.dealerships)
+        .map(([name, folderConfig]) => {
+          const dealer = dealerships.find(d => d.id === folderConfig.id);
+          return {
+            id: folderConfig.id,
+            name,
+            brand: dealer?.brand ?? null,
+            rootFolderId: folderConfig.root,
+            folders: folderConfig.folders,
+          };
+        })
+        .filter((item) => dashboardCanSeeDealership(req, item.id))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      res.json({
+        account: config.account,
+        parentFolderId: config.parentFolderId ?? null,
+        parentFolderName: config.parentFolderName ?? null,
+        dealerships: items,
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  // ── CONTENT ENGINE ──────────────────────────────────────────
-  app.get("/api/content-engine/cadence", (_req, res) => {
-    const settings = storage.getCadenceSettings();
-    const dealerships = storage.getDealerships();
-    const enriched = settings
-      .filter((s: any) => s.isActive)
-      .map((s: any) => {
-        const dealer = dealerships.find((d: any) => d.id === s.dealershipId);
+  app.get("/api/engine/status", (_req, res) => {
+    const paused = storage.getAppSetting("imports_paused") === "true";
+    const lastRunAt = storage.getAppSetting("last_scan_at") || null;
+    const lastRunCount = storage.getAppSetting("last_scan_count") || null;
+    const driveScan = getDriveScanStatus();
+    res.json({
+      paused,
+      lastRunAt,
+      lastRunCount,
+      driveScan,
+      publishEnabled: publishEnabled(),
+      driveScanEnabled: driveScanEnabled(),
+    });
+  });
+
+  app.get("/api/engine/reel-health", (req, res) => {
+    try {
+      const config = driveConfigured() ? loadFolders() : { dealerships: {} as Record<string, { id: number; folders: Record<string, string> }> };
+      const dealerships = storage.getDealerships();
+      const cadence = storage.getCadenceSettings().filter((s) => s.isActive);
+      const posts = storage.getPosts();
+      const floorWeeks = REEL_INVENTORY_FLOOR_WEEKS;
+
+      const rows = dealerships.map((dealer) => {
+        const dealerCadence = cadence.filter((c) => c.dealershipId === dealer.id);
+        const weeklyReelTarget = dealerCadence.reduce((sum, rule) => {
+          if (!rule.reelsEnabled) return sum;
+          return sum + Math.max(0, Number(rule.reelsPerWeek || 0));
+        }, 0);
+        const inventoryFloor = weeklyReelTarget * floorWeeks;
+        const unconfiguredRules = dealerCadence.filter((rule) => !rule.reelsConfigured).length;
+
+        const folderConfig = Object.values(config.dealerships).find((d) => d.id === dealer.id);
+        let driveVideosAvailable = 0;
+        if (folderConfig) {
+          const usedSources = new Set(
+            posts.filter((p) => p.dealershipId === dealer.id).map((p) => p.folderSource).filter(Boolean),
+          );
+          for (const [postType, folderId] of Object.entries(folderConfig.folders)) {
+            if (postType.startsWith("_") || postType === "Customer Media") continue;
+            try {
+              const media = listFolder(folderId);
+              driveVideosAvailable += media.filter(
+                (file) => isVideoMedia(file) && !usedSources.has(`${folderId}/${file.id}`),
+              ).length;
+            } catch {
+              // ignore folder list failures for health snapshot
+            }
+          }
+        }
+
+        const activeVideoPosts = posts.filter(
+          (p) =>
+            p.dealershipId === dealer.id &&
+            p.mediaType === "video" &&
+            ["draft", "queued", "scheduled"].includes(p.status),
+        ).length;
+
+        const available = driveVideosAvailable + activeVideoPosts;
+        const shortfall = Math.max(0, inventoryFloor - available);
+
         return {
-          dealershipName: dealer?.name ?? "Unknown",
-          postType: s.postType,
-          postsPerDay: s.postsPerDay,
-          daysOfWeek: s.daysOfWeek,
-          platforms: s.platforms,
-          isActive: s.isActive,
+          dealershipId: dealer.id,
+          dealershipName: dealer.name,
+          weeklyReelTarget,
+          inventoryFloorWeeks: floorWeeks,
+          inventoryFloor,
+          driveVideosAvailable,
+          activeVideoPosts,
+          available,
+          shortfall,
+          unconfiguredRules,
+          healthy: unconfiguredRules === 0 && shortfall === 0,
         };
-      })
-      .sort((a: any, b: any) => a.dealershipName.localeCompare(b.dealershipName));
-    res.json(enriched);
+      }).filter((row) => dashboardCanSeeDealership(req, row.dealershipId));
+
+      res.json({
+        floorWeeks,
+        totals: {
+          weeklyReelTarget: rows.reduce((s, r) => s + r.weeklyReelTarget, 0),
+          inventoryFloor: rows.reduce((s, r) => s + r.inventoryFloor, 0),
+          available: rows.reduce((s, r) => s + r.available, 0),
+          shortfall: rows.reduce((s, r) => s + r.shortfall, 0),
+          unconfiguredRules: rows.reduce((s, r) => s + r.unconfiguredRules, 0),
+        },
+        dealerships: rows,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/engine/pause", (req, res) => {
+    if (req.dashboardUser && req.dashboardUser.dealershipIds !== null) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    storage.setAppSetting("imports_paused", "true");
+    res.json({ success: true, paused: true });
+  });
+
+  app.post("/api/engine/resume", (req, res) => {
+    if (req.dashboardUser && req.dashboardUser.dealershipIds !== null) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    storage.setAppSetting("imports_paused", "false");
+    res.json({ success: true, paused: false });
+  });
+
+  // Weekly talking points / offers — per dealership (Generate New Posts)
+  function captionTalkingKey(dealershipId: number): string {
+    return `caption_talking_points.${dealershipId}`;
+  }
+  function captionTalkingUpdatedKey(dealershipId: number): string {
+    return `caption_talking_points_updated_at.${dealershipId}`;
+  }
+
+  app.get("/api/caption-brief", (req, res) => {
+    const dealerships = storage.getDealerships().filter((dealer) => dashboardCanSeeDealership(req, dealer.id));
+    const stores = dealerships.map((d) => ({
+      dealershipId: d.id,
+      name: d.name,
+      brand: d.brand,
+      color: d.color,
+      talkingPoints: storage.getAppSetting(captionTalkingKey(d.id)) || "",
+      updatedAt: storage.getAppSetting(captionTalkingUpdatedKey(d.id)) || null,
+    }));
+    // Legacy global key (pre store-level) — surface once so UI can migrate if needed
+    const legacyGlobal = storage.getAppSetting("caption_talking_points") || "";
+    res.json({ stores, legacyGlobal: legacyGlobal || null });
+  });
+
+  app.put("/api/caption-brief", (req, res) => {
+    const updatedAt = new Date().toISOString();
+    const bodyStores = Array.isArray(req.body?.stores) ? req.body.stores : null;
+
+    // Bulk: { stores: [{ dealershipId, talkingPoints }] }
+    if (bodyStores) {
+      const dealershipIds = new Set(storage.getDealerships().map((d) => d.id));
+      const saved: Array<{ dealershipId: number; talkingPoints: string; updatedAt: string }> = [];
+      for (const row of bodyStores) {
+        const id = Number(row?.dealershipId);
+        if (!Number.isInteger(id) || !dealershipIds.has(id) || !dashboardCanSeeDealership(req, id)) continue;
+        const talkingPoints = (typeof row?.talkingPoints === "string" ? row.talkingPoints : "")
+          .trim()
+          .slice(0, 4000);
+        storage.setAppSetting(captionTalkingKey(id), talkingPoints);
+        storage.setAppSetting(captionTalkingUpdatedKey(id), updatedAt);
+        saved.push({ dealershipId: id, talkingPoints, updatedAt });
+      }
+      // Clear legacy global so it doesn't confuse future reads
+      if (storage.getAppSetting("caption_talking_points")) {
+        storage.setAppSetting("caption_talking_points", "");
+      }
+      return res.json({ success: true, savedCount: saved.length, stores: saved, updatedAt });
+    }
+
+    // Single store: { dealershipId, talkingPoints }
+    const id = Number(req.body?.dealershipId);
+    if (!Number.isInteger(id) || !storage.getDealership(id) || !dashboardCanSeeDealership(req, id)) {
+      return res.status(400).json({ error: "dealershipId required (or pass stores[])" });
+    }
+    const talkingPoints = (typeof req.body?.talkingPoints === "string" ? req.body.talkingPoints : "")
+      .trim()
+      .slice(0, 4000);
+    storage.setAppSetting(captionTalkingKey(id), talkingPoints);
+    storage.setAppSetting(captionTalkingUpdatedKey(id), updatedAt);
+    res.json({ success: true, dealershipId: id, talkingPoints, updatedAt });
+  });
+
+  async function runSpecialsTalkingSync(force = false) {
+    const updatedAt = new Date().toISOString();
+    const stores = storage.getDealerships()
+      .filter((d) => SPECIALS_SOURCES[d.id])
+      .map((d) => ({ dealershipId: d.id, name: d.name, brand: d.brand }));
+    return syncTalkingPointsFromSpecials({
+      stores,
+      force,
+      getExisting: (id) => storage.getAppSetting(captionTalkingKey(id)) || "",
+      save: (id, talkingPoints) => {
+        storage.setAppSetting(captionTalkingKey(id), talkingPoints);
+        storage.setAppSetting(captionTalkingUpdatedKey(id), updatedAt);
+      },
+    });
+  }
+
+  app.post("/api/caption-brief/sync", async (req, res) => {
+    try {
+      const force = req.body?.force === true;
+      const results = await runSpecialsTalkingSync(force);
+      res.json({
+        success: true,
+        updatedAt: new Date().toISOString(),
+        results,
+        stores: storage.getDealerships().map((d) => ({
+          dealershipId: d.id,
+          name: d.name,
+          brand: d.brand,
+          color: d.color,
+          talkingPoints: storage.getAppSetting(captionTalkingKey(d.id)) || "",
+          updatedAt: storage.getAppSetting(captionTalkingUpdatedKey(d.id)) || null,
+        })),
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : "Specials sync failed",
+      });
+    }
+  });
+
+  app.get("/api/reports/friday-queue", (req, res) => {
+    const secret = process.env.CRON_SECRET?.trim() || "";
+    const presented = req.get("x-cron-secret") || "";
+    if (!secret || presented !== secret) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const rows = storage.getPosts();
+    const postsByStatus: Record<string, number> = {};
+    for (const post of rows) postsByStatus[post.status] = (postsByStatus[post.status] || 0) + 1;
+    const queued = rows.filter((post) => post.status === "queued");
+    const now = new Date();
+    const horizon = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const scheduledNext14Days = rows.filter((post) => {
+      if (post.status !== "scheduled" || !post.scheduledFor) return false;
+      const when = new Date(post.scheduledFor);
+      return when >= now && when < horizon;
+    }).length;
+    const byStore = new Map<string, number>();
+    const dealers = storage.getDealerships();
+    for (const post of queued) {
+      const name = dealers.find((dealer) => dealer.id === post.dealershipId)?.name || "Unknown";
+      byStore.set(name, (byStore.get(name) || 0) + 1);
+    }
+    res.json({
+      postsByStatus,
+      queued: queued.length,
+      queuedByDealership: Array.from(byStore.entries()).map(([name, count]) => ({ name, count })),
+      scheduledNext14Days,
+    });
+  });
+
+  app.get("/api/admin/import/status", (req, res) => {
+    handleImportStatus(req, res);
+  });
+
+  app.post("/api/drive/scan", async (req, res) => {
+    if (req.dashboardUser && req.dashboardUser.dealershipIds !== null) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (!driveConfigured()) {
+      console.error("[DriveScanner] Weekly scan skipped: drive not configured");
+      return res.json({ skipped: true, reason: "drive not configured" });
+    }
+    if (!driveScanEnabled()) {
+      console.error("[DriveScanner] Weekly scan skipped: DRIVE_SCAN_ENABLED is not true");
+      return res.json({
+        success: true,
+        skipped: true,
+        newPosts: 0,
+        message: "DRIVE_SCAN_ENABLED is not true",
+      });
+    }
+    try {
+      const requestedWeeks = Number(req.body?.weeks ?? 1);
+      const weeks = Number.isFinite(requestedWeeks) ? Math.min(4, Math.max(1, Math.trunc(requestedWeeks))) : 1;
+      const paused = storage.getAppSetting("imports_paused") === "true";
+      if (paused) {
+        return res.status(409).json({ error: "Imports are paused" });
+      }
+
+      // Refresh SALES mix from live specials before this scan (fail open).
+      try {
+        await runSpecialsTalkingSync();
+      } catch {
+        /* keep existing briefs */
+      }
+
+      // Persist per-store talking points before background runner starts
+      const dealershipIds = new Set(storage.getDealerships().map((d) => d.id));
+      const now = new Date().toISOString();
+      let storesWithPoints = 0;
+      const currentMonth = new Date()
+        .toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "America/Chicago" })
+        .toUpperCase();
+      const briefIsCurrent = (text: string) => Boolean(text.trim()) && text.toUpperCase().includes(currentMonth);
+
+      if (req.body?.talkingPointsByDealership && typeof req.body.talkingPointsByDealership === "object") {
+        for (const [rawId, rawPoints] of Object.entries(req.body.talkingPointsByDealership as Record<string, unknown>)) {
+          const id = Number(rawId);
+          if (!Number.isInteger(id) || !dealershipIds.has(id)) continue;
+          const talkingPoints = (typeof rawPoints === "string" ? rawPoints : "").trim().slice(0, 4000);
+          if (!briefIsCurrent(talkingPoints)) continue;
+          storage.setAppSetting(captionTalkingKey(id), talkingPoints);
+          storage.setAppSetting(captionTalkingUpdatedKey(id), now);
+        }
+      } else if (Array.isArray(req.body?.stores)) {
+        for (const row of req.body.stores) {
+          const id = Number(row?.dealershipId);
+          if (!Number.isInteger(id) || !dealershipIds.has(id)) continue;
+          const talkingPoints = (typeof row?.talkingPoints === "string" ? row.talkingPoints : "")
+            .trim()
+            .slice(0, 4000);
+          if (!briefIsCurrent(talkingPoints)) continue;
+          storage.setAppSetting(captionTalkingKey(id), talkingPoints);
+          storage.setAppSetting(captionTalkingUpdatedKey(id), now);
+        }
+      }
+      for (const id of Array.from(dealershipIds)) {
+        if ((storage.getAppSetting(captionTalkingKey(id)) || "").trim()) storesWithPoints += 1;
+      }
+
+      const driveScan = getDriveScanStatus();
+      if (driveScan.running) {
+        return res.status(409).json({
+          error: "Drive scan already running",
+          jobId: driveScan.jobId,
+          startedAt: driveScan.startedAt,
+        });
+      }
+
+      const startedAt = new Date().toISOString();
+      const scanJob = storage.createEngineJob({
+        moduleKey: "post-engine",
+        jobType: "drive-scan",
+        status: "running",
+        startedAt,
+        payload: JSON.stringify({
+          source: "manual-route",
+          weeks,
+          storesWithTalkingPoints: storesWithPoints,
+        }),
+        summary: storesWithPoints
+          ? `Drive scan started (${weeks}w) · talking points on ${storesWithPoints} store(s)`
+          : "Drive scan started from PostEngine route",
+        dealershipId: null,
+        completedAt: null,
+        errorMessage: null,
+      });
+
+      const runnerPid = runDriveScanJob(scanJob.id, weeks);
+      res.status(202).json({
+        success: true,
+        jobId: scanJob.id,
+        runnerPid,
+        message: storesWithPoints
+          ? `Drive scan started — captions will use store-level talking points (${storesWithPoints} store${storesWithPoints === 1 ? "" : "s"})`
+          : "Drive scan started in background",
+        storesWithTalkingPoints: storesWithPoints,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ── CADENCE SETTINGS ─────────────────────────────────────────
   app.get("/api/cadence", (req, res) => {
     const { dealershipId } = req.query;
-    const settings = storage.getCadenceSettings(dealershipId ? parseInt(dealershipId as string) : undefined);
+    const settings = storage.getCadenceSettings(dealershipId ? parseInt(dealershipId as string) : undefined)
+      .filter((setting) => dashboardCanSeeDealership(req, setting.dealershipId));
     res.json(settings);
   });
 
   app.post("/api/cadence", (req, res) => {
-    const setting = storage.createCadenceSetting(req.body);
-    res.json(setting);
+    try {
+      const parsed = insertCadenceSchema.parse({
+        ...req.body,
+        reelsConfigured: Boolean(req.body?.reelsConfigured),
+        reelsEnabled: Boolean(req.body?.reelsEnabled),
+        reelsPerWeek: Number(req.body?.reelsPerWeek || 0),
+      });
+      if (!dashboardCanSeeDealership(req, parsed.dealershipId)) {
+        return res.status(404).json({ error: "Not found" });
+      }
+      const setting = storage.createCadenceSetting(parsed);
+      res.json(setting);
+    } catch (e: any) {
+      if (e?.name === "ZodError") {
+        return res.status(400).json({ error: e.errors?.[0]?.message || "Invalid cadence rule" });
+      }
+      res.status(400).json({ error: e.message || "Invalid cadence rule" });
+    }
   });
 
   app.patch("/api/cadence/:id", (req, res) => {
-    const setting = storage.updateCadenceSetting(parseInt(req.params.id), req.body);
-    if (!setting) return res.status(404).json({ error: "Not found" });
-    res.json(setting);
+    try {
+      const existing = storage.getCadenceSettings().find((s) => s.id === parseInt(req.params.id));
+      if (!existing || !dashboardCanSeeDealership(req, existing.dealershipId)) return res.status(404).json({ error: "Not found" });
+      const merged = {
+        dealershipId: existing.dealershipId,
+        postType: existing.postType,
+        daysOfWeek: existing.daysOfWeek,
+        postsPerDay: existing.postsPerDay,
+        autoTime: existing.autoTime,
+        manualTime: existing.manualTime,
+        platforms: existing.platforms,
+        isActive: existing.isActive,
+        reelsConfigured: existing.reelsConfigured,
+        reelsEnabled: existing.reelsEnabled,
+        reelsPerWeek: existing.reelsPerWeek,
+        ...req.body,
+      };
+      const parsed = insertCadenceSchema.parse({
+        ...merged,
+        reelsConfigured: Boolean(merged.reelsConfigured),
+        reelsEnabled: Boolean(merged.reelsEnabled),
+        reelsPerWeek: Number(merged.reelsPerWeek || 0),
+      });
+      const setting = storage.updateCadenceSetting(parseInt(req.params.id), parsed);
+      if (!setting) return res.status(404).json({ error: "Not found" });
+      res.json(setting);
+    } catch (e: any) {
+      if (e?.name === "ZodError") {
+        return res.status(400).json({ error: e.errors?.[0]?.message || "Invalid cadence rule" });
+      }
+      res.status(400).json({ error: e.message || "Invalid cadence rule" });
+    }
   });
 
   app.delete("/api/cadence/:id", (req, res) => {
+    const existing = storage.getCadenceSettings().find((setting) => setting.id === parseInt(req.params.id));
+    if (!existing || !dashboardCanSeeDealership(req, existing.dealershipId)) return res.status(404).json({ error: "Not found" });
     const success = storage.deleteCadenceSetting(parseInt(req.params.id));
     if (!success) return res.status(404).json({ error: "Not found" });
     res.json({ success: true });
@@ -282,16 +1363,23 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.get("/api/activity", (req, res) => {
     const limit = req.query.limit ? Number(req.query.limit) : 20;
-    const activity = storage.getActivityLog(limit);
+    const activity = storage.getActivityLog(limit).filter((row) => row.dealershipId == null || dashboardCanSeeDealership(req, row.dealershipId));
     res.json(activity);
   });
 
   // ---- Dashboard Stats ----
-  app.get("/api/dashboard", (_req, res) => {
-    const stats = storage.getPostStats();
-    const dealerships = storage.getDealerships();
-    const recentActivity = storage.getActivityLog(10);
-    const allPosts = storage.getPosts();
+  app.get("/api/dashboard", (req, res) => {
+    const dealerships = storage.getDealerships().filter((dealer) => dashboardCanSeeDealership(req, dealer.id));
+    const allowed = new Set(dealerships.map((dealer) => dealer.id));
+    const recentActivity = storage.getActivityLog(10).filter((row) => row.dealershipId == null || allowed.has(row.dealershipId));
+    const allPosts = storage.getPosts().filter((post) => allowed.has(post.dealershipId));
+    const stats = {
+      total: allPosts.length,
+      draft: allPosts.filter((post) => post.status === "draft").length,
+      queued: allPosts.filter((post) => post.status === "queued").length,
+      scheduled: allPosts.filter((post) => post.status === "scheduled").length,
+      published: allPosts.filter((post) => post.status === "published").length,
+    };
 
     // Posts per dealership
     const perDealership = dealerships.map(d => ({

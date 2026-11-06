@@ -1,10 +1,165 @@
-import { dealerships, posts, activityLog, cadenceSettings, type Dealership, type InsertDealership, type Post, type InsertPost, type ActivityLog, type InsertActivityLog, type CadenceSetting, type InsertCadence } from "@shared/schema";
+import {
+  dealerships,
+  posts,
+  activityLog,
+  cadenceSettings,
+  engineModules,
+  accountModules,
+  engineJobs,
+  engineSources,
+  offerReviews,
+  offerReviewTargets,
+  offerReviewDownstreamUses,
+  contentEngineBuildManifestEntries,
+  emailIterationSetups,
+  type Dealership,
+  type InsertDealership,
+  type Post,
+  type InsertPost,
+  type ActivityLog,
+  type InsertActivityLog,
+  type CadenceSetting,
+  type InsertCadence,
+  type EngineModule,
+  type InsertEngineModule,
+  type AccountModule,
+  type InsertAccountModule,
+  type EngineJob,
+  type InsertEngineJob,
+  type EngineSource,
+  type InsertEngineSource,
+  type OfferReview,
+  type InsertOfferReview,
+  type OfferReviewTarget,
+  type InsertOfferReviewTarget,
+  type OfferReviewDownstreamUse,
+  type InsertOfferReviewDownstreamUse,
+  type ContentEngineBuildManifestEntry,
+  type InsertContentEngineBuildManifestEntry,
+  type EmailIterationSetup,
+  type InsertEmailIterationSetup,
+} from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, and, sql } from "drizzle-orm";
+import { copyFileSync, existsSync, mkdirSync } from "fs";
+import { homedir } from "os";
+import path from "path";
+import { sanitizeLegacyCaption } from "./post-sanitizer";
 
-const sqlite = new Database("sqlite.db");
-const db = drizzle(sqlite);
+function resolveDatabasePath() {
+  const configuredPath = process.env.POSTENGINE_DB_PATH?.trim() || process.env.SQLITE_PATH?.trim();
+  if (configuredPath) {
+    const absoluteConfiguredPath = path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.resolve(process.cwd(), configuredPath);
+    mkdirSync(path.dirname(absoluteConfiguredPath), { recursive: true });
+    return absoluteConfiguredPath;
+  }
+
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    const volumePath = path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "sqlite.db");
+    mkdirSync(path.dirname(volumePath), { recursive: true });
+    return volumePath;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    const volumePath = "/data/sqlite.db";
+    mkdirSync(path.dirname(volumePath), { recursive: true });
+    return volumePath;
+  }
+
+  const appDataDir = path.join(homedir(), ".postengine");
+  const appDataDbPath = path.join(appDataDir, "sqlite.db");
+  const legacyRepoDbPath = path.resolve(process.cwd(), "sqlite.db");
+
+  mkdirSync(appDataDir, { recursive: true });
+
+  if (!existsSync(appDataDbPath) && existsSync(legacyRepoDbPath)) {
+    copyFileSync(legacyRepoDbPath, appDataDbPath);
+    console.log(`[storage] Seeded database at ${appDataDbPath} from legacy repo sqlite.db`);
+  }
+
+  return appDataDbPath;
+}
+
+export const DATABASE_PATH = resolveDatabasePath();
+let sqlite = openDatabase(DATABASE_PATH);
+let db = drizzle(sqlite);
+
+function openDatabase(file: string) {
+  const database = new Database(file);
+  database.pragma("journal_mode = WAL");
+  database.pragma("busy_timeout = 5000");
+  return database;
+}
+
+export function sqliteFilePath(): string {
+  return DATABASE_PATH;
+}
+
+export function closeDatabase(): void {
+  try {
+    sqlite.pragma("wal_checkpoint(TRUNCATE)");
+  } catch {
+    // The file may already be closed or missing.
+  }
+  sqlite.close();
+}
+
+export function reopenDatabase(): void {
+  sqlite = openDatabase(DATABASE_PATH);
+  db = drizzle(sqlite);
+}
+
+export function postCountsByStatus(): Record<string, number> {
+  const rows = sqlite.prepare(
+    "select status, count(*) as n from posts group by status",
+  ).all() as { status: string; n: number }[];
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.status] = row.n;
+  return counts;
+}
+
+const DUPLICATE_FOLDER_SOURCE_INDEX = "idx_posts_dealership_folder_source_unique";
+
+export class DuplicateFolderSourceError extends Error {
+  constructor(folderSource?: string | null) {
+    super(folderSource
+      ? `A post already exists for Drive source "${folderSource}" in this dealership.`
+      : "A post already exists for this Drive source in this dealership.");
+    this.name = "DuplicateFolderSourceError";
+  }
+}
+
+export function isDuplicateFolderSourceError(error: unknown): error is DuplicateFolderSourceError {
+  return error instanceof DuplicateFolderSourceError;
+}
+
+function normalizeFolderSource(folderSource?: string | null) {
+  const normalized = folderSource?.trim();
+  return normalized ? normalized : null;
+}
+
+function isSqliteDuplicateFolderSourceError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes(`UNIQUE constraint failed: posts.dealership_id, posts.folder_source`) ||
+    error.message.includes(DUPLICATE_FOLDER_SOURCE_INDEX);
+}
+
+function ensureFolderSourceUnique(dealershipId: number, folderSource: string, excludePostId?: number) {
+  const existing = db.select({ id: posts.id })
+    .from(posts)
+    .where(and(
+      eq(posts.dealershipId, dealershipId),
+      eq(posts.folderSource, folderSource),
+    ))
+    .get();
+
+  if (existing && existing.id !== excludePostId) {
+    throw new DuplicateFolderSourceError(folderSource);
+  }
+}
 
 export interface IStorage {
   // Dealerships
@@ -12,14 +167,59 @@ export interface IStorage {
   getDealership(id: number): Dealership | undefined;
   createDealership(data: InsertDealership): Dealership;
   updateDealership(id: number, data: Partial<InsertDealership>): Dealership | undefined;
+  deleteDealership(id: number): boolean;
 
   // Posts
   getPosts(filters?: { dealershipId?: number; status?: string; postType?: string }): Post[];
   getPost(id: number): Post | undefined;
   createPost(data: InsertPost): Post;
-  updatePost(id: number, data: Partial<InsertPost>): Post | undefined;
+  updatePost(id: number, data: Partial<Omit<Post, "id" | "createdAt">>): Post | undefined;
   deletePost(id: number): void;
-  getPostStats(): { total: number; draft: number; queued: number; scheduled: number; published: number };
+  getPostStats(): { total: number; draft: number; queued: number; scheduled: number; approved: number; held: number; published: number };
+
+  // App settings
+  getAppSetting(key: string): string | undefined;
+  setAppSetting(key: string, value: string): void;
+
+  // Shared engine core
+  getEngineModules(): EngineModule[];
+  createEngineModule(data: InsertEngineModule): EngineModule;
+  getAccountModules(dealershipId?: number): AccountModule[];
+  upsertAccountModule(data: InsertAccountModule): AccountModule;
+  getEngineJobs(limit?: number): EngineJob[];
+  getRunningEngineJobsByType(jobType: string): EngineJob[];
+  createEngineJob(data: InsertEngineJob): EngineJob;
+  updateEngineJob(id: number, data: Partial<InsertEngineJob>): EngineJob | undefined;
+  getEngineSources(): EngineSource[];
+  getEngineSourceByKey(key: string): EngineSource | undefined;
+  createEngineSource(data: InsertEngineSource): EngineSource;
+  updateEngineSourceByKey(key: string, data: Partial<InsertEngineSource>): EngineSource | undefined;
+  getOfferReviews(filters?: { status?: string; moduleKey?: string; sourceKey?: string; limit?: number }): OfferReview[];
+  getOfferReview(id: number): OfferReview | undefined;
+  getOfferReviewBySourceItemKey(sourceItemKey: string): OfferReview | undefined;
+  createOfferReview(data: InsertOfferReview): OfferReview;
+  upsertOfferReviewBySourceItemKey(sourceItemKey: string, data: InsertOfferReview): OfferReview;
+  updateOfferReview(id: number, data: Partial<InsertOfferReview>): OfferReview | undefined;
+  getOfferReviewTargets(offerReviewId?: number): OfferReviewTarget[];
+  replaceOfferReviewTargets(offerReviewId: number, dealershipIds: number[]): OfferReviewTarget[];
+  upsertOfferReviewTarget(data: InsertOfferReviewTarget): OfferReviewTarget;
+  getOfferReviewDownstreamUses(offerReviewId?: number, dealershipId?: number): OfferReviewDownstreamUse[];
+  replaceOfferReviewDownstreamUses(offerReviewId: number, dealershipId: number, uses: Array<{ channel: string; placement: string }>): OfferReviewDownstreamUse[];
+  getContentEngineBuildManifestEntries(offerReviewId?: number): ContentEngineBuildManifestEntry[];
+  replaceContentEngineBuildManifestEntriesForOfferReview(
+    offerReviewId: number,
+    entries: InsertContentEngineBuildManifestEntry[],
+  ): ContentEngineBuildManifestEntry[];
+  getEmailIterationSetups(): EmailIterationSetup[];
+  updateEmailIterationSetup(id: number, data: Partial<InsertEmailIterationSetup>): EmailIterationSetup | undefined;
+  getOfferReviewStats(): {
+    total: number;
+    detected: number;
+    reviewing: number;
+    approved: number;
+    rejected: number;
+    published: number;
+  };
 
   // Activity
   getActivityLog(limit?: number): ActivityLog[];
@@ -39,7 +239,14 @@ export class DatabaseStorage implements IStorage {
         instagram_handle TEXT,
         facebook_page TEXT,
         tiktok_handle TEXT,
-        caption_template TEXT,
+        instagram_cta TEXT,
+        facebook_cta TEXT,
+        gmb_cta TEXT,
+        caption_spec TEXT,
+        hashtag_template TEXT,
+        gmb_spec TEXT,
+        facebook_link TEXT,
+        gmb_link TEXT,
         color TEXT NOT NULL DEFAULT '#01696F'
       );
 
@@ -57,8 +264,17 @@ export class DatabaseStorage implements IStorage {
         platforms TEXT DEFAULT '["instagram","facebook"]',
         scheduled_for TEXT,
         published_at TEXT,
+        publish_attempts INTEGER NOT NULL DEFAULT 0,
+        last_publish_attempt_at TEXT,
+        publish_backoff_until TEXT,
+        publish_results TEXT,
         folder_source TEXT,
         notes TEXT,
+        approved_at TEXT,
+        approved_by TEXT,
+        held_at TEXT,
+        held_reason TEXT,
+        status_before_hold TEXT,
         created_at TEXT NOT NULL
       );
 
@@ -70,13 +286,314 @@ export class DatabaseStorage implements IStorage {
         details TEXT,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS cadence_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dealership_id INTEGER NOT NULL,
+        post_type TEXT NOT NULL,
+        days_of_week TEXT NOT NULL DEFAULT '[]',
+        posts_per_day INTEGER NOT NULL DEFAULT 1,
+        auto_time INTEGER NOT NULL DEFAULT 1,
+        manual_time TEXT,
+        platforms TEXT NOT NULL DEFAULT '["instagram","facebook","googlebusiness"]',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        reels_configured INTEGER NOT NULL DEFAULT 0,
+        reels_enabled INTEGER NOT NULL DEFAULT 0,
+        reels_per_week INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS engine_modules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        route TEXT,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS account_modules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dealership_id INTEGER NOT NULL,
+        module_key TEXT NOT NULL,
+        is_enabled INTEGER NOT NULL DEFAULT 1,
+        settings TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(dealership_id, module_key)
+      );
+
+      CREATE TABLE IF NOT EXISTS engine_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        module_key TEXT NOT NULL,
+        job_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        dealership_id INTEGER,
+        started_at TEXT,
+        completed_at TEXT,
+        summary TEXT,
+        payload TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS engine_sources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT NOT NULL UNIQUE,
+        module_key TEXT NOT NULL,
+        name TEXT NOT NULL,
+        watcher_type TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        target TEXT NOT NULL,
+        source_url TEXT,
+        access_status TEXT NOT NULL DEFAULT 'unknown',
+        preferred_rank INTEGER,
+        update_window_days TEXT NOT NULL DEFAULT '[]',
+        evidence_notes TEXT,
+        cadence_minutes INTEGER,
+        last_checked_at TEXT,
+        last_result_summary TEXT,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS offer_reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id INTEGER,
+        source_key TEXT NOT NULL,
+        source_item_key TEXT,
+        module_key TEXT NOT NULL,
+        job_id INTEGER,
+        dealership_id INTEGER,
+        brand TEXT,
+        account_name TEXT,
+        offer_title TEXT NOT NULL,
+        offer_model TEXT,
+        offer_type TEXT,
+        status TEXT NOT NULL DEFAULT 'detected',
+        source_url TEXT,
+        source_payload TEXT NOT NULL DEFAULT '{}',
+        normalized_payload TEXT NOT NULL DEFAULT '{}',
+        effective_date TEXT,
+        expiration_date TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS offer_review_targets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        offer_review_id INTEGER NOT NULL,
+        dealership_id INTEGER NOT NULL,
+        selection_status TEXT NOT NULL DEFAULT 'selected',
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(offer_review_id, dealership_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS offer_review_downstream_uses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        offer_review_id INTEGER NOT NULL,
+        dealership_id INTEGER NOT NULL,
+        channel TEXT NOT NULL,
+        placement TEXT NOT NULL DEFAULT 'supporting',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(offer_review_id, dealership_id, channel)
+      );
+
+      CREATE TABLE IF NOT EXISTS content_engine_build_manifest_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        offer_review_id INTEGER NOT NULL,
+        dealership_id INTEGER NOT NULL,
+        channel TEXT NOT NULL,
+        placement TEXT NOT NULL DEFAULT 'supporting',
+        module_key TEXT NOT NULL DEFAULT 'content-engine',
+        review_status TEXT NOT NULL DEFAULT 'approved',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(offer_review_id, dealership_id, channel)
+      );
+
+      CREATE TABLE IF NOT EXISTS email_iteration_setups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dealership_id INTEGER NOT NULL,
+        campaign_key TEXT NOT NULL,
+        campaign_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active-now',
+        latest_base_email_reference_file TEXT,
+        prior_reference_files TEXT NOT NULL DEFAULT '[]',
+        month_label TEXT NOT NULL DEFAULT '',
+        campaign_label TEXT NOT NULL DEFAULT '',
+        offer_changes_notes TEXT NOT NULL DEFAULT '',
+        photo_changes_notes TEXT NOT NULL DEFAULT '',
+        theme_custom_block_notes TEXT NOT NULL DEFAULT '',
+        cta_link_notes TEXT NOT NULL DEFAULT '',
+        carryover_notes TEXT NOT NULL DEFAULT '',
+        selected_offer_review_ids TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(dealership_id, campaign_key)
+      );
     `);
 
-    // Seed dealerships if empty
-    const count = db.select({ count: sql<number>`count(*)` }).from(dealerships).get();
-    if (count && count.count === 0) {
-      this.seedDealerships();
+    const postColumns = sqlite.prepare(`PRAGMA table_info(posts)`).all() as Array<{ name: string }>;
+    const postColumnNames = new Set(postColumns.map((col) => col.name));
+    if (!postColumnNames.has("caption_facebook")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN caption_facebook TEXT;`);
     }
+    if (!postColumnNames.has("caption_gmb")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN caption_gmb TEXT;`);
+    }
+    if (!postColumnNames.has("publish_attempts")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN publish_attempts INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!postColumnNames.has("last_publish_attempt_at")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN last_publish_attempt_at TEXT;`);
+    }
+    if (!postColumnNames.has("publish_backoff_until")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN publish_backoff_until TEXT;`);
+    }
+    if (!postColumnNames.has("publish_results")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN publish_results TEXT;`);
+    }
+    if (!postColumnNames.has("approved_at")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN approved_at TEXT;`);
+    }
+    if (!postColumnNames.has("approved_by")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN approved_by TEXT;`);
+    }
+    if (!postColumnNames.has("held_at")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN held_at TEXT;`);
+    }
+    if (!postColumnNames.has("held_reason")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN held_reason TEXT;`);
+    }
+    if (!postColumnNames.has("status_before_hold")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN status_before_hold TEXT;`);
+    }
+    if (!postColumnNames.has("caption_exact")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN caption_exact INTEGER NOT NULL DEFAULT 0;`);
+    }
+
+    const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;
+    const dealershipColumnNames = new Set(dealershipColumns.map((col) => col.name));
+    if (!dealershipColumnNames.has("instagram_cta")) {
+      sqlite.exec(`ALTER TABLE dealerships ADD COLUMN instagram_cta TEXT;`);
+    }
+    if (!dealershipColumnNames.has("facebook_cta")) {
+      sqlite.exec(`ALTER TABLE dealerships ADD COLUMN facebook_cta TEXT;`);
+    }
+    if (!dealershipColumnNames.has("gmb_cta")) {
+      sqlite.exec(`ALTER TABLE dealerships ADD COLUMN gmb_cta TEXT;`);
+    }
+    if (!dealershipColumnNames.has("caption_spec")) {
+      sqlite.exec(`ALTER TABLE dealerships ADD COLUMN caption_spec TEXT;`);
+    }
+    if (!dealershipColumnNames.has("hashtag_template")) {
+      sqlite.exec(`ALTER TABLE dealerships ADD COLUMN hashtag_template TEXT;`);
+    }
+    if (!dealershipColumnNames.has("gmb_spec")) {
+      sqlite.exec(`ALTER TABLE dealerships ADD COLUMN gmb_spec TEXT;`);
+    }
+    if (!dealershipColumnNames.has("facebook_link")) {
+      sqlite.exec(`ALTER TABLE dealerships ADD COLUMN facebook_link TEXT;`);
+    }
+    if (!dealershipColumnNames.has("gmb_link")) {
+      sqlite.exec(`ALTER TABLE dealerships ADD COLUMN gmb_link TEXT;`);
+    }
+
+    const engineSourceColumns = sqlite.prepare(`PRAGMA table_info(engine_sources)`).all() as Array<{ name: string }>;
+    const engineSourceColumnNames = new Set(engineSourceColumns.map((col) => col.name));
+    if (!engineSourceColumnNames.has("source_url")) {
+      sqlite.exec(`ALTER TABLE engine_sources ADD COLUMN source_url TEXT;`);
+    }
+    if (!engineSourceColumnNames.has("access_status")) {
+      sqlite.exec(`ALTER TABLE engine_sources ADD COLUMN access_status TEXT NOT NULL DEFAULT 'unknown';`);
+    }
+    if (!engineSourceColumnNames.has("preferred_rank")) {
+      sqlite.exec(`ALTER TABLE engine_sources ADD COLUMN preferred_rank INTEGER;`);
+    }
+    if (!engineSourceColumnNames.has("update_window_days")) {
+      sqlite.exec(`ALTER TABLE engine_sources ADD COLUMN update_window_days TEXT NOT NULL DEFAULT '[]';`);
+    }
+    if (!engineSourceColumnNames.has("evidence_notes")) {
+      sqlite.exec(`ALTER TABLE engine_sources ADD COLUMN evidence_notes TEXT;`);
+    }
+
+    const offerReviewColumns = sqlite.prepare(`PRAGMA table_info(offer_reviews)`).all() as Array<{ name: string }>;
+    const offerReviewColumnNames = new Set(offerReviewColumns.map((col) => col.name));
+    if (!offerReviewColumnNames.has("source_item_key")) {
+      sqlite.exec(`ALTER TABLE offer_reviews ADD COLUMN source_item_key TEXT;`);
+    }
+
+    const emailIterationColumns = sqlite.prepare(`PRAGMA table_info(email_iteration_setups)`).all() as Array<{ name: string }>;
+    const emailIterationColumnNames = new Set(emailIterationColumns.map((col) => col.name));
+    if (!emailIterationColumnNames.has("selected_offer_review_ids")) {
+      sqlite.exec(`ALTER TABLE email_iteration_setups ADD COLUMN selected_offer_review_ids TEXT NOT NULL DEFAULT '[]';`);
+    }
+
+    const cadenceColumns = sqlite.prepare(`PRAGMA table_info(cadence_settings)`).all() as Array<{ name: string }>;
+    const cadenceColumnNames = new Set(cadenceColumns.map((col) => col.name));
+    if (!cadenceColumnNames.has("reels_configured")) {
+      sqlite.exec(`ALTER TABLE cadence_settings ADD COLUMN reels_configured INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!cadenceColumnNames.has("reels_enabled")) {
+      sqlite.exec(`ALTER TABLE cadence_settings ADD COLUMN reels_enabled INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!cadenceColumnNames.has("reels_per_week")) {
+      sqlite.exec(`ALTER TABLE cadence_settings ADD COLUMN reels_per_week INTEGER NOT NULL DEFAULT 0;`);
+    }
+
+    sqlite.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_offer_review_targets_offer_dealer
+      ON offer_review_targets (offer_review_id, dealership_id);
+    `);
+
+    sqlite.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_offer_review_downstream_uses_offer_dealer_channel
+      ON offer_review_downstream_uses (offer_review_id, dealership_id, channel);
+    `);
+
+    sqlite.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_content_engine_build_manifest_offer_dealer_channel
+      ON content_engine_build_manifest_entries (offer_review_id, dealership_id, channel);
+    `);
+
+    try {
+      sqlite.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS ${DUPLICATE_FOLDER_SOURCE_INDEX}
+        ON posts (dealership_id, folder_source)
+        WHERE folder_source IS NOT NULL AND trim(folder_source) <> '';
+      `);
+    } catch (error) {
+      console.warn(`[storage] Unable to create ${DUPLICATE_FOLDER_SOURCE_INDEX}:`, error);
+    }
+
+    this.sanitizeLegacyPosts();
+    this.seedEngineModules();
+
+    // Ensure the canonical dealership set exists even if the live DB was partially wiped.
+    this.seedDealerships();
+
+    this.seedAccountModules();
+    this.seedEngineSources();
+    this.seedEmailIterationSetups();
   }
 
   private seedDealerships() {
@@ -89,7 +606,14 @@ export class DatabaseStorage implements IStorage {
         instagramHandle: "@bmwofjackson",
         facebookPage: "BMWofJackson",
         color: "#1C69D4",
-        captionTemplate: "Click here --> @bmwofjackson then click the linkin.bio to browse and click on the link of this post.",
+        instagramCta: "Click here --> @bmwofjackson then click the linkin.bio to browse and click on the link of this post.",
+        facebookCta: "Click our link in bio to shop our special offers.",
+        gmbCta: "Visit our website for current offers and availability.",
+        captionSpec: "Confident, premium BMW tone. Lead with performance, technology, or design. Keep captions tight and modern.",
+        hashtagTemplate: "#BMWofJackson #BMW #UltimateDrivingMachine",
+        gmbSpec: "Keep it polished, local, and professional. Focus on current inventory or service value without hashtags.",
+        facebookLink: "",
+        gmbLink: "",
       },
       {
         name: "Brian Harris BMW",
@@ -99,7 +623,14 @@ export class DatabaseStorage implements IStorage {
         instagramHandle: "@brianharrisbmw",
         facebookPage: "BrianHarrisBMW",
         color: "#1C69D4",
-        captionTemplate: "Click here --> @brianharrisbmw then click the linkin.bio to browse and click on the link of this post.\n\nThank you for making Brian Harris BMW a 2024 Center of Excellence Dealer.",
+        instagramCta: "Click here --> @brianharrisbmw then click the linkin.bio to browse and click on the link of this post.\n\nThank you for making Brian Harris BMW a 2024 Center of Excellence Dealer.",
+        facebookCta: "Click our link in bio to shop our special offers.\n\nExperience the Harris Family Difference.",
+        gmbCta: "Visit our website to view offers and inventory details.",
+        captionSpec: "Sharp BMW luxury-performance tone. Highlight engineering, driving dynamics, and upscale Baton Rouge positioning.",
+        hashtagTemplate: "#BrianHarrisBMW #BMW #BatonRougeBMW #UltimateDrivingMachine",
+        gmbSpec: "Professional local dealer tone. Keep it short, factual, and inventory/service focused with no hashtags.",
+        facebookLink: "",
+        gmbLink: "",
       },
       {
         name: "Audi Baton Rouge",
@@ -109,7 +640,14 @@ export class DatabaseStorage implements IStorage {
         instagramHandle: "@audibatonrouge",
         facebookPage: "AudiBatonRouge",
         color: "#BB0A30",
-        captionTemplate: "Click here --> @audibatonrouge then click the linkin.bio to browse and click on the link of this post.\n\nThank you for making Audi Baton Rouge your Magna Society Dealer.",
+        instagramCta: "Click here --> @audibatonrouge then click the linkin.bio to browse and click on the link of this post.\n\nThank you for making Audi Baton Rouge your Magna Society Dealer.",
+        facebookCta: "Click our link in bio to shop our special offers.\n\nExperience the Harris Family Difference.",
+        gmbCta: "Visit our website to explore current Audi offers and inventory.",
+        captionSpec: "Modern Audi tone: precise, progressive, design-forward. Emphasize quattro, technology, refinement, and understated luxury.",
+        hashtagTemplate: "#AudiBatonRouge #Audi #quattro #ProgressiveLuxury",
+        gmbSpec: "Clear, premium, local dealership tone. Focus on model, service, or offer details in plain language with no hashtags.",
+        facebookLink: "",
+        gmbLink: "",
       },
       {
         name: "Harris Porsche",
@@ -119,7 +657,14 @@ export class DatabaseStorage implements IStorage {
         instagramHandle: "@harrisporsche",
         facebookPage: "HarrisPorsche",
         color: "#C8102E",
-        captionTemplate: "Click here --> @harrisporsche then click the linkin.bio to browse and click on the link of this post.",
+        instagramCta: "Click here --> @harrisporsche then click the linkin.bio to browse and click on the link of this post.",
+        facebookCta: "Click our link in bio to shop our special offers.",
+        gmbCta: "Visit our website for current Porsche offers and availability.",
+        captionSpec: "Porsche voice should feel precise, aspirational, and performance-first. Avoid cheesy hype. Keep it tight, elevated, and enthusiast credible.",
+        hashtagTemplate: "#HarrisPorsche #Porsche #PorscheLifestyle #PorschePerformance",
+        gmbSpec: "Professional luxury tone for local search. Keep it concise and factual. No hashtags or social-style CTA lines.",
+        facebookLink: "",
+        gmbLink: "",
       },
       {
         name: "Luc OpenCRAW",
@@ -129,12 +674,31 @@ export class DatabaseStorage implements IStorage {
         instagramHandle: "@opencraw",
         facebookPage: "",
         color: "#eb2300",
-        captionTemplate: "",
+        instagramCta: "",
+        facebookCta: "",
+        gmbCta: "",
+        captionSpec: "Bold, intelligent, slightly playful AI brand voice. Clear utility first, personality second.",
+        hashtagTemplate: "#OpenCRAW #AI #Automation",
+        gmbSpec: "Clear and professional. Focus on service clarity and local relevance.",
+        facebookLink: "",
+        gmbLink: "",
       },
     ];
 
     for (const store of stores) {
-      db.insert(dealerships).values(store).run();
+      const existing = db.select({ id: dealerships.id })
+        .from(dealerships)
+        .where(eq(dealerships.domain, store.domain))
+        .get();
+
+      if (!existing) {
+        db.insert(dealerships).values(store).run();
+      }
+    }
+
+    const postCount = db.select({ count: sql<number>`count(*)` }).from(posts).get();
+    if (postCount && postCount.count > 0) {
+      return;
     }
 
     // Seed some sample posts
@@ -207,6 +771,111 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
+  private seedEngineModules() {
+    const count = db.select({ count: sql<number>`count(*)` }).from(engineModules).get();
+    if (count && count.count > 0) return;
+
+    const now = new Date().toISOString();
+    db.insert(engineModules).values([
+      {
+        key: "post-engine",
+        name: "PostEngine",
+        route: "/",
+        description: "Social post workflow for queue, review, and publishing.",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]).run();
+  }
+
+  private seedAccountModules() {
+    const modules = this.getEngineModules();
+    const dealers = this.getDealerships();
+    if (modules.length === 0 || dealers.length === 0) return;
+
+    const existing = this.getAccountModules();
+    const existingKeys = new Set(existing.map((item) => `${item.dealershipId}:${item.moduleKey}`));
+    const now = new Date().toISOString();
+
+    for (const dealer of dealers) {
+      for (const module of modules) {
+        const compositeKey = `${dealer.id}:${module.key}`;
+        if (existingKeys.has(compositeKey)) continue;
+
+        db.insert(accountModules).values({
+          dealershipId: dealer.id,
+          moduleKey: module.key,
+          isEnabled: true,
+          settings: "{}",
+          createdAt: now,
+          updatedAt: now,
+        }).run();
+      }
+    }
+  }
+
+  private seedEngineSources() {
+    const now = new Date().toISOString();
+    const seededSources: InsertEngineSource[] = [
+      {
+        key: "post-engine-drive-ingestion",
+        moduleKey: "post-engine",
+        name: "Post Engine Drive Ingestion",
+        watcherType: "manual-scan",
+        sourceType: "google-drive",
+        status: "active",
+        target: "Shared dealership Drive roots",
+        sourceUrl: null,
+        accessStatus: "internal",
+        preferredRank: 1,
+        updateWindowDays: JSON.stringify([]),
+        evidenceNotes: "Existing live ingestion path for dealership creative assets; retained as-is.",
+        cadenceMinutes: 30,
+        lastCheckedAt: null,
+        lastResultSummary: "Ready for manual scans via /api/drive/scan",
+        metadata: JSON.stringify({ route: "/api/drive/scan", notes: "Preserves existing Post Engine ingestion flow." }),
+      },
+    ];
+
+    for (const source of seededSources) {
+      db.insert(engineSources).values({
+        ...source,
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoUpdate({
+        target: engineSources.key,
+        set: {
+          moduleKey: source.moduleKey,
+          name: source.name,
+          watcherType: source.watcherType,
+          sourceType: source.sourceType,
+          status: source.status,
+          target: source.target,
+          sourceUrl: source.sourceUrl ?? null,
+          accessStatus: source.accessStatus,
+          preferredRank: source.preferredRank ?? null,
+          updateWindowDays: source.updateWindowDays,
+          evidenceNotes: source.evidenceNotes ?? null,
+          cadenceMinutes: source.cadenceMinutes ?? null,
+          lastResultSummary: source.lastResultSummary ?? null,
+          metadata: source.metadata,
+          updatedAt: now,
+        },
+      }).run();
+    }
+
+    // Drop retired offer-scrape / content-engine sources if still present.
+    db.delete(engineSources).where(sql`${engineSources.moduleKey} = 'content-engine'`).run();
+    db.delete(engineSources).where(sql`${engineSources.key} in ('bmw-offers-watcher', 'audi-offers-watcher', 'bmw-offers-api', 'bmw-offers-page', 'audi-offers-page', 'audi-financial-hub')`).run();
+    db.delete(engineModules).where(eq(engineModules.key, "content-engine")).run();
+    db.delete(accountModules).where(eq(accountModules.moduleKey, "content-engine")).run();
+  }
+
+  private seedEmailIterationSetups() {
+    // Email iteration / content-engine handoff removed from Coop PostEngine.
+  }
+
   // Dealerships
   getDealerships(): Dealership[] {
     return db.select().from(dealerships).all();
@@ -217,11 +886,46 @@ export class DatabaseStorage implements IStorage {
   }
 
   createDealership(data: InsertDealership): Dealership {
-    return db.insert(dealerships).values(data).returning().get();
+    const dealership = db.insert(dealerships).values(data).returning().get();
+    const now = new Date().toISOString();
+
+    for (const module of this.getEngineModules()) {
+      db.insert(accountModules).values({
+        dealershipId: dealership.id,
+        moduleKey: module.key,
+        isEnabled: true,
+        settings: "{}",
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoNothing().run();
+    }
+
+    return dealership;
   }
 
   updateDealership(id: number, data: Partial<InsertDealership>): Dealership | undefined {
     return db.update(dealerships).set(data).where(eq(dealerships.id, id)).returning().get();
+  }
+
+  deleteDealership(id: number): boolean {
+    const existing = this.getDealership(id);
+    if (!existing) return false;
+
+    sqlite.transaction(() => {
+      db.delete(activityLog).where(eq(activityLog.dealershipId, id)).run();
+      db.delete(posts).where(eq(posts.dealershipId, id)).run();
+      db.delete(cadenceSettings).where(eq(cadenceSettings.dealershipId, id)).run();
+      db.delete(accountModules).where(eq(accountModules.dealershipId, id)).run();
+      db.delete(engineJobs).where(eq(engineJobs.dealershipId, id)).run();
+      db.delete(offerReviewTargets).where(eq(offerReviewTargets.dealershipId, id)).run();
+      db.delete(offerReviewDownstreamUses).where(eq(offerReviewDownstreamUses.dealershipId, id)).run();
+      db.delete(contentEngineBuildManifestEntries).where(eq(contentEngineBuildManifestEntries.dealershipId, id)).run();
+      db.delete(emailIterationSetups).where(eq(emailIterationSetups.dealershipId, id)).run();
+      db.delete(offerReviews).where(eq(offerReviews.dealershipId, id)).run();
+      db.delete(dealerships).where(eq(dealerships.id, id)).run();
+    })();
+
+    return true;
   }
 
   // Posts
@@ -238,18 +942,86 @@ export class DatabaseStorage implements IStorage {
     return query.orderBy(desc(posts.createdAt)).all();
   }
 
+  private sanitizeLegacyPosts() {
+    const dirtyPosts = db.select().from(posts).all();
+    const dealerMap = new Map(this.getDealerships().map((dealer) => [dealer.id, dealer]));
+
+    for (const post of dirtyPosts) {
+      const dealer = dealerMap.get(post.dealershipId);
+      const ctas = [dealer?.instagramCta, dealer?.facebookCta, dealer?.gmbCta, post.ctaBlock];
+      const cleanedCaption = sanitizeLegacyCaption(post.caption, ctas);
+      const cleanedFacebook = sanitizeLegacyCaption((post as any).captionFacebook, ctas);
+      const cleanedGmb = sanitizeLegacyCaption((post as any).captionGmb, ctas);
+
+      const shouldUpdate =
+        post.hashtags !== null ||
+        cleanedCaption !== (post.caption || "") ||
+        cleanedFacebook !== (((post as any).captionFacebook as string | null) || "") ||
+        cleanedGmb !== (((post as any).captionGmb as string | null) || "");
+
+      if (!shouldUpdate) continue;
+
+      db.update(posts)
+        .set({
+          caption: cleanedCaption,
+          captionFacebook: cleanedFacebook,
+          captionGmb: cleanedGmb,
+          hashtags: null,
+        })
+        .where(eq(posts.id, post.id))
+        .run();
+    }
+  }
+
   getPost(id: number): Post | undefined {
     return db.select().from(posts).where(eq(posts.id, id)).get();
   }
 
   createPost(data: InsertPost): Post {
-    return db.insert(posts).values({
-      ...data,
-      createdAt: new Date().toISOString(),
-    }).returning().get();
+    const folderSource = normalizeFolderSource(data.folderSource);
+
+    if (folderSource) {
+      ensureFolderSourceUnique(data.dealershipId, folderSource);
+    }
+
+    try {
+      return db.insert(posts).values({
+        ...data,
+        folderSource,
+        createdAt: new Date().toISOString(),
+      }).returning().get();
+    } catch (error) {
+      if (folderSource && isSqliteDuplicateFolderSourceError(error)) {
+        throw new DuplicateFolderSourceError(folderSource);
+      }
+      throw error;
+    }
   }
 
-  updatePost(id: number, data: Partial<InsertPost>): Post | undefined {
+  updatePost(id: number, data: Partial<Omit<Post, "id" | "createdAt">>): Post | undefined {
+    const needsFolderSourceCheck = typeof data.folderSource !== "undefined" || typeof data.dealershipId !== "undefined";
+    if (needsFolderSourceCheck) {
+      const existing = this.getPost(id);
+      if (!existing) return undefined;
+
+      const folderSource = normalizeFolderSource(
+        typeof data.folderSource !== "undefined" ? data.folderSource : existing.folderSource,
+      );
+      if (folderSource) {
+        ensureFolderSourceUnique(data.dealershipId ?? existing.dealershipId, folderSource, id);
+      }
+
+      const nextData = typeof data.folderSource !== "undefined"
+        ? { ...data, folderSource }
+        : data;
+
+      return db.update(posts)
+        .set(nextData)
+        .where(eq(posts.id, id))
+        .returning()
+        .get();
+    }
+
     return db.update(posts).set(data).where(eq(posts.id, id)).returning().get();
   }
 
@@ -257,13 +1029,15 @@ export class DatabaseStorage implements IStorage {
     db.delete(posts).where(eq(posts.id, id)).run();
   }
 
-  getPostStats(): { total: number; draft: number; queued: number; scheduled: number; published: number } {
+  getPostStats(): { total: number; draft: number; queued: number; scheduled: number; approved: number; held: number; published: number } {
     const all = db.select().from(posts).all();
     return {
       total: all.length,
       draft: all.filter(p => p.status === "draft").length,
       queued: all.filter(p => p.status === "queued").length,
       scheduled: all.filter(p => p.status === "scheduled").length,
+      approved: all.filter(p => p.status === "approved").length,
+      held: all.filter(p => p.status === "held").length,
       published: all.filter(p => p.status === "published").length,
     };
   }
@@ -294,6 +1068,353 @@ export class DatabaseStorage implements IStorage {
   deleteCadenceSetting(id: number): boolean {
     const result = db.delete(cadenceSettings).where(eq(cadenceSettings.id, id)).run();
     return result.changes > 0;
+  }
+
+  // Shared engine core
+  getEngineModules(): EngineModule[] {
+    return db.select().from(engineModules).orderBy(engineModules.name).all();
+  }
+
+  createEngineModule(data: InsertEngineModule): EngineModule {
+    const now = new Date().toISOString();
+    const module = db.insert(engineModules).values({
+      ...data,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+
+    for (const dealership of this.getDealerships()) {
+      db.insert(accountModules).values({
+        dealershipId: dealership.id,
+        moduleKey: module.key,
+        isEnabled: true,
+        settings: "{}",
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoNothing().run();
+    }
+
+    return module;
+  }
+
+  getAccountModules(dealershipId?: number): AccountModule[] {
+    if (dealershipId) {
+      return db.select().from(accountModules).where(eq(accountModules.dealershipId, dealershipId)).all();
+    }
+    return db.select().from(accountModules).all();
+  }
+
+  upsertAccountModule(data: InsertAccountModule): AccountModule {
+    const now = new Date().toISOString();
+    const existing = db.select().from(accountModules).where(and(
+      eq(accountModules.dealershipId, data.dealershipId),
+      eq(accountModules.moduleKey, data.moduleKey),
+    )).get();
+
+    if (existing) {
+      return db.update(accountModules).set({
+        isEnabled: data.isEnabled,
+        settings: data.settings,
+        updatedAt: now,
+      }).where(eq(accountModules.id, existing.id)).returning().get();
+    }
+
+    return db.insert(accountModules).values({
+      ...data,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+  }
+
+  getEngineJobs(limit = 25): EngineJob[] {
+    return db.select().from(engineJobs).orderBy(desc(engineJobs.createdAt)).limit(limit).all();
+  }
+
+  getRunningEngineJobsByType(jobType: string): EngineJob[] {
+    return db.select()
+      .from(engineJobs)
+      .where(and(eq(engineJobs.jobType, jobType), eq(engineJobs.status, "running")))
+      .orderBy(desc(engineJobs.createdAt))
+      .all();
+  }
+
+  createEngineJob(data: InsertEngineJob): EngineJob {
+    const now = new Date().toISOString();
+    return db.insert(engineJobs).values({
+      ...data,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+  }
+
+  updateEngineJob(id: number, data: Partial<InsertEngineJob>): EngineJob | undefined {
+    return db.update(engineJobs).set({
+      ...data,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(engineJobs.id, id)).returning().get();
+  }
+
+  getEngineSources(): EngineSource[] {
+    return db.select().from(engineSources).orderBy(engineSources.moduleKey, engineSources.preferredRank, engineSources.name).all();
+  }
+
+  getEngineSourceByKey(key: string): EngineSource | undefined {
+    return db.select().from(engineSources).where(eq(engineSources.key, key)).get();
+  }
+
+  createEngineSource(data: InsertEngineSource): EngineSource {
+    const now = new Date().toISOString();
+    return db.insert(engineSources).values({
+      ...data,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+  }
+
+  updateEngineSourceByKey(key: string, data: Partial<InsertEngineSource>): EngineSource | undefined {
+    return db.update(engineSources).set({
+      ...data,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(engineSources.key, key)).returning().get();
+  }
+
+  getOfferReviews(filters?: { status?: string; moduleKey?: string; sourceKey?: string; limit?: number }): OfferReview[] {
+    const conditions = [];
+    if (filters?.status) conditions.push(eq(offerReviews.status, filters.status));
+    if (filters?.moduleKey) conditions.push(eq(offerReviews.moduleKey, filters.moduleKey));
+    if (filters?.sourceKey) conditions.push(eq(offerReviews.sourceKey, filters.sourceKey));
+
+    if (conditions.length > 0) {
+      return db.select()
+        .from(offerReviews)
+        .where(and(...conditions))
+        .orderBy(desc(offerReviews.updatedAt), desc(offerReviews.createdAt))
+        .limit(filters?.limit ?? 50)
+        .all();
+    }
+
+    return db.select()
+      .from(offerReviews)
+      .orderBy(desc(offerReviews.updatedAt), desc(offerReviews.createdAt))
+      .limit(filters?.limit ?? 50)
+      .all();
+  }
+
+  getOfferReview(id: number): OfferReview | undefined {
+    return db.select().from(offerReviews).where(eq(offerReviews.id, id)).get();
+  }
+
+  getOfferReviewBySourceItemKey(sourceItemKey: string): OfferReview | undefined {
+    return db.select().from(offerReviews).where(eq(offerReviews.sourceItemKey, sourceItemKey)).get();
+  }
+
+  createOfferReview(data: InsertOfferReview): OfferReview {
+    const now = new Date().toISOString();
+    return db.insert(offerReviews).values({
+      ...data,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+  }
+
+  upsertOfferReviewBySourceItemKey(sourceItemKey: string, data: InsertOfferReview): OfferReview {
+    const existing = this.getOfferReviewBySourceItemKey(sourceItemKey);
+    if (existing) {
+      return db.update(offerReviews).set({
+        ...data,
+        sourceItemKey,
+        status: existing.status === "published" ? existing.status : data.status,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(offerReviews.id, existing.id)).returning().get();
+    }
+
+    return this.createOfferReview({
+      ...data,
+      sourceItemKey,
+    });
+  }
+
+  updateOfferReview(id: number, data: Partial<InsertOfferReview>): OfferReview | undefined {
+    return db.update(offerReviews).set({
+      ...data,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(offerReviews.id, id)).returning().get();
+  }
+
+  getOfferReviewTargets(offerReviewId?: number): OfferReviewTarget[] {
+    if (offerReviewId) {
+      return db.select()
+        .from(offerReviewTargets)
+        .where(eq(offerReviewTargets.offerReviewId, offerReviewId))
+        .orderBy(offerReviewTargets.dealershipId)
+        .all();
+    }
+
+    return db.select()
+      .from(offerReviewTargets)
+      .orderBy(offerReviewTargets.offerReviewId, offerReviewTargets.dealershipId)
+      .all();
+  }
+
+  upsertOfferReviewTarget(data: InsertOfferReviewTarget): OfferReviewTarget {
+    const now = new Date().toISOString();
+    const existing = db.select().from(offerReviewTargets).where(and(
+      eq(offerReviewTargets.offerReviewId, data.offerReviewId),
+      eq(offerReviewTargets.dealershipId, data.dealershipId),
+    )).get();
+
+    if (existing) {
+      return db.update(offerReviewTargets).set({
+        selectionStatus: data.selectionStatus,
+        notes: data.notes,
+        updatedAt: now,
+      }).where(eq(offerReviewTargets.id, existing.id)).returning().get();
+    }
+
+    return db.insert(offerReviewTargets).values({
+      ...data,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+  }
+
+  replaceOfferReviewTargets(offerReviewId: number, dealershipIds: number[]): OfferReviewTarget[] {
+    db.delete(offerReviewTargets).where(eq(offerReviewTargets.offerReviewId, offerReviewId)).run();
+
+    const uniqueDealershipIds = Array.from(new Set(dealershipIds.filter((id) => Number.isInteger(id) && id > 0)));
+    return uniqueDealershipIds.map((dealershipId) => this.upsertOfferReviewTarget({
+      offerReviewId,
+      dealershipId,
+      selectionStatus: "selected",
+      notes: null,
+    }));
+  }
+
+  getOfferReviewDownstreamUses(offerReviewId?: number, dealershipId?: number): OfferReviewDownstreamUse[] {
+    if (offerReviewId && dealershipId) {
+      return db.select()
+        .from(offerReviewDownstreamUses)
+        .where(and(
+          eq(offerReviewDownstreamUses.offerReviewId, offerReviewId),
+          eq(offerReviewDownstreamUses.dealershipId, dealershipId),
+        ))
+        .orderBy(offerReviewDownstreamUses.channel)
+        .all();
+    }
+
+    if (offerReviewId) {
+      return db.select()
+        .from(offerReviewDownstreamUses)
+        .where(eq(offerReviewDownstreamUses.offerReviewId, offerReviewId))
+        .orderBy(offerReviewDownstreamUses.dealershipId, offerReviewDownstreamUses.channel)
+        .all();
+    }
+
+    return db.select()
+      .from(offerReviewDownstreamUses)
+      .orderBy(offerReviewDownstreamUses.offerReviewId, offerReviewDownstreamUses.dealershipId, offerReviewDownstreamUses.channel)
+      .all();
+  }
+
+  replaceOfferReviewDownstreamUses(offerReviewId: number, dealershipId: number, uses: Array<{ channel: string; placement: string }>): OfferReviewDownstreamUse[] {
+    db.delete(offerReviewDownstreamUses).where(and(
+      eq(offerReviewDownstreamUses.offerReviewId, offerReviewId),
+      eq(offerReviewDownstreamUses.dealershipId, dealershipId),
+    )).run();
+
+    const now = new Date().toISOString();
+    const uniqueUses = uses.filter((use, index, array) =>
+      Boolean(use.channel) && Boolean(use.placement) && array.findIndex((entry) => entry.channel === use.channel) === index,
+    );
+
+    return uniqueUses.map((use) => db.insert(offerReviewDownstreamUses).values({
+      offerReviewId,
+      dealershipId,
+      channel: use.channel,
+      placement: use.placement,
+      isActive: true,
+      notes: null,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get());
+  }
+
+  getContentEngineBuildManifestEntries(offerReviewId?: number): ContentEngineBuildManifestEntry[] {
+    if (offerReviewId) {
+      return db.select()
+        .from(contentEngineBuildManifestEntries)
+        .where(eq(contentEngineBuildManifestEntries.offerReviewId, offerReviewId))
+        .orderBy(contentEngineBuildManifestEntries.dealershipId, contentEngineBuildManifestEntries.channel)
+        .all();
+    }
+
+    return db.select()
+      .from(contentEngineBuildManifestEntries)
+      .orderBy(contentEngineBuildManifestEntries.dealershipId, contentEngineBuildManifestEntries.channel, contentEngineBuildManifestEntries.offerReviewId)
+      .all();
+  }
+
+  replaceContentEngineBuildManifestEntriesForOfferReview(
+    offerReviewId: number,
+    entries: InsertContentEngineBuildManifestEntry[],
+  ): ContentEngineBuildManifestEntry[] {
+    const now = new Date().toISOString();
+    return sqlite.transaction(() => {
+      db.delete(contentEngineBuildManifestEntries)
+        .where(eq(contentEngineBuildManifestEntries.offerReviewId, offerReviewId))
+        .run();
+
+      if (entries.length === 0) {
+        return [];
+      }
+
+      return entries.map((entry) => db.insert(contentEngineBuildManifestEntries).values({
+        ...entry,
+        createdAt: now,
+        updatedAt: now,
+      }).returning().get());
+    })();
+  }
+
+  getEmailIterationSetups(): EmailIterationSetup[] {
+    return db.select()
+      .from(emailIterationSetups)
+      .orderBy(emailIterationSetups.status, emailIterationSetups.campaignType, emailIterationSetups.dealershipId)
+      .all();
+  }
+
+  updateEmailIterationSetup(id: number, data: Partial<InsertEmailIterationSetup>): EmailIterationSetup | undefined {
+    return db.update(emailIterationSetups)
+      .set({ ...data, updatedAt: new Date().toISOString() })
+      .where(eq(emailIterationSetups.id, id))
+      .returning()
+      .get();
+  }
+
+  getOfferReviewStats() {
+    const all = db.select().from(offerReviews).all();
+    return {
+      total: all.length,
+      detected: all.filter((review) => review.status === "detected").length,
+      reviewing: all.filter((review) => review.status === "reviewing").length,
+      approved: all.filter((review) => review.status === "approved").length,
+      rejected: all.filter((review) => review.status === "rejected").length,
+      published: all.filter((review) => review.status === "published").length,
+    };
+  }
+
+  // App settings
+  getAppSetting(key: string): string | undefined {
+    const row = sqlite.prepare(`SELECT value FROM app_settings WHERE key = ?`).get(key) as { value?: string } | undefined;
+    return row?.value;
+  }
+
+  setAppSetting(key: string, value: string): void {
+    sqlite.prepare(`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `).run(key, value, new Date().toISOString());
   }
 
   // Activity

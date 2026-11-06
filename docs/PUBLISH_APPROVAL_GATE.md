@@ -1,0 +1,30 @@
+# Publish approval gate
+
+Publishing stays off unless `PUBLISH_ENABLED` is exactly `true`. The automatic 60-second poller never starts unless that flag is on.
+
+`POST /api/posts/:id/publish` (and `publishPost` on that path) may publish **one** already-approved post even when the flag is off: `status=approved` plus `approved_at` and `approved_by`. Held, scheduled, queued, and draft rows are rejected. If the row is already published, already has a Zernio post id, or a publish is in flight, the request is refused and any known Zernio ids are returned. Successful Zernio ids are saved on the row before the handler returns.
+
+Set `captionExact` (`caption_exact`, default `false`) to send Instagram, Facebook, and Google Business captions verbatim, with no CTA, link, hashtag bank, or Google Business CTA appended. If `caption_gmb` is empty, the main caption is used so Google Business is not blank. Do not change dealership CTA records to achieve this.
+
+If `scheduled_for` is more than two hours in the past, measured from the later of `scheduled_for` and `approved_at`, the post needs a fresh approval. Approving an already-overdue post sets a new `approved_at` and opens a new window. Re-approve shortly before turning publishing on.
+
+Drive ingest uses `DRIVE_SCAN_ENABLED=true`, independent of publishing. Dashboard "Approve & schedule" (`POST /api/posts/bulk-approve`) still only moves a post to `scheduled`. It is not a publish approval.
+
+Hold is reversible. `POST /api/posts/hold-backlog` marks due `scheduled`/`approved` rows as `held` and stores `status_before_hold`. It does not delete rows or edit captions or media. `POST /api/posts/:id/release-hold` restores the previous status.
+
+Read-only preview: `GET /api/posts/preview-due?date=YYYY-MM-DD` (America/Chicago).
+
+## Nov 6, 2026 one-at-a-time path
+
+Nonce `nov6-2026-one` accepts **exactly one** ready ID per request on `2026-11-06`: `498` or `450`. Approving one never approves another.
+
+- Ready after the model-level availability check (no publish all-clear yet): `498` (BMWJ X3), `450` (ABR RS Q8).
+- Held with the backlog pending a new review: `486` (BHBMW 2026 M4 Competition — year/availability fail), `473` (HP GT3 RS — listing not confirmed).
+
+Prepared HTTP steps:
+
+```
+npx tsx script/nov6-2026-approve-ready.ts
+```
+
+Do not use nonce `nov6-2026-one` for later posts such as Road Home. Do not set `PUBLISH_ENABLED=true` unless that is separately approved.
