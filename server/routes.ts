@@ -12,7 +12,22 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 import { scanDriveFolders, archiveFile, loadFolders, listFolder, isVideoMedia, driveConfigured } from "./drive-scanner";
-import { publishEnabled } from "./publish-switch";
+import { driveScanEnabled, publishEnabled } from "./publish-switch";
+import {
+  buildApprovePublishPatch,
+  buildDuePreview,
+  buildHoldPatch,
+  buildReleaseHoldPatch,
+  evaluatePublishGate,
+  formatChicagoYmd,
+  shouldHoldPost,
+  type HoldScope,
+} from "./publish-gate";
+import {
+  NOV6_2026_APPROVE_NONCE,
+  NOV6_2026_READY_POST_IDS,
+  validateNov6PublishApproval,
+} from "./nov6-2026-publish-allowlist";
 import { handleImportStatus } from "./admin-import";
 import { generateCaption, generateCaptionsForPlatforms, normalizeCaptionPlatforms } from "./caption-writer";
 import { publishPost } from "./zernio-publisher";
@@ -27,7 +42,26 @@ import { findRecentVehicleDuplicate } from "./post-dedup";
 import { hostUploadedMedia, inferPostMediaType } from "./media-upload";
 import { SPECIALS_SOURCES, syncTalkingPointsFromSpecials } from "./specials-talking-sync";
 
-const ARCHIVE_REQUIRED_STATUSES = new Set(["scheduled", "published"]);
+const ARCHIVE_REQUIRED_STATUSES = new Set(["scheduled", "approved", "published"]);
+const PUBLISH_GATE_PATCH_FIELDS = new Set([
+  "approvedAt",
+  "approvedBy",
+  "heldAt",
+  "heldReason",
+  "statusBeforeHold",
+]);
+
+function requireAdmin(req: { dashboardUser?: { dealershipIds: number[] | null } }, res: { status: (code: number) => { json: (body: unknown) => unknown } }) {
+  if (req.dashboardUser && req.dashboardUser.dealershipIds !== null) {
+    res.status(403).json({ error: "Forbidden" });
+    return false;
+  }
+  return true;
+}
+
+function actorName(req: { dashboardUser?: { name?: string } }, fallback?: string) {
+  return (typeof fallback === "string" && fallback.trim()) || req.dashboardUser?.name || "unknown";
+}
 const DEFAULT_HIDDEN_POST_STATUSES = new Set(["rejected"]);
 const DRIVE_SCAN_STALE_MS = 30 * 60 * 1000;
 function sweepStaleDriveScanJobs(now = Date.now()) {
@@ -303,8 +337,25 @@ export async function registerRoutes(server: Server, app: Express) {
       draft: visible.filter((post) => post.status === "draft").length,
       queued: visible.filter((post) => post.status === "queued").length,
       scheduled: visible.filter((post) => post.status === "scheduled").length,
+      approved: visible.filter((post) => post.status === "approved").length,
+      held: visible.filter((post) => post.status === "held").length,
       published: visible.filter((post) => post.status === "published").length,
     });
+  });
+
+  app.get("/api/posts/preview-due", (req, res) => {
+    const rawDate = typeof req.query.date === "string" ? req.query.date : formatChicagoYmd(new Date());
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+      return res.status(400).json({ error: "date must be YYYY-MM-DD" });
+    }
+    const visible = storage.getPosts().filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
+    res.json(buildDuePreview({
+      posts: visible,
+      dealerships: storage.getDealerships(),
+      dateYmd: rawDate,
+      publishEnabled: publishEnabled(),
+      driveScanEnabled: driveScanEnabled(),
+    }));
   });
 
   app.get("/api/posts/:id", (req, res) => {
@@ -377,23 +428,31 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.status(404).json({ error: "Not found" });
     }
 
+    const body = { ...req.body };
+    for (const field of PUBLISH_GATE_PATCH_FIELDS) delete body[field];
+    if (body.status === "approved" || body.status === "held") {
+      return res.status(400).json({
+        error: "Use the publish-approval or hold endpoints to change this status",
+      });
+    }
+
     try {
-      archivePostSourceOrThrow(existing, req.body.status, archiveFile);
+      archivePostSourceOrThrow(existing, body.status, archiveFile);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(409).json({ error: message });
     }
 
-    const updated = storage.updatePost(Number(req.params.id), req.body);
+    const updated = storage.updatePost(Number(req.params.id), body);
     if (!updated) return res.status(500).json({ error: "Failed to update" });
 
     // Log status changes
-    if (req.body.status && req.body.status !== existing.status) {
+    if (body.status && body.status !== existing.status) {
       storage.logActivity({
         postId: updated.id,
         dealershipId: updated.dealershipId,
-        action: req.body.status,
-        details: `Post ${req.body.status}: ${updated.vehicleInfo || updated.postType}`,
+        action: body.status,
+        details: `Post ${body.status}: ${updated.vehicleInfo || updated.postType}`,
       });
     }
 
@@ -617,7 +676,7 @@ export async function registerRoutes(server: Server, app: Express) {
         }
 
         storage.updatePost(postId, { status: "scheduled" });
-        const result = await publishPost(postId);
+        // Do not publish from Telegram. Calendar scheduling is not a publish approval.
         // Update Telegram message
         await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
           method: "POST",
@@ -683,19 +742,145 @@ export async function registerRoutes(server: Server, app: Express) {
     const post = storage.getPost(postId);
     if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
 
+    if (!publishEnabled()) {
+      return res.status(409).json({ error: "PUBLISH_ENABLED is not true" });
+    }
+    const gate = evaluatePublishGate(post);
+    if (!gate.ok) {
+      return res.status(409).json({ error: gate.reason });
+    }
+
     try {
-      archivePostSourceOrThrow(post, "scheduled", archiveFile);
+      archivePostSourceOrThrow(post, "published", archiveFile);
       assertNoRecentVehicleDuplicateOrThrow(post);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(409).json({ error: message });
     }
 
-    // Set status to scheduled first
-    storage.updatePost(postId, { status: "scheduled" });
-
     const result = await publishPost(postId);
     res.json(result);
+  });
+
+  app.post("/api/posts/hold-backlog", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const scope: HoldScope = req.body?.scope === "all_scheduled" ? "all_scheduled" : "due";
+    const reason = typeof req.body?.reason === "string" && req.body.reason.trim()
+      ? req.body.reason.trim().slice(0, 500)
+      : "backlog hold";
+    const dryRun = req.body?.dryRun === true;
+    const excludeIds = Array.isArray(req.body?.excludeIds)
+      ? req.body.excludeIds.map((id: unknown) => Number(id)).filter((id: number) => Number.isInteger(id))
+      : [];
+    const now = new Date();
+    const held = [];
+    const skipped = [];
+    for (const post of storage.getPosts()) {
+      if (!shouldHoldPost(post, now, scope, excludeIds)) {
+        continue;
+      }
+      const patch = buildHoldPatch(post, now, reason);
+      if (dryRun) {
+        held.push({ id: post.id, from: post.status, to: "held" });
+        continue;
+      }
+      const updated = storage.updatePost(post.id, patch as any);
+      if (!updated) {
+        skipped.push({ id: post.id, error: "Failed to update post" });
+        continue;
+      }
+      storage.logActivity({
+        postId: updated.id,
+        dealershipId: updated.dealershipId,
+        action: "held",
+        details: `Post held (was ${post.status}): ${updated.vehicleInfo || updated.postType}. ${reason}`,
+      });
+      held.push(updated);
+    }
+    res.json({ success: true, dryRun, scope, reason, excludeIds, count: held.length, held, skipped });
+  });
+
+  app.post("/api/posts/:id/release-hold", (req, res) => {
+    const postId = Number(req.params.id);
+    const post = storage.getPost(postId);
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
+    const patch = buildReleaseHoldPatch(post);
+    if (!patch) return res.status(409).json({ error: "Post is not held" });
+    const updated = storage.updatePost(postId, patch as any);
+    if (!updated) return res.status(500).json({ error: "Failed to update post" });
+    storage.logActivity({
+      postId: updated.id,
+      dealershipId: updated.dealershipId,
+      action: "released_hold",
+      details: `Hold released; status restored to ${updated.status}: ${updated.vehicleInfo || updated.postType}`,
+    });
+    res.json(updated);
+  });
+
+  app.post("/api/posts/approve-publish", (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((id: unknown) => Number(id)) : [];
+    if (ids.length === 0 || ids.some((id: number) => !Number.isInteger(id))) {
+      return res.status(400).json({ error: "ids must be an array of post IDs" });
+    }
+    const dateYmd = typeof req.body?.date === "string" ? req.body.date : formatChicagoYmd(new Date());
+    const nonce = typeof req.body?.nonce === "string" ? req.body.nonce : undefined;
+    if (nonce === NOV6_2026_APPROVE_NONCE) {
+      const allowed = validateNov6PublishApproval(ids, dateYmd, nonce);
+      if (!allowed.ok) return res.status(400).json({ error: allowed.reason });
+    }
+    const approvedBy = actorName(req, req.body?.approvedBy);
+    const now = new Date();
+    const successful = [];
+    const failed = [];
+    let patch;
+    try {
+      patch = buildApprovePublishPatch(approvedBy, now);
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+
+    for (const id of ids) {
+      const existing = storage.getPost(id);
+      if (!existing || !dashboardCanSeeDealership(req, existing.dealershipId)) {
+        failed.push({ id, error: "Post not found" });
+        continue;
+      }
+      if (existing.status === "held") {
+        failed.push({ id, error: "Release the hold before approving this post for publish" });
+        continue;
+      }
+      if (existing.status === "published" || existing.status === "rejected") {
+        failed.push({ id, error: `Cannot approve a ${existing.status} post` });
+        continue;
+      }
+      try {
+        archivePostSourceOrThrow(existing, "approved", archiveFile);
+      } catch (error) {
+        failed.push({ id, error: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
+      const updated = storage.updatePost(id, patch as any);
+      if (!updated) {
+        failed.push({ id, error: "Failed to update post" });
+        continue;
+      }
+      storage.logActivity({
+        postId: updated.id,
+        dealershipId: updated.dealershipId,
+        action: "approved",
+        details: `Publish approved by ${approvedBy}: ${updated.vehicleInfo || updated.postType}`,
+      });
+      successful.push(updated);
+    }
+
+    res.status(failed.length > 0 ? 207 : 200).json({
+      successful,
+      failed,
+      approvedBy,
+      date: dateYmd,
+      nonce: nonce || null,
+      allowlist: nonce === NOV6_2026_APPROVE_NONCE ? [...NOV6_2026_READY_POST_IDS] : null,
+    });
   });
 
   // ── DRIVE SCANNER ───────────────────────────────────────────
@@ -742,7 +927,14 @@ export async function registerRoutes(server: Server, app: Express) {
     const lastRunAt = storage.getAppSetting("last_scan_at") || null;
     const lastRunCount = storage.getAppSetting("last_scan_count") || null;
     const driveScan = getDriveScanStatus();
-    res.json({ paused, lastRunAt, lastRunCount, driveScan });
+    res.json({
+      paused,
+      lastRunAt,
+      lastRunCount,
+      driveScan,
+      publishEnabled: publishEnabled(),
+      driveScanEnabled: driveScanEnabled(),
+    });
   });
 
   app.get("/api/engine/reel-health", (req, res) => {
@@ -982,13 +1174,13 @@ export async function registerRoutes(server: Server, app: Express) {
       console.error("[DriveScanner] Weekly scan skipped: drive not configured");
       return res.json({ skipped: true, reason: "drive not configured" });
     }
-    if (!publishEnabled()) {
-      console.error("[DriveScanner] Weekly scan skipped: PUBLISH_ENABLED is not true");
+    if (!driveScanEnabled()) {
+      console.error("[DriveScanner] Weekly scan skipped: DRIVE_SCAN_ENABLED is not true");
       return res.json({
         success: true,
         skipped: true,
         newPosts: 0,
-        message: "PUBLISH_ENABLED is not true",
+        message: "DRIVE_SCAN_ENABLED is not true",
       });
     }
     try {

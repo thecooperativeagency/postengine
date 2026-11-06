@@ -13,6 +13,7 @@ import { cleanupNormalizedImage, normalizeImageForSocial } from "./image-normali
 import { hostPublicMediaFile } from "./public-media";
 import { withPublishLock } from "./publish-lock";
 import { publishEnabled } from "./publish-switch";
+import { evaluatePublishGate, selectPublishablePosts } from "./publish-gate";
 import { resolveBin } from "./local-bin";
 import { findRecentVehicleDuplicate } from "./post-dedup";
 import {
@@ -338,6 +339,12 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
   const post = storage.getPost(postId);
   if (!post) return { success: false, results: { error: "Post not found" } };
 
+  const gate = evaluatePublishGate(post);
+  if (!gate.ok) {
+    console.error(`[Zernio] Publish skipped for post ${postId}: ${gate.reason}`);
+    return { success: false, results: { skipped: true, error: gate.reason } };
+  }
+
   const duplicate = findRecentVehicleDuplicate(
     post,
     storage.getPosts({ dealershipId: post.dealershipId }),
@@ -573,24 +580,34 @@ export function startPublishPoller() {
 
   setInterval(async () => {
     const now = new Date();
-    const allPosts = storage.getPosts({ status: "scheduled" });
+    const approvedPosts = storage.getPosts({ status: "approved" });
+    const duePosts = selectPublishablePosts(approvedPosts, now);
 
-    const duePosts = allPosts.filter(p => {
-      if (!p.scheduledFor) return false;
-      if (new Date(p.scheduledFor) > now) return false;
-      const backoffUntil = (p as any).publishBackoffUntil;
-      if (backoffUntil) {
-        const backoffDate = new Date(backoffUntil);
-        if (!Number.isNaN(backoffDate.getTime()) && backoffDate > now) {
-          return false;
-        }
-      }
-      return true;
+    const blockedScheduled = storage.getPosts({ status: "scheduled" }).filter((post) => {
+      if (!post.scheduledFor) return false;
+      const scheduled = new Date(post.scheduledFor);
+      return !Number.isNaN(scheduled.getTime()) && scheduled <= now;
     });
+    if (blockedScheduled.length > 0) {
+      console.error(
+        `[Zernio] ${blockedScheduled.length} scheduled post(s) are due but not publish-approved (ids: ${blockedScheduled.map((post) => post.id).join(", ")})`,
+      );
+    }
+
+    const blockedHeld = storage.getPosts({ status: "held" }).filter((post) => {
+      if (!post.scheduledFor) return false;
+      const scheduled = new Date(post.scheduledFor);
+      return !Number.isNaN(scheduled.getTime()) && scheduled <= now;
+    });
+    if (blockedHeld.length > 0) {
+      console.error(
+        `[Zernio] ${blockedHeld.length} held post(s) remain parked (ids: ${blockedHeld.map((post) => post.id).join(", ")})`,
+      );
+    }
 
     if (duePosts.length === 0) return;
 
-    console.log(`[Zernio] ${duePosts.length} post(s) due for publishing...`);
+    console.log(`[Zernio] ${duePosts.length} approved post(s) due for publishing...`);
 
     for (const post of duePosts) {
       try {
