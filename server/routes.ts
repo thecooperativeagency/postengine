@@ -19,6 +19,7 @@ import {
   buildHoldPatch,
   buildReleaseHoldPatch,
   evaluatePublishGate,
+  evaluatePublishIdempotency,
   formatChicagoYmd,
   shouldHoldPost,
   type HoldScope,
@@ -407,6 +408,11 @@ export async function registerRoutes(server: Server, app: Express) {
       if (!dashboardCanSeeDealership(req, data.dealershipId)) {
         return res.status(404).json({ error: "Not found" });
       }
+      if (data.status === "approved" || data.status === "held") {
+        return res.status(400).json({
+          error: "Use the publish-approval or hold endpoints to change this status",
+        });
+      }
       const post = storage.createPost(data);
       storage.logActivity({
         postId: post.id,
@@ -743,11 +749,19 @@ export async function registerRoutes(server: Server, app: Express) {
     if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
 
     if (!publishEnabled()) {
-      return res.status(409).json({ error: "PUBLISH_ENABLED is not true" });
+      if (post.status !== "approved" || !post.approvedAt?.trim() || !post.approvedBy?.trim()) {
+        return res.status(409).json({
+          error: "Manual publish requires status approved with approved_at and approved_by when PUBLISH_ENABLED is not true",
+        });
+      }
     }
     const gate = evaluatePublishGate(post);
     if (!gate.ok) {
       return res.status(409).json({ error: gate.reason });
+    }
+    const idem = evaluatePublishIdempotency(post);
+    if (!idem.ok) {
+      return res.status(409).json({ error: idem.reason, zernioIds: idem.zernioIds });
     }
 
     try {
@@ -758,7 +772,7 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.status(409).json({ error: message });
     }
 
-    const result = await publishPost(postId);
+    const result = await publishPost(postId, { manual: true });
     res.json(result);
   });
 

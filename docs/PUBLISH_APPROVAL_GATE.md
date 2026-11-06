@@ -1,6 +1,10 @@
 # Publish approval gate
 
-Publishing stays off unless `PUBLISH_ENABLED` is exactly `true`. The poller and `POST /api/posts/:id/publish` also require an explicit publish approval: `status=approved` plus `approved_at` and `approved_by`. A due `scheduled` or `queued` row never goes out on its own.
+Publishing stays off unless `PUBLISH_ENABLED` is exactly `true`. The automatic 60-second poller never starts unless that flag is on.
+
+`POST /api/posts/:id/publish` (and `publishPost` on that path) may publish **one** already-approved post even when the flag is off: `status=approved` plus `approved_at` and `approved_by`. Held, scheduled, queued, and draft rows are rejected. If the row is already published, already has a Zernio post id, or a publish is in flight, the request is refused and any known Zernio ids are returned. Successful Zernio ids are saved on the row before the handler returns.
+
+Set `captionExact` (`caption_exact`, default `false`) to send Instagram, Facebook, and Google Business captions verbatim, with no CTA, link, hashtag bank, or Google Business CTA appended. If `caption_gmb` is empty, the main caption is used so Google Business is not blank. Do not change dealership CTA records to achieve this.
 
 If `scheduled_for` is more than two hours in the past, measured from the later of `scheduled_for` and `approved_at`, the post needs a fresh approval. Approving an already-overdue post sets a new `approved_at` and opens a new window. Re-approve shortly before turning publishing on.
 
@@ -23,4 +27,4 @@ Prepared HTTP steps:
 npx tsx script/nov6-2026-approve-ready.ts
 ```
 
-Do not run the hold/approve calls against production until the PR is deployed and Lance OKs those live steps. Do not set `PUBLISH_ENABLED=true` in the same breath as deploy.
+Do not use nonce `nov6-2026-one` for later posts such as Road Home. Do not set `PUBLISH_ENABLED=true` unless that is separately approved.

@@ -12,8 +12,8 @@ import { execSync } from "child_process";
 import { cleanupNormalizedImage, normalizeImageForSocial } from "./image-normalizer";
 import { hostPublicMediaFile } from "./public-media";
 import { withPublishLock } from "./publish-lock";
-import { publishEnabled } from "./publish-switch";
-import { evaluatePublishGate, selectPublishablePosts } from "./publish-gate";
+import { canStartPublish, publishEnabled, shouldStartPublishPoller } from "./publish-switch";
+import { evaluatePublishGate, evaluatePublishIdempotency, selectPublishablePosts } from "./publish-gate";
 import { resolveBin } from "./local-bin";
 import { findRecentVehicleDuplicate } from "./post-dedup";
 import {
@@ -316,10 +316,27 @@ function computeBackoffMinutes(attempts: number): number {
 /**
  * Publish a single post to all its platforms via Zernio.
  */
-export async function publishPost(postId: number): Promise<{ success: boolean; results: Record<string, any> }> {
-  if (!publishEnabled()) {
+export async function publishPost(
+  postId: number,
+  options: { manual?: boolean } = {},
+): Promise<{ success: boolean; results: Record<string, any> }> {
+  if (!canStartPublish(options)) {
     console.error("[Zernio] Publish skipped: PUBLISH_ENABLED is not true");
     return { success: false, results: { error: "PUBLISH_ENABLED is not true" } };
+  }
+  const existing = storage.getPost(postId);
+  if (!existing) return { success: false, results: { error: "Post not found" } };
+  if (!publishEnabled() && options.manual) {
+    const gate = evaluatePublishGate(existing);
+    if (!gate.ok) {
+      console.error(`[Zernio] Manual publish skipped for post ${postId}: ${gate.reason}`);
+      return { success: false, results: { skipped: true, error: gate.reason } };
+    }
+  }
+  const idem = evaluatePublishIdempotency(existing);
+  if (!idem.ok) {
+    console.error(`[Zernio] Publish skipped for post ${postId}: ${idem.reason}`);
+    return { success: false, results: { skipped: true, error: idem.reason, zernioIds: idem.zernioIds } };
   }
   const locked = await withPublishLock(postId, () => publishPostUnlocked(postId));
   if (!locked.acquired || !locked.result) {
@@ -343,6 +360,11 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
   if (!gate.ok) {
     console.error(`[Zernio] Publish skipped for post ${postId}: ${gate.reason}`);
     return { success: false, results: { skipped: true, error: gate.reason } };
+  }
+  const idem = evaluatePublishIdempotency(post);
+  if (!idem.ok) {
+    console.error(`[Zernio] Publish skipped for post ${postId}: ${idem.reason}`);
+    return { success: false, results: { skipped: true, error: idem.reason, zernioIds: idem.zernioIds } };
   }
 
   const duplicate = findRecentVehicleDuplicate(
@@ -507,6 +529,10 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
         postId: result.postId,
         publishedAt: attemptAt,
       };
+      storage.updatePost(postId, {
+        publishResults: JSON.stringify(results),
+        lastPublishAttemptAt: attemptAt,
+      } as any);
       console.log(`[Zernio] ✅ ${platform} published (${result.postId})`);
     } else {
       allSuccess = false;
@@ -571,10 +597,10 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
  * Polling loop — checks for posts due to publish and fires them.
  * Runs every minute.
  */
-export function startPublishPoller() {
-  if (!publishEnabled()) {
+export function startPublishPoller(): boolean {
+  if (!shouldStartPublishPoller()) {
     console.error("[Zernio] Publish loop not started: PUBLISH_ENABLED is not true");
-    return;
+    return false;
   }
   console.log("[Zernio] Publisher poller started — checking every 60 seconds");
 
@@ -619,4 +645,5 @@ export function startPublishPoller() {
       }
     }
   }, 60 * 1000); // every 60 seconds
+  return true;
 }

@@ -42,6 +42,7 @@ export const posts = sqliteTable(
     captionGmb: text("caption_gmb"), // Google My Business caption
     hashtags: text("hashtags"),
     ctaBlock: text("cta_block"), // dealership-specific CTA
+    captionExact: integer("caption_exact", { mode: "boolean" }).notNull().default(false),
     mediaUrls: text("media_urls"), // JSON array of URLs
     mediaType: text("media_type").default("image"), // image, video, carousel
     platforms: text("platforms").default('["instagram","facebook"]'), // JSON array
