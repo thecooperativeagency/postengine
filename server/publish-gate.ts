@@ -139,6 +139,49 @@ export function evaluatePublishGate(
   return { ok: true, reason: "ok" };
 }
 
+
+export type PublishIdempotencyDecision = PublishGateDecision & { zernioIds: string[] };
+
+export function parsePublishResultsJson(raw: string | null | undefined): Record<string, any> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function collectZernioPostIds(raw: string | null | undefined): string[] {
+  const parsed = parsePublishResultsJson(raw);
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key === "music" || key === "duplicateVehicle" || key === "error") continue;
+    if (!value || typeof value !== "object") continue;
+    const postId = (value as { postId?: unknown }).postId;
+    if (postId == null) continue;
+    const id = String(postId).trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+export function evaluatePublishIdempotency(
+  post: Pick<PublishGatePost, "status"> & { publishResults?: string | null },
+): PublishIdempotencyDecision {
+  const zernioIds = collectZernioPostIds(post.publishResults);
+  if (post.status === "published") {
+    return { ok: false, reason: "Post is already published", zernioIds };
+  }
+  if (zernioIds.length > 0) {
+    return { ok: false, reason: "Post already has a Zernio post id", zernioIds };
+  }
+  return { ok: true, reason: "ok", zernioIds: [] };
+}
+
 export function selectPublishablePosts<T extends PublishGatePost>(
   posts: T[],
   now = new Date(),

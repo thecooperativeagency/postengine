@@ -487,6 +487,9 @@ export class DatabaseStorage implements IStorage {
     if (!postColumnNames.has("status_before_hold")) {
       sqlite.exec(`ALTER TABLE posts ADD COLUMN status_before_hold TEXT;`);
     }
+    if (!postColumnNames.has("caption_exact")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN caption_exact INTEGER NOT NULL DEFAULT 0;`);
+    }
 
     const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;
     const dealershipColumnNames = new Set(dealershipColumns.map((col) => col.name));
