@@ -32,7 +32,18 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { PublishBlockReasons } from "@/components/publish-block-reasons";
 import type { Post, Dealership } from "@shared/schema";
+
+type QueuePost = Post & {
+  publishBlockReasons?: string[];
+  approveBlockReason?: string | null;
+};
+
+type ApprovePublishResult = {
+  successful: Post[];
+  failed: Array<{ id: number; error: string }>;
+};
 import { cn } from "@/lib/utils";
 
 function parseMediaUrls(raw: string | null | undefined): string[] {
@@ -334,7 +345,7 @@ function ReviewPostCard({
   approvePending,
   rejectPending,
 }: {
-  post: Post;
+  post: QueuePost;
   dealershipName: string;
   dealershipColor: string;
   selected: boolean;
@@ -382,10 +393,17 @@ function ReviewPostCard({
             />
             <span className="text-sm font-medium truncate">{dealershipName}</span>
           </div>
-          <Badge variant="secondary" className="text-xs capitalize shrink-0">
-            {post.postType}
-          </Badge>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Badge variant="outline" className="text-xs capitalize">
+              {post.status}
+            </Badge>
+            <Badge variant="secondary" className="text-xs capitalize">
+              {post.postType}
+            </Badge>
+          </div>
         </div>
+
+        <PublishBlockReasons postId={post.id} reasons={post.publishBlockReasons} />
 
         {post.vehicleInfo && (
           <p className="text-sm font-medium">{post.vehicleInfo}</p>
@@ -463,12 +481,17 @@ function ReviewPostCard({
           <Button
             size="sm"
             onClick={onApprove}
-            disabled={approvePending || rewriteMutation.isPending}
+            disabled={
+              post.status === "approved"
+              || Boolean(post.approveBlockReason)
+              || approvePending
+              || rewriteMutation.isPending
+            }
             className="flex-1"
             data-testid={`button-approve-${post.id}`}
           >
             <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-            Approve
+            {post.status === "approved" ? "Approved" : "Approve"}
           </Button>
           <Link href={`/posts/${post.id}`}>
             <Button size="sm" variant="outline" data-testid={`button-edit-${post.id}`}>
@@ -499,26 +522,34 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
     queryKey: ["/api/dealerships"],
   });
 
-  const queryParams = new URLSearchParams({ status: "queued" });
-  if (dealershipFilter) queryParams.set("dealershipId", dealershipFilter.toString());
-
-  const { data: posts, isLoading } = useQuery<Post[]>({
-    queryKey: ["/api/posts", "queued", dealershipFilter],
+  const { data: queue, isLoading } = useQuery<{ publishEnabled: boolean; posts: QueuePost[] }>({
+    queryKey: ["/api/posts/queue", dealershipFilter],
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/posts?${queryParams.toString()}`);
+      const params = new URLSearchParams();
+      if (dealershipFilter) params.set("dealershipId", String(dealershipFilter));
+      const res = await apiRequest("GET", `/api/posts/queue?${params.toString()}`);
       return res.json();
     },
   });
+  const posts = queue?.posts;
 
   const approveMutation = useMutation({
     mutationFn: async (id: number) => {
-      const res = await apiRequest("PATCH", `/api/posts/${id}`, { status: "scheduled" });
-      return res.json();
+      const res = await apiRequest("POST", "/api/posts/approve-publish", { ids: [id] });
+      const body = await res.json() as ApprovePublishResult;
+      if (body.failed?.length) {
+        throw new Error(body.failed.map((item) => item.error).join(" "));
+      }
+      return body;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/posts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/posts/queue"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
-      toast({ title: "Post approved and scheduled" });
+      toast({ title: "Marked approved for publish" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not approve", description: err.message, variant: "destructive" });
     },
   });
 
@@ -529,6 +560,7 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/posts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/posts/queue"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
       toast({ title: "Post rejected" });
     },
@@ -536,11 +568,12 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
 
   const bulkApproveMutation = useMutation({
     mutationFn: async (ids: number[]) => {
-      const res = await apiRequest("POST", "/api/posts/bulk-approve", { ids });
-      return res.json() as Promise<{ successful: Post[]; failed: Array<{ id: number; error: string; folderSource?: string }> }>;
+      const res = await apiRequest("POST", "/api/posts/approve-publish", { ids });
+      return res.json() as Promise<ApprovePublishResult>;
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/posts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/posts/queue"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
 
       const failedIds = new Set(result.failed.map((item) => item.id));
@@ -548,7 +581,7 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
 
       if (result.failed.length > 0) {
         toast({
-          title: `${result.successful.length} posts scheduled, ${result.failed.length} blocked`,
+          title: `${result.successful.length} marked approved, ${result.failed.length} blocked`,
           description: result.failed[0]?.error,
           variant: "destructive",
         });
@@ -556,7 +589,10 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
       }
 
       setSelectedIds([]);
-      toast({ title: "Posts bulk approved and scheduled" });
+      toast({ title: "Marked approved for publish" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not approve", description: err.message, variant: "destructive" });
     },
   });
 
@@ -577,7 +613,7 @@ export default function ReviewQueue({ dealershipFilter }: { dealershipFilter: nu
             Review Queue
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Imported posts awaiting review — rewrite captions with a prompt, then approve
+            Approve marks a post approved for the publisher. It does not send the post. Each card lists why the gate would hold it.
           </p>
         </div>
         {selectedIds.length > 0 && (

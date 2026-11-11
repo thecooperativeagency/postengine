@@ -34,7 +34,7 @@ export const posts = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     dealershipId: integer("dealership_id").notNull(),
-    status: text("status").notNull().default("draft"), // draft, queued, scheduled, approved, held, published, rejected
+    status: text("status").notNull().default("draft"), // draft, queued, scheduled, approved, held, expired, published, rejected
     postType: text("post_type").notNull().default("inventory"), // inventory, promo, lifestyle, announcement
     vehicleInfo: text("vehicle_info"), // e.g. "2026 BMW X5 M60"
     caption: text("caption"), // Instagram/Facebook caption
@@ -59,6 +59,10 @@ export const posts = sqliteTable(
     heldAt: text("held_at"),
     heldReason: text("held_reason"),
     statusBeforeHold: text("status_before_hold"),
+    expiredAt: text("expired_at"),
+    expiredReason: text("expired_reason"),
+    /** When true, a restored scheduled post stays out of the automatic expiry sweep. */
+    scheduleExpiryExempt: integer("schedule_expiry_exempt", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   },
   (table) => ({
@@ -76,6 +80,9 @@ export const insertPostSchema = createInsertSchema(posts).omit({
   heldAt: true,
   heldReason: true,
   statusBeforeHold: true,
+  expiredAt: true,
+  expiredReason: true,
+  scheduleExpiryExempt: true,
 });
 export type InsertPost = z.infer<typeof insertPostSchema>;
 export type Post = typeof posts.$inferSelect;

@@ -15,7 +15,7 @@ import { withPublishLock } from "./publish-lock";
 import { canStartPublish, publishEnabled, shouldStartPublishPoller } from "./publish-switch";
 import { evaluatePublishGate, evaluatePublishIdempotency, selectPublishablePosts } from "./publish-gate";
 import { resolveBin } from "./local-bin";
-import { findRecentVehicleDuplicate } from "./post-dedup";
+import { findRecentVehicleDuplicate, recentVehicleBlockReason } from "./post-dedup";
 import {
   formatMusicNote,
   isMusicAutoBedEnabled,
@@ -375,7 +375,7 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
   );
   if (duplicate) {
     const blockedAt = new Date().toISOString();
-    const reason = `Blocked duplicate vehicle publish; matched recent post ${duplicate.id}: ${duplicate.vehicleInfo || "Unknown vehicle"}`;
+    const reason = recentVehicleBlockReason(duplicate, "publish");
     storage.updatePost(postId, {
       status: "rejected",
       lastPublishAttemptAt: blockedAt,

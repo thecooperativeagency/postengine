@@ -41,12 +41,26 @@ import {
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { PublishBlockReasons } from "@/components/publish-block-reasons";
 import type { Post, Dealership } from "@shared/schema";
+
+type ListedPost = Post & {
+  publishBlockReasons?: string[];
+  approveBlockReason?: string | null;
+};
+
+type ApprovePublishResult = {
+  successful: Post[];
+  failed: Array<{ id: number; error: string }>;
+};
 
 const statusColors: Record<string, string> = {
   draft: "bg-muted text-muted-foreground",
   queued: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
   scheduled: "bg-primary/10 text-primary",
+  approved: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
+  held: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  expired: "bg-muted text-muted-foreground",
   published: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
   rejected: "bg-destructive/10 text-destructive",
 };
@@ -99,7 +113,7 @@ function formatPostType(value: string) {
   return value?.replace(/-/g, " ") || "General";
 }
 
-const statusTabs = ["all", "draft", "queued", "scheduled", "published"];
+const statusTabs = ["all", "draft", "queued", "scheduled", "approved", "held", "expired", "published"];
 const postTypes = ["all", "inventory", "promo", "lifestyle", "announcement"];
 
 export default function Posts({ dealershipFilter }: { dealershipFilter: number | null }) {
@@ -117,7 +131,7 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
   if (statusFilter !== "all") queryParams.set("status", statusFilter);
   if (typeFilter !== "all") queryParams.set("postType", typeFilter);
 
-  const { data: posts, isLoading } = useQuery<Post[]>({
+  const { data: posts, isLoading } = useQuery<ListedPost[]>({
     queryKey: ["/api/posts", queryParams.toString()],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/posts?${queryParams.toString()}`);
@@ -127,11 +141,12 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
 
   const bulkApproveMutation = useMutation({
     mutationFn: async (ids: number[]) => {
-      const res = await apiRequest("POST", "/api/posts/bulk-approve", { ids });
-      return res.json() as Promise<{ successful: Post[]; failed: Array<{ id: number; error: string; folderSource?: string }> }>;
+      const res = await apiRequest("POST", "/api/posts/approve-publish", { ids });
+      return res.json() as Promise<ApprovePublishResult>;
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/posts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/posts/queue"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
 
       const failedIds = new Set(result.failed.map((item) => item.id));
@@ -139,7 +154,7 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
 
       if (result.failed.length > 0) {
         toast({
-          title: `${result.successful.length} posts scheduled, ${result.failed.length} blocked`,
+          title: `${result.successful.length} marked approved, ${result.failed.length} blocked`,
           description: result.failed[0]?.error,
           variant: "destructive",
         });
@@ -147,7 +162,26 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
       }
 
       setSelectedIds([]);
-      toast({ title: "Posts approved and scheduled" });
+      toast({ title: "Marked approved for publish" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not approve", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const restoreExpiredMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/posts/${id}/restore-expired`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/posts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/posts/queue"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: "Restored to scheduled" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not restore", description: err.message, variant: "destructive" });
     },
   });
 
@@ -186,7 +220,7 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
   };
 
   const queuedSelected = posts?.filter(
-    (p) => selectedIds.includes(p.id) && p.status === "queued"
+    (p) => selectedIds.includes(p.id) && (p.status === "queued" || p.status === "scheduled")
   );
 
   return (
@@ -318,6 +352,11 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                               Edit
                             </Link>
                           </DropdownMenuItem>
+                          {post.status === "expired" && (
+                            <DropdownMenuItem onClick={() => restoreExpiredMutation.mutate(post.id)}>
+                              Restore to scheduled
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem className="text-destructive" onClick={() => deleteMutation.mutate(post.id)}>
                             <Trash2 className="h-3.5 w-3.5 mr-2" />
                             Delete
@@ -331,6 +370,7 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                       <Badge variant="outline" className="capitalize">{formatPostType(post.postType)}</Badge>
                       <Badge variant="outline">{formatSchedule(post.scheduledFor)}</Badge>
                     </div>
+                    <PublishBlockReasons postId={post.id} reasons={post.publishBlockReasons} />
 
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span>Platforms</span>
@@ -395,7 +435,10 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                         <span className="text-xs capitalize text-muted-foreground">{formatPostType(post.postType)}</span>
                       </TableCell>
                       <TableCell>
-                        <StatusBadge status={post.status} />
+                        <div className="space-y-2">
+                          <StatusBadge status={post.status} />
+                          <PublishBlockReasons postId={post.id} reasons={post.publishBlockReasons} />
+                        </div>
                       </TableCell>
                       <TableCell>
                         <PlatformIcons platforms={post.platforms} />
@@ -417,6 +460,11 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                                 Edit
                               </Link>
                             </DropdownMenuItem>
+                            {post.status === "expired" && (
+                              <DropdownMenuItem onClick={() => restoreExpiredMutation.mutate(post.id)}>
+                                Restore to scheduled
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                               className="text-destructive"
                               onClick={() => deleteMutation.mutate(post.id)}

@@ -18,12 +18,18 @@ import {
   buildDuePreview,
   buildHoldPatch,
   buildReleaseHoldPatch,
+  buildRestoreExpiredPatch,
+  evaluateApproveForPublish,
   evaluatePublishGate,
   evaluatePublishIdempotency,
   formatChicagoYmd,
+  isActiveQueuePost,
+  listPublishBlockReasons,
   shouldHoldPost,
   type HoldScope,
+  type PublishGatePost,
 } from "./publish-gate";
+import { runScheduledExpirySweep } from "./scheduled-expiry";
 import {
   NOV6_2026_APPROVE_NONCE,
   NOV6_2026_READY_POST_IDS,
@@ -39,7 +45,7 @@ import {
   dashboardCanSeeDealership,
   isDashboardProtectionEnabled,
 } from "./dashboard-auth";
-import { findRecentVehicleDuplicate } from "./post-dedup";
+import { findRecentVehicleDuplicate, recentVehicleBlockReason } from "./post-dedup";
 import { hostUploadedMedia, inferPostMediaType } from "./media-upload";
 import { SPECIALS_SOURCES, syncTalkingPointsFromSpecials } from "./specials-talking-sync";
 
@@ -50,6 +56,9 @@ const PUBLISH_GATE_PATCH_FIELDS = new Set([
   "heldAt",
   "heldReason",
   "statusBeforeHold",
+  "expiredAt",
+  "expiredReason",
+  "scheduleExpiryExempt",
 ]);
 
 function requireAdmin(req: { dashboardUser?: { dealershipIds: number[] | null } }, res: { status: (code: number) => { json: (body: unknown) => unknown } }) {
@@ -63,7 +72,7 @@ function requireAdmin(req: { dashboardUser?: { dealershipIds: number[] | null } 
 function actorName(req: { dashboardUser?: { name?: string } }, fallback?: string) {
   return (typeof fallback === "string" && fallback.trim()) || req.dashboardUser?.name || "unknown";
 }
-const DEFAULT_HIDDEN_POST_STATUSES = new Set(["rejected"]);
+const DEFAULT_HIDDEN_POST_STATUSES = new Set(["rejected", "expired"]);
 const DRIVE_SCAN_STALE_MS = 30 * 60 * 1000;
 function sweepStaleDriveScanJobs(now = Date.now()) {
   const staleBefore = new Date(now - DRIVE_SCAN_STALE_MS).toISOString();
@@ -188,7 +197,28 @@ type BulkApproveDeps<TPost extends PostArchiveCandidate> = {
 };
 
 function buildRecentDuplicateVehicleError(duplicate: { id: number; vehicleInfo: string | null }) {
-  return `Recent duplicate vehicle already active on post ${duplicate.id}: ${duplicate.vehicleInfo || "Unknown vehicle"}`;
+  return recentVehicleBlockReason(duplicate, "queue");
+}
+
+function decoratePostsForQueue<T extends PublishGatePost>(posts: T[], siblings: T[], now = new Date()) {
+  return posts.map((post) => {
+    const sameStore = siblings.filter((other) => other.dealershipId === post.dealershipId);
+    const gate = evaluatePublishGate(post, now);
+    const publishBlockReasons = listPublishBlockReasons(post, {
+      now,
+      siblings: sameStore,
+      publishEnabled: publishEnabled(),
+    });
+    const approve = evaluateApproveForPublish(post, sameStore, now);
+    if (!gate.ok && !publishBlockReasons.includes(gate.reason)) {
+      publishBlockReasons.unshift(gate.reason);
+    }
+    return {
+      ...post,
+      publishBlockReasons,
+      approveBlockReason: approve.ok ? null : approve.reason,
+    };
+  });
 }
 
 function findRecentDuplicateForPost(post: {
@@ -327,8 +357,10 @@ export async function registerRoutes(server: Server, app: Express) {
     if (req.query.status) filters.status = req.query.status as string;
     if (req.query.postType) filters.postType = req.query.postType as string;
     const includeRejected = req.query.includeRejected === "true";
+    const allVisible = storage.getPosts().filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
     const postsList = storage.getPosts(filters).filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
-    res.json(filterPostsForApi(postsList, { status: filters.status, includeRejected }));
+    const visible = filterPostsForApi(postsList, { status: filters.status, includeRejected });
+    res.json(decoratePostsForQueue(visible, allVisible));
   });
 
   app.get("/api/posts/stats", (req, res) => {
@@ -357,6 +389,22 @@ export async function registerRoutes(server: Server, app: Express) {
       publishEnabled: publishEnabled(),
       driveScanEnabled: driveScanEnabled(),
     }));
+  });
+
+  app.get("/api/posts/queue", (req, res) => {
+    runScheduledExpirySweep();
+    const dealershipId = req.query.dealershipId ? Number(req.query.dealershipId) : undefined;
+    const allVisible = storage.getPosts().filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
+    const active = allVisible.filter((post) => {
+      if (!isActiveQueuePost(post)) return false;
+      if (dealershipId && post.dealershipId !== dealershipId) return false;
+      return true;
+    });
+    active.sort((a, b) => String(a.scheduledFor || "").localeCompare(String(b.scheduledFor || "")) || a.id - b.id);
+    res.json({
+      publishEnabled: publishEnabled(),
+      posts: decoratePostsForQueue(active, allVisible),
+    });
   });
 
   app.get("/api/posts/:id", (req, res) => {
@@ -408,9 +456,9 @@ export async function registerRoutes(server: Server, app: Express) {
       if (!dashboardCanSeeDealership(req, data.dealershipId)) {
         return res.status(404).json({ error: "Not found" });
       }
-      if (data.status === "approved" || data.status === "held") {
+      if (data.status === "approved" || data.status === "held" || data.status === "expired") {
         return res.status(400).json({
-          error: "Use the publish-approval or hold endpoints to change this status",
+          error: "Use the publish-approval, hold, or expiry endpoints to change this status",
         });
       }
       const post = storage.createPost(data);
@@ -436,11 +484,13 @@ export async function registerRoutes(server: Server, app: Express) {
 
     const body = { ...req.body };
     for (const field of PUBLISH_GATE_PATCH_FIELDS) delete body[field];
-    if (body.status === "approved" || body.status === "held") {
+    if (body.status === "approved" || body.status === "held" || body.status === "expired") {
       return res.status(400).json({
-        error: "Use the publish-approval or hold endpoints to change this status",
+        error: "Use the publish-approval, hold, or expiry endpoints to change this status",
       });
     }
+    const scheduledForChanged = Object.prototype.hasOwnProperty.call(req.body ?? {}, "scheduledFor")
+      && req.body.scheduledFor !== existing.scheduledFor;
 
     try {
       archivePostSourceOrThrow(existing, body.status, archiveFile);
@@ -449,7 +499,10 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.status(409).json({ error: message });
     }
 
-    const updated = storage.updatePost(Number(req.params.id), body);
+    const updated = storage.updatePost(Number(req.params.id), {
+      ...body,
+      ...(scheduledForChanged ? { scheduleExpiryExempt: false } : {}),
+    });
     if (!updated) return res.status(500).json({ error: "Failed to update" });
 
     // Log status changes
@@ -859,12 +912,10 @@ export async function registerRoutes(server: Server, app: Express) {
         failed.push({ id, error: "Post not found" });
         continue;
       }
-      if (existing.status === "held") {
-        failed.push({ id, error: "Release the hold before approving this post for publish" });
-        continue;
-      }
-      if (existing.status === "published" || existing.status === "rejected") {
-        failed.push({ id, error: `Cannot approve a ${existing.status} post` });
+      const siblings = storage.getPosts({ dealershipId: existing.dealershipId });
+      const decision = evaluateApproveForPublish(existing, siblings, now);
+      if (!decision.ok) {
+        failed.push({ id, error: decision.reason });
         continue;
       }
       try {
@@ -887,6 +938,8 @@ export async function registerRoutes(server: Server, app: Express) {
       successful.push(updated);
     }
 
+    // Approve only marks the post. The publish gate and poller send it later.
+
     res.status(failed.length > 0 ? 207 : 200).json({
       successful,
       failed,
@@ -895,6 +948,22 @@ export async function registerRoutes(server: Server, app: Express) {
       nonce: nonce || null,
       allowlist: nonce === NOV6_2026_APPROVE_NONCE ? [...NOV6_2026_READY_POST_IDS] : null,
     });
+  });
+
+  app.post("/api/posts/:id/restore-expired", (req, res) => {
+    const postId = Number(req.params.id);
+    const post = storage.getPost(postId);
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
+    if (post.status !== "expired") return res.status(409).json({ error: "Post is not expired" });
+    const updated = storage.updatePost(postId, buildRestoreExpiredPatch());
+    if (!updated) return res.status(500).json({ error: "Failed to update post" });
+    storage.logActivity({
+      postId: updated.id,
+      dealershipId: updated.dealershipId,
+      action: "restored",
+      details: `Expired post restored to scheduled: ${updated.vehicleInfo || updated.postType}`,
+    });
+    res.json(updated);
   });
 
   // ── DRIVE SCANNER ───────────────────────────────────────────
