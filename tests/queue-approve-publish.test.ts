@@ -5,17 +5,21 @@ import { filterPostsForApi } from "../server/routes";
 import { withPublishLock, resetPublishLocks } from "../server/publish-lock";
 import {
   APPROVAL_WINDOW_REASON,
-  applyScheduledExpiry,
   buildApprovePublishPatch,
-  buildRestoreExpiredPatch,
+  chicagoTimeOfDay,
+  earliestRescheduleYmd,
   evaluateApproveForPublish,
   evaluatePublishGate,
+  formatChicagoYmd,
   isActiveQueuePost,
   listPublishBlockReasons,
-  SCHEDULED_EXPIRY_EXCLUDED_IDS,
-  shouldExpireScheduledPost,
   type PublishGatePost,
 } from "../server/publish-gate";
+import {
+  applyMissedSlotReschedule,
+  missedSlotMoveLogDetails,
+  shouldRescheduleMissedPost,
+} from "../server/missed-slot";
 
 const NOW = new Date("2026-11-12T16:00:00.000Z");
 const WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -190,29 +194,9 @@ test("block reasons include the gate reason and the extra publisher checks", () 
   ]);
 });
 
-test("expiry leaves held rows and the listed backlog ids untouched and deletes nothing", () => {
-  assert.deepEqual(
-    [...SCHEDULED_EXPIRY_EXCLUDED_IDS].sort((a, b) => a - b),
-    [43, 450, 451, 459, 473, 485, 486, 489, 490, 495, 496, 498, 500],
-  );
-
-  const excluded = SCHEDULED_EXPIRY_EXCLUDED_IDS.map((id) => post({
-    id,
-    dealershipId: 2,
-    status: "scheduled",
-    scheduledFor: PAST_SLOT,
-    caption: `keep ${id}`,
-    mediaUrls: `["https://example.com/${id}.jpg"]`,
-  }));
-  const undated = post({
-    id: 43,
-    dealershipId: 2,
-    status: "scheduled",
-    scheduledFor: null,
-    caption: "wedding",
-  });
+test("missed posts are rescheduled, never expired, and held rows stay put", () => {
   const held = post({
-    id: 9999,
+    id: 450,
     dealershipId: 2,
     status: "held",
     heldAt: "2026-11-06T16:00:00.000Z",
@@ -220,13 +204,28 @@ test("expiry leaves held rows and the listed backlog ids untouched and deletes n
     scheduledFor: PAST_SLOT,
     caption: "held copy",
   });
-  const control = post({
-    id: 777,
+  const previouslyExcluded = [43, 451, 496].map((id, index) => post({
+    id,
+    dealershipId: 2,
+    status: "scheduled",
+    scheduledFor: id === 43 ? null : PAST_SLOT,
+    caption: `keep ${id}`,
+  }));
+  const approvedLate = post({
+    id: 502,
+    dealershipId: 4,
+    status: "approved",
+    approvedAt: "2026-11-01T16:00:00.000Z",
+    approvedBy: "Lance",
+    scheduledFor: PAST_SLOT,
+    caption: "approved late",
+  });
+  const scheduledLate = post({
+    id: 452,
     dealershipId: 4,
     status: "scheduled",
     scheduledFor: PAST_SLOT,
-    caption: "stale scheduled",
-    mediaUrls: '["https://example.com/stale.jpg"]',
+    caption: "scheduled late",
   });
   const insideWindow = post({
     id: 778,
@@ -234,53 +233,95 @@ test("expiry leaves held rows and the listed backlog ids untouched and deletes n
     status: "scheduled",
     scheduledFor: new Date(NOW.getTime() - 30 * 60 * 1000).toISOString(),
   });
-  const rows = [...excluded, undated, held, control, insideWindow];
-  const result = applyScheduledExpiry(rows, NOW);
+  const published = post({
+    id: 200,
+    dealershipId: 4,
+    status: "published",
+    scheduledFor: "2026-11-14T16:00:00.000Z",
+    publishedAt: "2026-11-14T16:00:00.000Z",
+  });
+  const alreadyBooked = post({
+    id: 201,
+    dealershipId: 2,
+    status: "scheduled",
+    scheduledFor: "2026-11-14T16:00:00.000Z",
+  });
+  const rejected = post({
+    id: 202,
+    dealershipId: 4,
+    status: "rejected",
+    scheduledFor: PAST_SLOT,
+  });
 
-  assert.deepEqual(result.deletedIds, []);
-  assert.equal(result.posts.length, rows.length);
-  assert.deepEqual(result.expiredIds, [777]);
-  for (const id of SCHEDULED_EXPIRY_EXCLUDED_IDS) {
-    const before = rows.find((row) => row.id === id && row.scheduledFor === PAST_SLOT);
-    const after = result.posts.find((row) => row.id === id && row.caption === `keep ${id}`);
-    assert.ok(before);
-    assert.ok(after);
-    assert.equal(after.status, "scheduled");
-    assert.equal(after.mediaUrls, before.mediaUrls);
-    assert.equal(after.scheduledFor, PAST_SLOT);
-  }
-  const undatedAfter = result.posts.find((row) => row.caption === "wedding");
-  assert.equal(undatedAfter?.status, "scheduled");
-  assert.equal(undatedAfter?.scheduledFor, null);
-  const heldAfter = result.posts.find((row) => row.id === 9999);
-  assert.equal(heldAfter?.status, "held");
-  assert.equal(heldAfter?.heldReason, "backlog hold");
-  assert.equal(heldAfter?.caption, "held copy");
-  const expired = result.posts.find((row) => row.id === 777);
-  assert.equal(expired?.status, "expired");
-  assert.equal(expired?.caption, "stale scheduled");
-  assert.equal(expired?.mediaUrls, control.mediaUrls);
-  assert.equal(expired?.scheduledFor, PAST_SLOT);
-  assert.notEqual(expired?.status, "rejected");
-  assert.equal(insideWindow && result.posts.find((row) => row.id === 778)?.status, "scheduled");
+  const rows = [
+    held,
+    ...previouslyExcluded,
+    approvedLate,
+    scheduledLate,
+    insideWindow,
+    published,
+    alreadyBooked,
+    rejected,
+  ];
+  const result = applyMissedSlotReschedule(rows, NOW);
 
-  const heldOnly = applyScheduledExpiry([held], NOW, { excludeIds: [] });
-  assert.equal(heldOnly.posts[0].status, "held");
-  assert.deepEqual(heldOnly.expiredIds, []);
-  assert.deepEqual(heldOnly.deletedIds, []);
-  assert.equal(shouldExpireScheduledPost(held, NOW, WINDOW_MS, []), false);
+  assert.equal(result.posts.every((row) => row.status !== "expired"), true);
+  assert.equal(result.posts.find((row) => row.id === 450)?.status, "held");
+  assert.equal(result.posts.find((row) => row.id === 450)?.scheduledFor, PAST_SLOT);
+  assert.equal(shouldRescheduleMissedPost(held, NOW), false);
+  assert.equal(shouldRescheduleMissedPost(rejected, NOW), false);
+  assert.equal(shouldRescheduleMissedPost(published, NOW), false);
+  assert.equal(shouldRescheduleMissedPost(insideWindow, NOW), false);
 
-  const restored = { ...expired!, ...buildRestoreExpiredPatch() };
-  assert.equal(restored.status, "scheduled");
-  assert.equal(restored.scheduleExpiryExempt, true);
-  assert.equal(restored.caption, "stale scheduled");
-  assert.equal(shouldExpireScheduledPost(restored, NOW), false);
-  const secondPass = applyScheduledExpiry([restored], NOW);
-  assert.equal(secondPass.posts[0].status, "scheduled");
-  assert.deepEqual(secondPass.expiredIds, []);
-  assert.equal(isActiveQueuePost({ status: "expired" }), false);
-  assert.equal(isActiveQueuePost({ status: "held" }), false);
-  assert.equal(isActiveQueuePost({ status: "scheduled" }), true);
+  const undated = result.posts.find((row) => row.id === 43);
+  assert.equal(undated?.status, "scheduled");
+  assert.equal(undated?.scheduledFor, null);
+
+  const movedIds = result.moves.map((move) => move.id).sort((a, b) => a - b);
+  assert.deepEqual(movedIds, [451, 452, 496, 502]);
+
+  const earliest = earliestRescheduleYmd(NOW);
+  assert.equal(earliest, "2026-11-14");
+
+  const moved451 = result.moves.find((move) => move.id === 451)!;
+  const moved496 = result.moves.find((move) => move.id === 496)!;
+  // Store 2 already has a scheduled post on Nov 14, so 451 then 496 take Nov 15 and Nov 16 at 10:00 AM CT.
+  assert.equal(formatChicagoYmd(new Date(moved451.to)), "2026-11-15");
+  assert.equal(formatChicagoYmd(new Date(moved496.to)), "2026-11-16");
+  assert.equal(moved451.status, "scheduled");
+  assert.equal(moved496.status, "scheduled");
+  assert.deepEqual(chicagoTimeOfDay(new Date(moved451.to)), chicagoTimeOfDay(new Date(PAST_SLOT)));
+  assert.match(missedSlotMoveLogDetails(moved451.from, moved451.to), /Moved missed slot from/);
+  assert.match(missedSlotMoveLogDetails(moved451.from, moved451.to), /Nov 1/);
+  assert.match(missedSlotMoveLogDetails(moved451.from, moved451.to), /Nov 15/);
+
+  const moved502 = result.moves.find((move) => move.id === 502)!;
+  const moved452 = result.moves.find((move) => move.id === 452)!;
+  // Store 4 already has a published post on Nov 14. Same-slot ties sort by id, so 452 then 502.
+  assert.equal(formatChicagoYmd(new Date(moved452.to)), "2026-11-15");
+  assert.equal(formatChicagoYmd(new Date(moved502.to)), "2026-11-16");
+  assert.equal(result.posts.find((row) => row.id === 502)?.status, "approved");
+  assert.equal(result.posts.find((row) => row.id === 502)?.approvedBy, "Lance");
+  assert.equal(result.posts.find((row) => row.id === 452)?.status, "scheduled");
+  assert.equal(result.posts.find((row) => row.id === 778)?.scheduledFor, insideWindow.scheduledFor);
+
+  const secondPass = applyMissedSlotReschedule(result.posts, NOW);
+  assert.deepEqual(secondPass.moves, []);
+});
+
+test("reschedule keeps the original Chicago time of day across DST", () => {
+  const summer = post({
+    id: 900,
+    dealershipId: 1,
+    status: "scheduled",
+    scheduledFor: "2026-07-01T15:00:00.000Z", // 10:00 AM CDT
+  });
+  const result = applyMissedSlotReschedule([summer], NOW);
+  assert.equal(result.moves.length, 1);
+  const next = new Date(result.moves[0].to);
+  assert.equal(formatChicagoYmd(next), "2026-11-14");
+  assert.deepEqual(chicagoTimeOfDay(next), { hour: 10, minute: 0, second: 0 });
+  assert.equal(result.posts[0].status, "scheduled");
 });
 
 test("the working list hides expired posts unless that status is requested", () => {

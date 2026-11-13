@@ -29,7 +29,7 @@ import {
   type HoldScope,
   type PublishGatePost,
 } from "./publish-gate";
-import { runScheduledExpirySweep } from "./scheduled-expiry";
+import { runMissedSlotReschedule } from "./missed-slot-reschedule";
 import {
   NOV6_2026_APPROVE_NONCE,
   NOV6_2026_READY_POST_IDS,
@@ -59,6 +59,8 @@ const PUBLISH_GATE_PATCH_FIELDS = new Set([
   "expiredAt",
   "expiredReason",
   "scheduleExpiryExempt",
+  "rescheduledFrom",
+  "rescheduledAt",
 ]);
 
 function requireAdmin(req: { dashboardUser?: { dealershipIds: number[] | null } }, res: { status: (code: number) => { json: (body: unknown) => unknown } }) {
@@ -352,6 +354,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // ---- Posts ----
   app.get("/api/posts", (req, res) => {
+    runMissedSlotReschedule();
     const filters: any = {};
     if (req.query.dealershipId) filters.dealershipId = Number(req.query.dealershipId);
     if (req.query.status) filters.status = req.query.status as string;
@@ -392,7 +395,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.get("/api/posts/queue", (req, res) => {
-    runScheduledExpirySweep();
+    runMissedSlotReschedule();
     const dealershipId = req.query.dealershipId ? Number(req.query.dealershipId) : undefined;
     const allVisible = storage.getPosts().filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
     const active = allVisible.filter((post) => {
@@ -501,7 +504,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
     const updated = storage.updatePost(Number(req.params.id), {
       ...body,
-      ...(scheduledForChanged ? { scheduleExpiryExempt: false } : {}),
+      ...(scheduledForChanged ? { scheduleExpiryExempt: false, rescheduledFrom: null, rescheduledAt: null } : {}),
     });
     if (!updated) return res.status(500).json({ error: "Failed to update" });
 

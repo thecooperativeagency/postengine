@@ -4,10 +4,7 @@ export const PUBLISH_OVERDUE_WINDOW_MS = 2 * 60 * 60 * 1000;
 export const CHICAGO_TZ = "America/Chicago";
 export const APPROVAL_WINDOW_REASON = "Scheduled time is past the approval window; re-approval is required";
 export const ACTIVE_QUEUE_STATUSES = ["queued", "scheduled", "approved"] as const;
-/** Past-due scheduled rows the automatic expiry sweep must leave untouched. */
-export const SCHEDULED_EXPIRY_EXCLUDED_IDS = [
-  450, 459, 473, 485, 486, 489, 490, 495, 498, 500, 43, 451, 496,
-] as const;
+export const MISSED_SLOT_MIN_DAYS_OUT = 2;
 
 export type PublishGatePost = {
   id: number;
@@ -36,6 +33,8 @@ export type PublishGatePost = {
   expiredAt?: string | null;
   expiredReason?: string | null;
   scheduleExpiryExempt?: boolean | null;
+  rescheduledFrom?: string | null;
+  rescheduledAt?: string | null;
 };
 
 export type DealershipRef = {
@@ -87,7 +86,7 @@ function tzOffsetMs(date: Date, timeZone: string): number {
   return asUtc - date.getTime();
 }
 
-function addUtcDays(ymd: string, days: number): string {
+export function addUtcDays(ymd: string, days: number): string {
   const [year, month, day] = ymd.split("-").map(Number);
   const utc = new Date(Date.UTC(year, month - 1, day + days));
   return utc.toISOString().slice(0, 10);
@@ -103,6 +102,38 @@ export function chicagoDayRange(ymd: string): { start: Date; end: Date } {
     return new Date(guess.getTime() - tzOffsetMs(first, CHICAGO_TZ));
   };
   return { start: startOf(ymd), end: startOf(addUtcDays(ymd, 1)) };
+}
+
+export function chicagoTimeOfDay(date: Date): { hour: number; minute: number; second: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: CHICAGO_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  return { hour: get("hour"), minute: get("minute"), second: get("second") };
+}
+
+export function chicagoWallTime(
+  ymd: string,
+  time: { hour: number; minute: number; second?: number },
+): Date {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+    throw new Error("date must be YYYY-MM-DD");
+  }
+  const second = time.second ?? 0;
+  const hh = String(time.hour).padStart(2, "0");
+  const mm = String(time.minute).padStart(2, "0");
+  const ss = String(second).padStart(2, "0");
+  const guess = new Date(`${ymd}T${hh}:${mm}:${ss}.000Z`);
+  const first = new Date(guess.getTime() - tzOffsetMs(guess, CHICAGO_TZ));
+  return new Date(guess.getTime() - tzOffsetMs(first, CHICAGO_TZ));
+}
+
+export function earliestRescheduleYmd(now = new Date()): string {
+  return addUtcDays(formatChicagoYmd(now), MISSED_SLOT_MIN_DAYS_OUT);
 }
 
 export function evaluatePublishGate(
@@ -329,7 +360,7 @@ export type PreviewRow = {
   duplicateWarnings: string[];
 };
 
-function formatChicagoTimestamp(value: string | null | undefined): string | null {
+export function formatChicagoTimestamp(value: string | null | undefined): string | null {
   if (!value) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
@@ -418,7 +449,6 @@ export function buildDuePreview<T extends PublishGatePost>(args: {
 }
 
 const ACTIVE_QUEUE_STATUS_SET = new Set<string>(ACTIVE_QUEUE_STATUSES);
-const SCHEDULED_EXPIRY_EXCLUDED_ID_SET = new Set<number>(SCHEDULED_EXPIRY_EXCLUDED_IDS);
 
 export function isActiveQueuePost(post: { status: string }): boolean {
   return ACTIVE_QUEUE_STATUS_SET.has(post.status);
@@ -527,28 +557,6 @@ export function listPublishBlockReasons(
   return reasons;
 }
 
-export function shouldExpireScheduledPost(
-  post: PublishGatePost,
-  now = new Date(),
-  windowMs = publishOverdueWindowMs(),
-  excludeIds: Iterable<number> = SCHEDULED_EXPIRY_EXCLUDED_ID_SET,
-): boolean {
-  const excluded = excludeIds instanceof Set ? excludeIds : new Set(excludeIds);
-  if (excluded.has(post.id)) return false;
-  if (post.status === "held" || post.heldAt) return false;
-  if (post.scheduleExpiryExempt) return false;
-  if (post.status !== "scheduled") return false;
-  return slotPastApprovalWindow(post, now, windowMs);
-}
-
-export function buildExpireScheduledPatch(now = new Date()) {
-  return {
-    status: "expired" as const,
-    expiredAt: now.toISOString(),
-    expiredReason: "Past due and not approved",
-  };
-}
-
 export function buildRestoreExpiredPatch() {
   return {
     status: "scheduled" as const,
@@ -556,24 +564,4 @@ export function buildRestoreExpiredPatch() {
     expiredReason: null,
     scheduleExpiryExempt: true,
   };
-}
-
-export function applyScheduledExpiry<T extends PublishGatePost>(
-  posts: T[],
-  now = new Date(),
-  options?: { excludeIds?: Iterable<number>; windowMs?: number },
-): {
-  posts: Array<T & { expiredAt?: string | null; expiredReason?: string | null }>;
-  expiredIds: number[];
-  deletedIds: number[];
-} {
-  const windowMs = options?.windowMs ?? publishOverdueWindowMs();
-  const excludeIds = options?.excludeIds ?? SCHEDULED_EXPIRY_EXCLUDED_ID_SET;
-  const expiredIds: number[] = [];
-  const next = posts.map((post) => {
-    if (!shouldExpireScheduledPost(post, now, windowMs, excludeIds)) return post;
-    expiredIds.push(post.id);
-    return { ...post, ...buildExpireScheduledPatch(now) };
-  });
-  return { posts: next, expiredIds, deletedIds: [] };
 }

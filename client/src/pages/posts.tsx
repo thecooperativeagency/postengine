@@ -101,11 +101,13 @@ function parsePlatforms(platforms: string | null) {
 
 function formatSchedule(value: string | null) {
   if (!value) return "Not scheduled";
-  return new Date(value).toLocaleDateString("en-US", {
+  return new Date(value).toLocaleString("en-US", {
+    timeZone: "America/Chicago",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   });
 }
 
@@ -369,6 +371,11 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                       <StatusBadge status={post.status} />
                       <Badge variant="outline" className="capitalize">{formatPostType(post.postType)}</Badge>
                       <Badge variant="outline">{formatSchedule(post.scheduledFor)}</Badge>
+                      {post.rescheduledFrom && (
+                        <span className="block text-[11px] text-muted-foreground">
+                          Moved from {formatSchedule(post.rescheduledFrom)}
+                        </span>
+                      )}
                     </div>
                     <PublishBlockReasons postId={post.id} reasons={post.publishBlockReasons} />
 
@@ -444,7 +451,10 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                         <PlatformIcons platforms={post.platforms} />
                       </TableCell>
                       <TableCell>
-                        <span className="text-xs text-muted-foreground">{formatSchedule(post.scheduledFor)}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {formatSchedule(post.scheduledFor)}
+                          {post.rescheduledFrom ? ` · Moved from ${formatSchedule(post.rescheduledFrom)}` : ""}
+                        </span>
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>

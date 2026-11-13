@@ -14,6 +14,7 @@ import { hostPublicMediaFile } from "./public-media";
 import { withPublishLock } from "./publish-lock";
 import { canStartPublish, publishEnabled, shouldStartPublishPoller } from "./publish-switch";
 import { evaluatePublishGate, evaluatePublishIdempotency, selectPublishablePosts } from "./publish-gate";
+import { runMissedSlotReschedule } from "./missed-slot-reschedule";
 import { resolveBin } from "./local-bin";
 import { findRecentVehicleDuplicate, recentVehicleBlockReason } from "./post-dedup";
 import {
@@ -605,6 +606,17 @@ export function startPublishPoller(): boolean {
   console.log("[Zernio] Publisher poller started — checking every 60 seconds");
 
   setInterval(async () => {
+    try {
+      const moved = runMissedSlotReschedule();
+      if (moved.moves.length > 0) {
+        const summary = moved.moves
+          .map((move) => `#${move.id} ${move.fromChicago ?? move.from} -> ${move.toChicago ?? move.to}`)
+          .join("; ");
+        console.log(`[Zernio] Rescheduled ${moved.moves.length} missed post(s) before polling: ${summary}`);
+      }
+    } catch (error) {
+      console.error("[Zernio] Missed-slot reschedule failed:", error);
+    }
     const now = new Date();
     const approvedPosts = storage.getPosts({ status: "approved" });
     const duePosts = selectPublishablePosts(approvedPosts, now);

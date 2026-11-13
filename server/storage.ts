@@ -278,6 +278,8 @@ export class DatabaseStorage implements IStorage {
         expired_at TEXT,
         expired_reason TEXT,
         schedule_expiry_exempt INTEGER NOT NULL DEFAULT 0,
+        rescheduled_from TEXT,
+        rescheduled_at TEXT,
         created_at TEXT NOT NULL
       );
 
@@ -501,6 +503,12 @@ export class DatabaseStorage implements IStorage {
     }
     if (!postColumnNames.has("schedule_expiry_exempt")) {
       sqlite.exec(`ALTER TABLE posts ADD COLUMN schedule_expiry_exempt INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!postColumnNames.has("rescheduled_from")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN rescheduled_from TEXT;`);
+    }
+    if (!postColumnNames.has("rescheduled_at")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN rescheduled_at TEXT;`);
     }
 
     const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;

@@ -466,13 +466,29 @@ function ReviewPostCard({
         <div className="flex items-center justify-between pt-2 border-t">
           <PlatformBadges platforms={post.platforms} />
           {post.scheduledFor && (
-            <span className="text-xs text-muted-foreground">
-              {new Date(post.scheduledFor).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              })}
+            <span className="text-xs text-muted-foreground text-right">
+              <span className="block">
+                {new Date(post.scheduledFor).toLocaleString("en-US", {
+                  timeZone: "America/Chicago",
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                  timeZoneName: "short",
+                })}
+              </span>
+              {post.rescheduledFrom && (
+                <span className="block text-[11px]">
+                  Moved from {new Date(post.rescheduledFrom).toLocaleString("en-US", {
+                    timeZone: "America/Chicago",
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                    timeZoneName: "short",
+                  })}
+                </span>
+              )}
             </span>
           )}
         </div>

@@ -63,6 +63,8 @@ export const posts = sqliteTable(
     expiredReason: text("expired_reason"),
     /** When true, a restored scheduled post stays out of the automatic expiry sweep. */
     scheduleExpiryExempt: integer("schedule_expiry_exempt", { mode: "boolean" }).notNull().default(false),
+    rescheduledFrom: text("rescheduled_from"),
+    rescheduledAt: text("rescheduled_at"),
     createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   },
   (table) => ({
@@ -83,6 +85,8 @@ export const insertPostSchema = createInsertSchema(posts).omit({
   expiredAt: true,
   expiredReason: true,
   scheduleExpiryExempt: true,
+  rescheduledFrom: true,
+  rescheduledAt: true,
 });
 export type InsertPost = z.infer<typeof insertPostSchema>;
 export type Post = typeof posts.$inferSelect;
