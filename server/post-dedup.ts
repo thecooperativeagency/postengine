@@ -93,3 +93,14 @@ export function findRecentVehicleDuplicate(
 
   return null;
 }
+
+export function recentVehicleBlockReason(
+  duplicate: { id?: number; vehicleInfo?: string | null },
+  mode: VehicleDuplicateMode,
+): string {
+  const vehicle = duplicate.vehicleInfo || "Unknown vehicle";
+  if (mode === "publish") {
+    return `Blocked duplicate vehicle publish; matched recent post ${duplicate.id}: ${vehicle}`;
+  }
+  return `Recent duplicate vehicle already active on post ${duplicate.id}: ${vehicle}`;
+}

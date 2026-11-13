@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { startMissedSlotRescheduler } from "./missed-slot-reschedule";
 import { startPublishPoller } from "./zernio-publisher";
 import { DATABASE_PATH, storage } from "./storage";
 import { dashboardAuthProblems, requireDashboardPassword, setDashboardDealerships } from "./dashboard-auth";
@@ -157,6 +158,7 @@ app.use((req, res, next) => {
     () => {
       log(`serving on port ${port}`);
       log(`using sqlite database at ${DATABASE_PATH}`, "storage");
+      startMissedSlotRescheduler();
       startPublishPoller(); // Start Zernio publish poller
     },
   );

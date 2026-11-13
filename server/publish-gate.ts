@@ -1,5 +1,10 @@
+import { findRecentVehicleDuplicate, recentVehicleBlockReason } from "./post-dedup";
+
 export const PUBLISH_OVERDUE_WINDOW_MS = 2 * 60 * 60 * 1000;
 export const CHICAGO_TZ = "America/Chicago";
+export const APPROVAL_WINDOW_REASON = "Scheduled time is past the approval window; re-approval is required";
+export const ACTIVE_QUEUE_STATUSES = ["queued", "scheduled", "approved"] as const;
+export const MISSED_SLOT_MIN_DAYS_OUT = 2;
 
 export type PublishGatePost = {
   id: number;
@@ -24,6 +29,12 @@ export type PublishGatePost = {
   publishedAt?: string | null;
   createdAt?: string | null;
   notes?: string | null;
+  publishResults?: string | null;
+  expiredAt?: string | null;
+  expiredReason?: string | null;
+  scheduleExpiryExempt?: boolean | null;
+  rescheduledFrom?: string | null;
+  rescheduledAt?: string | null;
 };
 
 export type DealershipRef = {
@@ -75,7 +86,7 @@ function tzOffsetMs(date: Date, timeZone: string): number {
   return asUtc - date.getTime();
 }
 
-function addUtcDays(ymd: string, days: number): string {
+export function addUtcDays(ymd: string, days: number): string {
   const [year, month, day] = ymd.split("-").map(Number);
   const utc = new Date(Date.UTC(year, month - 1, day + days));
   return utc.toISOString().slice(0, 10);
@@ -91,6 +102,38 @@ export function chicagoDayRange(ymd: string): { start: Date; end: Date } {
     return new Date(guess.getTime() - tzOffsetMs(first, CHICAGO_TZ));
   };
   return { start: startOf(ymd), end: startOf(addUtcDays(ymd, 1)) };
+}
+
+export function chicagoTimeOfDay(date: Date): { hour: number; minute: number; second: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: CHICAGO_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  return { hour: get("hour"), minute: get("minute"), second: get("second") };
+}
+
+export function chicagoWallTime(
+  ymd: string,
+  time: { hour: number; minute: number; second?: number },
+): Date {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+    throw new Error("date must be YYYY-MM-DD");
+  }
+  const second = time.second ?? 0;
+  const hh = String(time.hour).padStart(2, "0");
+  const mm = String(time.minute).padStart(2, "0");
+  const ss = String(second).padStart(2, "0");
+  const guess = new Date(`${ymd}T${hh}:${mm}:${ss}.000Z`);
+  const first = new Date(guess.getTime() - tzOffsetMs(guess, CHICAGO_TZ));
+  return new Date(guess.getTime() - tzOffsetMs(first, CHICAGO_TZ));
+}
+
+export function earliestRescheduleYmd(now = new Date()): string {
+  return addUtcDays(formatChicagoYmd(now), MISSED_SLOT_MIN_DAYS_OUT);
 }
 
 export function evaluatePublishGate(
@@ -109,6 +152,9 @@ export function evaluatePublishGate(
   }
   if (post.status === "rejected") {
     return { ok: false, reason: "Post is rejected" };
+  }
+  if (post.status === "expired") {
+    return { ok: false, reason: "Post is expired and out of the active queue" };
   }
   if (post.status !== "approved") {
     return { ok: false, reason: `Post status ${post.status} is not approved` };
@@ -134,7 +180,7 @@ export function evaluatePublishGate(
   }
   const effective = Math.max(scheduled.getTime(), approved.getTime());
   if (now.getTime() - effective > windowMs) {
-    return { ok: false, reason: "Scheduled time is past the approval window; re-approval is required" };
+    return { ok: false, reason: APPROVAL_WINDOW_REASON };
   }
   return { ok: true, reason: "ok" };
 }
@@ -314,7 +360,7 @@ export type PreviewRow = {
   duplicateWarnings: string[];
 };
 
-function formatChicagoTimestamp(value: string | null | undefined): string | null {
+export function formatChicagoTimestamp(value: string | null | undefined): string | null {
   if (!value) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
@@ -399,5 +445,123 @@ export function buildDuePreview<T extends PublishGatePost>(args: {
     driveScanEnabled: Boolean(args.driveScanEnabled),
     dueToday,
     overdue,
+  };
+}
+
+const ACTIVE_QUEUE_STATUS_SET = new Set<string>(ACTIVE_QUEUE_STATUSES);
+
+export function isActiveQueuePost(post: { status: string }): boolean {
+  return ACTIVE_QUEUE_STATUS_SET.has(post.status);
+}
+
+export function slotPastApprovalWindow(
+  post: { scheduledFor?: string | null },
+  now = new Date(),
+  windowMs = publishOverdueWindowMs(),
+): boolean {
+  if (!post.scheduledFor) return false;
+  const scheduled = new Date(post.scheduledFor);
+  if (Number.isNaN(scheduled.getTime())) return false;
+  return now.getTime() - scheduled.getTime() > windowMs;
+}
+
+export function evaluateApproveForPublish(
+  post: PublishGatePost,
+  siblings: PublishGatePost[] = [],
+  now = new Date(),
+  windowMs = publishOverdueWindowMs(),
+): PublishGateDecision {
+  if (post.status === "held" || post.heldAt) {
+    return { ok: false, reason: "Release the hold before approving this post for publish" };
+  }
+  if (post.status === "published" || post.status === "rejected") {
+    return { ok: false, reason: `Cannot approve a ${post.status} post` };
+  }
+  if (post.status === "expired") {
+    return { ok: false, reason: "Restore this expired post before approving it for publish" };
+  }
+  const idem = evaluatePublishIdempotency(post);
+  if (idem.zernioIds.length > 0) {
+    return { ok: false, reason: "Post already has a Zernio post id" };
+  }
+  if (!post.scheduledFor) {
+    return { ok: false, reason: "Post has no scheduled time" };
+  }
+  if (Number.isNaN(new Date(post.scheduledFor).getTime())) {
+    return { ok: false, reason: "Post has an invalid scheduled time" };
+  }
+  if (slotPastApprovalWindow(post, now, windowMs)) {
+    return { ok: false, reason: APPROVAL_WINDOW_REASON };
+  }
+  const publishDuplicate = findRecentVehicleDuplicate(post, siblings, undefined, "publish");
+  if (publishDuplicate) {
+    return { ok: false, reason: recentVehicleBlockReason(publishDuplicate, "publish") };
+  }
+  const queueDuplicate = findRecentVehicleDuplicate(post, siblings);
+  if (queueDuplicate) {
+    return { ok: false, reason: recentVehicleBlockReason(queueDuplicate, "queue") };
+  }
+  return { ok: true, reason: "ok" };
+}
+
+function pushReason(reasons: string[], reason: string | null | undefined) {
+  if (!reason || reasons.includes(reason)) return;
+  reasons.push(reason);
+}
+
+export function listPublishBlockReasons(
+  post: PublishGatePost,
+  options: {
+    now?: Date;
+    windowMs?: number;
+    siblings?: PublishGatePost[];
+    publishEnabled?: boolean;
+  } = {},
+): string[] {
+  const now = options.now ?? new Date();
+  const windowMs = options.windowMs ?? publishOverdueWindowMs();
+  const reasons: string[] = [];
+  const gate = evaluatePublishGate(post, now, windowMs);
+  if (!gate.ok) pushReason(reasons, gate.reason);
+  if (post.status !== "approved" && slotPastApprovalWindow(post, now, windowMs)) {
+    pushReason(reasons, APPROVAL_WINDOW_REASON);
+  }
+  const idem = evaluatePublishIdempotency(post);
+  if (!idem.ok) pushReason(reasons, idem.reason);
+
+  const siblings = options.siblings ?? [];
+  const publishDuplicate = findRecentVehicleDuplicate(post, siblings, undefined, "publish");
+  if (publishDuplicate) {
+    pushReason(reasons, recentVehicleBlockReason(publishDuplicate, "publish"));
+  } else {
+    const queueDuplicate = findRecentVehicleDuplicate(post, siblings);
+    if (queueDuplicate) pushReason(reasons, recentVehicleBlockReason(queueDuplicate, "queue"));
+  }
+
+  if (post.publishBackoffUntil) {
+    const backoff = new Date(post.publishBackoffUntil);
+    if (!Number.isNaN(backoff.getTime()) && backoff > now) {
+      pushReason(reasons, "Publish backoff is active");
+    }
+  }
+  if (options.publishEnabled === false) {
+    pushReason(reasons, "Publisher is off");
+  }
+  // Approve can be stricter than a fresh approval window. Only add that
+  // reason when the gate already refuses, so a publishable row is not
+  // marked blocked.
+  if (!gate.ok) {
+    const approve = evaluateApproveForPublish(post, siblings, now, windowMs);
+    if (!approve.ok) pushReason(reasons, approve.reason);
+  }
+  return reasons;
+}
+
+export function buildRestoreExpiredPatch() {
+  return {
+    status: "scheduled" as const,
+    expiredAt: null,
+    expiredReason: null,
+    scheduleExpiryExempt: true,
   };
 }
