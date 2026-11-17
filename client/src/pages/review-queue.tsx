@@ -34,6 +34,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PublishBlockReasons } from "@/components/publish-block-reasons";
 import type { Post, Dealership } from "@shared/schema";
+import { formatIgMentionLine } from "@shared/ig-mentions";
 
 type QueuePost = Post & {
   publishBlockReasons?: string[];
@@ -436,6 +437,11 @@ function ReviewPostCard({
               {(post as any).captionGmb}
             </p>
           </div>
+        )}
+        {formatIgMentionLine(post) && (
+          <p className="text-xs text-muted-foreground" data-testid={`text-ig-mentions-${post.id}`}>
+            {formatIgMentionLine(post)}
+          </p>
         )}
 
         <div className="space-y-2 rounded-lg border border-dashed border-border/80 bg-muted/10 p-3">

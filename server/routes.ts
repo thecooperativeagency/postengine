@@ -48,6 +48,7 @@ import {
 import { findRecentVehicleDuplicate, recentVehicleBlockReason } from "./post-dedup";
 import { hostUploadedMedia, inferPostMediaType } from "./media-upload";
 import { SPECIALS_SOURCES, syncTalkingPointsFromSpecials } from "./specials-talking-sync";
+import { IgFieldError, normalizeIgFieldsForStorage, presentIgFields } from "@shared/ig-mentions";
 
 const ARCHIVE_REQUIRED_STATUSES = new Set(["scheduled", "approved", "published"]);
 const PUBLISH_GATE_PATCH_FIELDS = new Set([
@@ -216,7 +217,7 @@ function decoratePostsForQueue<T extends PublishGatePost>(posts: T[], siblings: 
       publishBlockReasons.unshift(gate.reason);
     }
     return {
-      ...post,
+      ...presentIgFields(post),
       publishBlockReasons,
       approveBlockReason: approve.ok ? null : approve.reason,
     };
@@ -413,7 +414,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.get("/api/posts/:id", (req, res) => {
     const post = storage.getPost(Number(req.params.id));
     if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
-    res.json({ ...post, composedContent: composePostContent(post) });
+    res.json({ ...presentIgFields(post), composedContent: composePostContent(post) });
   });
 
   app.post("/api/media/upload", async (req, res) => {
@@ -455,7 +456,9 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.post("/api/posts", (req, res) => {
     try {
-      const data = insertPostSchema.parse(req.body);
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      normalizeIgFieldsForStorage(body);
+      const data = insertPostSchema.parse(body);
       if (!dashboardCanSeeDealership(req, data.dealershipId)) {
         return res.status(404).json({ error: "Not found" });
       }
@@ -465,13 +468,14 @@ export async function registerRoutes(server: Server, app: Express) {
         });
       }
       const post = storage.createPost(data);
+      const created = presentIgFields(post);
       storage.logActivity({
-        postId: post.id,
-        dealershipId: post.dealershipId,
+        postId: created.id,
+        dealershipId: created.dealershipId,
         action: "created",
-        details: `Post created: ${post.vehicleInfo || post.postType}`,
+        details: `Post created: ${created.vehicleInfo || created.postType}`,
       });
-      res.status(201).json(post);
+      res.status(201).json(created);
     } catch (err: any) {
       const status = err?.name === "DuplicateFolderSourceError" ? 409 : 400;
       res.status(status).json({ error: err.message });
@@ -487,6 +491,13 @@ export async function registerRoutes(server: Server, app: Express) {
 
     const body = { ...req.body };
     for (const field of PUBLISH_GATE_PATCH_FIELDS) delete body[field];
+    try {
+      normalizeIgFieldsForStorage(body);
+    } catch (error) {
+      if (error instanceof IgFieldError) return res.status(400).json({ error: error.message });
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(400).json({ error: message });
+    }
     if (body.status === "approved" || body.status === "held" || body.status === "expired") {
       return res.status(400).json({
         error: "Use the publish-approval, hold, or expiry endpoints to change this status",
@@ -507,18 +518,19 @@ export async function registerRoutes(server: Server, app: Express) {
       ...(scheduledForChanged ? { scheduleExpiryExempt: false, rescheduledFrom: null, rescheduledAt: null } : {}),
     });
     if (!updated) return res.status(500).json({ error: "Failed to update" });
+    const presented = presentIgFields(updated);
 
     // Log status changes
     if (body.status && body.status !== existing.status) {
       storage.logActivity({
-        postId: updated.id,
-        dealershipId: updated.dealershipId,
+        postId: presented.id,
+        dealershipId: presented.dealershipId,
         action: body.status,
-        details: `Post ${body.status}: ${updated.vehicleInfo || updated.postType}`,
+        details: `Post ${body.status}: ${presented.vehicleInfo || presented.postType}`,
       });
     }
 
-    res.json(updated);
+    res.json(presented);
   });
 
   app.post("/api/captions/generate", async (req, res) => {
