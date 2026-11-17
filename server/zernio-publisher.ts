@@ -23,6 +23,7 @@ import {
   parseMusicIdFromNotes,
   prepareReelWithMusic,
 } from "./music";
+import { buildZernioPostBody, collectDroppedCollaborators } from "./zernio-payload";
 
 const ZERNIO_BASE = "https://zernio.com/api/v1";
 const FFMPEG = resolveBin("FFMPEG_PATH", "/opt/homebrew/bin/ffmpeg", "ffmpeg");
@@ -213,55 +214,16 @@ interface ZernioPostPayload {
   mediaUrls?: string[];
   mediaType?: string;
   scheduledAt?: string; // ISO string — if omitted, posts immediately
+  igCollaborators?: unknown;
+  igUserTags?: unknown;
 }
 
-async function zernioPost(payload: ZernioPostPayload): Promise<{ success: boolean; postId?: string; error?: string; rawError?: any }> {
+async function zernioPost(payload: ZernioPostPayload): Promise<{ success: boolean; postId?: string; error?: string; rawError?: any; droppedCollaborators?: unknown[] }> {
   const apiKey = getZernioKey();
   if (!apiKey) return { success: false, error: "No Zernio API key" };
 
   try {
-    const urls = payload.mediaUrls || [];
-    const isSingleVideo = payload.mediaType === "video" && urls.length <= 1;
-
-    const body: any = {
-      content: payload.content,
-      platforms: [
-        payload.platform === "instagram" && isSingleVideo
-          ? {
-              accountId: payload.accountId,
-              platform: payload.platform,
-              platformSpecificData: {
-                contentType: "reels",
-                shareToFeed: true,
-              },
-            }
-          : { accountId: payload.accountId, platform: payload.platform },
-      ],
-    };
-
-    if (urls.length > 0) {
-      body.mediaItems = urls.map((url) => ({
-        url,
-        type: /\.(mp4|mov|m4v|webm)(\?|$)/i.test(url) ? "video" : "image",
-      }));
-      // Single pure-video posts with no extension in the URL still force video type
-      if (isSingleVideo && body.mediaItems.length === 1 && body.mediaItems[0].type !== "video") {
-        body.mediaItems[0].type = "video";
-      }
-    }
-
-    // Always schedule at least 2 minutes ahead so Zernio has time to process
-    const scheduleTime = payload.scheduledAt
-      ? new Date(payload.scheduledAt)
-      : new Date(Date.now() + 2 * 60 * 1000);
-
-    // If scheduled time is in the past, push to 2 min from now
-    const now = new Date();
-    const finalSchedule = scheduleTime < now
-      ? new Date(now.getTime() + 2 * 60 * 1000)
-      : scheduleTime;
-
-    body.scheduledFor = finalSchedule.toISOString();
+    const body = buildZernioPostBody(payload);
 
     const res = await fetch(`${ZERNIO_BASE}/posts`, {
       method: "POST",
@@ -273,13 +235,13 @@ async function zernioPost(payload: ZernioPostPayload): Promise<{ success: boolea
     });
 
     const data = await res.json() as any;
+    const droppedCollaborators = collectDroppedCollaborators(data) ?? undefined;
 
     if (res.ok && data.post?._id) {
       const postId = data.post._id;
-      const status = data.post.status;
-      return { success: true, postId };
+      return { success: true, postId, droppedCollaborators };
     } else {
-      return { success: false, error: JSON.stringify(data), rawError: data };
+      return { success: false, error: JSON.stringify(data), rawError: data, droppedCollaborators };
     }
   } catch (e: any) {
     return { success: false, error: e.message, rawError: e };
@@ -521,7 +483,18 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
       mediaUrls: finalMediaUrls.length > 0 ? finalMediaUrls : undefined,
       mediaType,
       scheduledAt: post.scheduledFor || undefined,
+      igCollaborators: (post as { igCollaborators?: unknown }).igCollaborators,
+      igUserTags: (post as { igUserTags?: unknown }).igUserTags,
     });
+
+    if (result.droppedCollaborators?.length) {
+      console.warn(
+        `[Zernio] Post ${postId} ${platform} droppedCollaborators: ${JSON.stringify(result.droppedCollaborators)}`,
+      );
+    }
+    const dropped = result.droppedCollaborators?.length
+      ? { droppedCollaborators: result.droppedCollaborators }
+      : {};
 
     if (result.success) {
       anyNewSuccess = true;
@@ -529,6 +502,7 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
         success: true,
         postId: result.postId,
         publishedAt: attemptAt,
+        ...dropped,
       };
       storage.updatePost(postId, {
         publishResults: JSON.stringify(results),
@@ -544,6 +518,7 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
         error: result.error,
         rawError: result.rawError,
         failedAt: attemptAt,
+        ...dropped,
       };
       console.error(`[Zernio] Failed ${platform}:`, result.error);
     }

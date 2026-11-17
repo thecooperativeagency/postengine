@@ -65,6 +65,10 @@ export const posts = sqliteTable(
     scheduleExpiryExempt: integer("schedule_expiry_exempt", { mode: "boolean" }).notNull().default(false),
     rescheduledFrom: text("rescheduled_from"),
     rescheduledAt: text("rescheduled_at"),
+    /** JSON array of Instagram usernames, max 3. Null when unset. */
+    igCollaborators: text("ig_collaborators"),
+    /** JSON array of { username } for Instagram user tags. Null when unset. */
+    igUserTags: text("ig_user_tags"),
     createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   },
   (table) => ({
@@ -87,6 +91,9 @@ export const insertPostSchema = createInsertSchema(posts).omit({
   scheduleExpiryExempt: true,
   rescheduledFrom: true,
   rescheduledAt: true,
+}).extend({
+  igCollaborators: z.string().nullable().optional(),
+  igUserTags: z.string().nullable().optional(),
 });
 export type InsertPost = z.infer<typeof insertPostSchema>;
 export type Post = typeof posts.$inferSelect;

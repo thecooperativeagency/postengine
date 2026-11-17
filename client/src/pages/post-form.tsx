@@ -31,6 +31,13 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getDashboardAuthHeaders } from "@/lib/dashboard-auth";
 import type { Post, Dealership } from "@shared/schema";
+import {
+  formatIgCollaboratorInput,
+  formatIgUserTagInput,
+  IgFieldError,
+  parseIgCollaborators,
+  parseIgUserTags,
+} from "@shared/ig-mentions";
 import { Link } from "wouter";
 
 const formSchema = z.object({
@@ -45,6 +52,18 @@ const formSchema = z.object({
   scheduledFor: z.string().optional(),
   mediaType: z.string().default("image"),
   notes: z.string().optional(),
+  igCollaborators: z.string().optional(),
+  igUserTags: z.string().optional(),
+}).superRefine((data, ctx) => {
+  for (const field of ["igCollaborators", "igUserTags"] as const) {
+    try {
+      if (field === "igCollaborators") parseIgCollaborators(data.igCollaborators ?? "");
+      else parseIgUserTags(data.igUserTags ?? "");
+    } catch (error) {
+      const message = error instanceof IgFieldError ? error.message : "Invalid Instagram username";
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: [field] });
+    }
+  }
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -96,6 +115,8 @@ export default function PostForm() {
       scheduledFor: "",
       mediaType: "image",
       notes: "",
+      igCollaborators: "",
+      igUserTags: "",
     },
   });
 
@@ -257,6 +278,8 @@ export default function PostForm() {
           : "",
         mediaType: existingPost.mediaType || "image",
         notes: existingPost.notes || "",
+        igCollaborators: formatIgCollaboratorInput(existingPost.igCollaborators),
+        igUserTags: formatIgUserTagInput(existingPost.igUserTags),
       });
       try {
         const parsed = existingPost.mediaUrls ? JSON.parse(existingPost.mediaUrls) : [];
@@ -289,6 +312,8 @@ export default function PostForm() {
         mediaType:
           data.mediaType ||
           (mediaUrls.length > 1 ? "carousel" : mediaUrls.some((u) => /\.(mp4|mov|webm|m4v)(\?|$)/i.test(u)) ? "video" : "image"),
+        igCollaborators: data.igCollaborators?.trim() ? data.igCollaborators : null,
+        igUserTags: data.igUserTags?.trim() ? data.igUserTags : null,
       };
       if (postId) {
         const res = await apiRequest("PATCH", `/api/posts/${postId}`, payload);
@@ -713,6 +738,46 @@ export default function PostForm() {
                             </label>
                           ))}
                         </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="igCollaborators"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Instagram collaborators</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="username_one, username_two"
+                            {...field}
+                            value={field.value ?? ""}
+                            data-testid="input-ig-collaborators"
+                          />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">Comma-separated usernames. Maximum 3.</p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="igUserTags"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Instagram user tags</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="username_one, username_two"
+                            {...field}
+                            value={field.value ?? ""}
+                            data-testid="input-ig-user-tags"
+                          />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">Comma-separated usernames to tag on the post.</p>
                         <FormMessage />
                       </FormItem>
                     )}

@@ -43,6 +43,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PublishBlockReasons } from "@/components/publish-block-reasons";
 import type { Post, Dealership } from "@shared/schema";
+import { formatIgMentionLine } from "@shared/ig-mentions";
 
 type ListedPost = Post & {
   publishBlockReasons?: string[];
@@ -340,6 +341,9 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                           <span className="font-medium text-foreground">{getDealershipName(post.dealershipId)}</span>
                         </div>
                         <div className="text-sm font-medium text-foreground">{post.vehicleInfo || "Untitled post"}</div>
+                        {formatIgMentionLine(post) && (
+                          <div className="text-[11px] text-muted-foreground">{formatIgMentionLine(post)}</div>
+                        )}
                       </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -437,6 +441,9 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                       </TableCell>
                       <TableCell>
                         <span className="text-sm">{post.vehicleInfo || "--"}</span>
+                        {formatIgMentionLine(post) && (
+                          <div className="text-[11px] text-muted-foreground">{formatIgMentionLine(post)}</div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span className="text-xs capitalize text-muted-foreground">{formatPostType(post.postType)}</span>

@@ -280,6 +280,8 @@ export class DatabaseStorage implements IStorage {
         schedule_expiry_exempt INTEGER NOT NULL DEFAULT 0,
         rescheduled_from TEXT,
         rescheduled_at TEXT,
+        ig_collaborators TEXT,
+        ig_user_tags TEXT,
         created_at TEXT NOT NULL
       );
 
@@ -509,6 +511,12 @@ export class DatabaseStorage implements IStorage {
     }
     if (!postColumnNames.has("rescheduled_at")) {
       sqlite.exec(`ALTER TABLE posts ADD COLUMN rescheduled_at TEXT;`);
+    }
+    if (!postColumnNames.has("ig_collaborators")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN ig_collaborators TEXT;`);
+    }
+    if (!postColumnNames.has("ig_user_tags")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN ig_user_tags TEXT;`);
     }
 
     const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;
