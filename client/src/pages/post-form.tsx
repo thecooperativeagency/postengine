@@ -4,7 +4,8 @@ import { useLocation, useRoute } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft, Save, Send, CalendarDays, Eye, ImagePlus, Loader2, X, Sparkles } from "lucide-react";
+import { ArrowLeft, Save, Send, CalendarDays, Eye, ImagePlus, Loader2, X, Sparkles, Unlock } from "lucide-react";
+import { useReleaseHold } from "@/lib/release-hold";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,7 @@ import { Link } from "wouter";
 import {
   TIKTOK_CAPTION_MAX,
   TIKTOK_COMMERCIAL_TYPES,
+  TIKTOK_CREATE_HOLD_REASON,
   TIKTOK_DEFAULTS,
   TIKTOK_PRIVACY_LEVELS,
 } from "@shared/tiktok";
@@ -353,6 +355,8 @@ export default function PostForm() {
     }
   }, [watchDealershipId, dealerships, form, isEdit]);
 
+  const releaseHoldMutation = useReleaseHold(() => navigate("/queue"));
+
   const createMutation = useMutation({
     mutationFn: async (data: FormValues & { status: string }) => {
       const payload = {
@@ -368,7 +372,7 @@ export default function PostForm() {
         igUserTags: data.igUserTags?.trim() ? data.igUserTags : null,
         captionTiktok: data.captionTiktok?.trim() ? data.captionTiktok : null,
         tiktokSettings: data.platforms.includes("tiktok") ? JSON.stringify(tiktokSettingsFromForm(data)) : null,
-        ...(postId ? {} : data.platforms.includes("tiktok") ? { hold: true, holdReason: "TikTok post held until approved" } : {}),
+        ...(postId ? {} : data.platforms.includes("tiktok") ? { hold: true, holdReason: TIKTOK_CREATE_HOLD_REASON } : {}),
       };
       if (postId) {
         const res = await apiRequest("PATCH", `/api/posts/${postId}`, payload);
@@ -1098,6 +1102,22 @@ export default function PostForm() {
                   />
                 </CardContent>
               </Card>
+
+              {existingPost?.status === "held" && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-900/20" data-testid="banner-held">
+                  <span>On hold{(existingPost as any).heldReason ? `: ${(existingPost as any).heldReason}` : ""}. Release it to send it back to the review queue for Approve.</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => releaseHoldMutation.mutate(existingPost.id)}
+                    disabled={releaseHoldMutation.isPending}
+                    data-testid="button-release-hold"
+                  >
+                    <Unlock className="h-4 w-4 mr-1.5" />
+                    Release hold
+                  </Button>
+                </div>
+              )}
 
               {/* Action buttons */}
               <div className="flex gap-2 flex-wrap">

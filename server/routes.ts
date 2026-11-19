@@ -41,6 +41,7 @@ import { publishPost, validateTikTokWithZernio, getTikTokCreatorInfo } from "./z
 import { accountIdFor, zernioMappingStatus } from "./zernio-accounts";
 import { readHoldRequest, holdPatchIfRequested } from "./post-hold";
 import { normalizeTikTokForStorage, tiktokWriteErrors } from "./tiktok-posts";
+import { isTikTokCreateHold } from "@shared/tiktok";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
 import { composePostContent } from "./post-composer";
 import {
@@ -430,7 +431,7 @@ export async function registerRoutes(server: Server, app: Express) {
     const dealershipId = req.query.dealershipId ? Number(req.query.dealershipId) : undefined;
     const allVisible = storage.getPosts().filter((post) => dashboardCanSeeDealership(req, post.dealershipId));
     const active = allVisible.filter((post) => {
-      if (!isActiveQueuePost(post)) return false;
+      if (!isActiveQueuePost(post) && !isTikTokCreateHold(post)) return false;
       if (dealershipId && post.dealershipId !== dealershipId) return false;
       return true;
     });

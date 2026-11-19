@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   PlusCircle,
+  Unlock,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -40,6 +41,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { useReleaseHold } from "@/lib/release-hold";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PublishBlockReasons } from "@/components/publish-block-reasons";
 import type { Post, Dealership } from "@shared/schema";
@@ -187,6 +189,8 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
       toast({ title: "Could not restore", description: err.message, variant: "destructive" });
     },
   });
+
+  const releaseHoldMutation = useReleaseHold();
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -363,6 +367,15 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                               Restore to scheduled
                             </DropdownMenuItem>
                           )}
+                          {post.status === "held" && (
+                            <DropdownMenuItem
+                              onClick={() => releaseHoldMutation.mutate(post.id)}
+                              data-testid={`button-release-hold-mobile-${post.id}`}
+                            >
+                              <Unlock className="h-3.5 w-3.5 mr-2" />
+                              Release hold
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem className="text-destructive" onClick={() => deleteMutation.mutate(post.id)}>
                             <Trash2 className="h-3.5 w-3.5 mr-2" />
                             Delete
@@ -480,6 +493,15 @@ export default function Posts({ dealershipFilter }: { dealershipFilter: number |
                             {post.status === "expired" && (
                               <DropdownMenuItem onClick={() => restoreExpiredMutation.mutate(post.id)}>
                                 Restore to scheduled
+                              </DropdownMenuItem>
+                            )}
+                            {post.status === "held" && (
+                              <DropdownMenuItem
+                                onClick={() => releaseHoldMutation.mutate(post.id)}
+                                data-testid={`button-release-hold-${post.id}`}
+                              >
+                                <Unlock className="h-3.5 w-3.5 mr-2" />
+                                Release hold
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuItem

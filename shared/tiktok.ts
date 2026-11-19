@@ -23,6 +23,14 @@ export const TIKTOK_COMMERCIAL_TYPES = ["none", "brand_organic", "brand_content"
 export type TikTokPrivacyLevel = (typeof TIKTOK_PRIVACY_LEVELS)[number];
 export type TikTokCommercialType = (typeof TIKTOK_COMMERCIAL_TYPES)[number];
 
+/** Reason the post form stamps on new TikTok posts. Those holds show in the review queue with Release hold. */
+export const TIKTOK_CREATE_HOLD_REASON = "TikTok post held until approved";
+
+/** A post held on create by the TikTok form flow, waiting for someone to release it into the queue. */
+export function isTikTokCreateHold(post: { status?: string | null; heldReason?: string | null }): boolean {
+  return post.status === "held" && post.heldReason === TIKTOK_CREATE_HOLD_REASON;
+}
+
 export const TIKTOK_DEFAULTS = {
   privacy_level: "PUBLIC_TO_EVERYONE" as TikTokPrivacyLevel,
   allow_comment: true,

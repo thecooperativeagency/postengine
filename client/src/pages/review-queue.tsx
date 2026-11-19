@@ -15,6 +15,7 @@ import {
   Play,
   Video,
   RefreshCw,
+  Unlock,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,7 @@ import { PublishBlockReasons } from "@/components/publish-block-reasons";
 import type { Post, Dealership } from "@shared/schema";
 import { formatIgMentionLine } from "@shared/ig-mentions";
 import { postTargetsTikTok, summarizeTikTokSettings } from "@shared/tiktok";
+import { useReleaseHold } from "@/lib/release-hold";
 
 type QueuePost = Post & {
   publishBlockReasons?: string[];
@@ -360,6 +362,8 @@ function ReviewPostCard({
   const { toast } = useToast();
   const [direction, setDirection] = useState("");
   const hasTikTok = postTargetsTikTok(post.platforms);
+  const releaseHoldMutation = useReleaseHold();
+  const isHeld = post.status === "held";
   const validateTikTok = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/posts/${post.id}/tiktok/validate`);
@@ -537,6 +541,18 @@ function ReviewPostCard({
         </div>
 
         <div className="flex gap-2 pt-1">
+          {isHeld ? (
+          <Button
+            size="sm"
+            onClick={() => releaseHoldMutation.mutate(post.id)}
+            disabled={releaseHoldMutation.isPending}
+            className="flex-1"
+            data-testid={`button-release-hold-${post.id}`}
+          >
+            <Unlock className="h-3.5 w-3.5 mr-1" />
+            Release hold
+          </Button>
+          ) : (
           <Button
             size="sm"
             onClick={onApprove}
@@ -552,6 +568,7 @@ function ReviewPostCard({
             <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
             {post.status === "approved" ? "Approved" : "Approve"}
           </Button>
+          )}
           <Link href={`/posts/${post.id}`}>
             <Button size="sm" variant="outline" data-testid={`button-edit-${post.id}`}>
               <Pencil className="h-3.5 w-3.5 mr-1" />
