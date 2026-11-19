@@ -5,13 +5,32 @@
  */
 
 import { storage } from "./storage";
+import { composePostContent } from "./post-composer";
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
+import { cleanupNormalizedImage, normalizeImageForSocial } from "./image-normalizer";
+import { hostPublicMediaFile } from "./public-media";
+import { withPublishLock } from "./publish-lock";
+import { canStartPublish, publishEnabled, shouldStartPublishPoller, tiktokPublishEnabled } from "./publish-switch";
+import { evaluatePublishGate, evaluatePublishIdempotency, selectPublishablePosts } from "./publish-gate";
+import { runMissedSlotReschedule } from "./missed-slot-reschedule";
+import { resolveBin } from "./local-bin";
+import { findRecentVehicleDuplicate, recentVehicleBlockReason } from "./post-dedup";
+import {
+  formatMusicNote,
+  isMusicAutoBedEnabled,
+  parseMusicIdFromNotes,
+  prepareReelWithMusic,
+} from "./music";
+import { buildZernioPostBody, collectDroppedCollaborators } from "./zernio-payload";
+import { accountIdFor, getAccountMap, getDealershipKey, storeTikTokDefaults } from "./zernio-accounts";
+import { normalizeTikTokCreatorInfo, validateTikTokPost, type TikTokCreatorInfo } from "@shared/tiktok";
+import { probeTikTokVideo } from "./tiktok-probe";
 
 const ZERNIO_BASE = "https://zernio.com/api/v1";
-const FFMPEG = "/opt/homebrew/bin/ffmpeg";
-const FFPROBE = "/opt/homebrew/bin/ffprobe";
+const FFMPEG = resolveBin("FFMPEG_PATH", "/opt/homebrew/bin/ffmpeg", "ffmpeg");
+const FFPROBE = resolveBin("FFPROBE_PATH", "/opt/homebrew/bin/ffprobe", "ffprobe");
 const GITHUB_REPO = "thecooperativeagency/postengine";
 const MEDIA_BRANCH = "main";
 const MEDIA_FOLDER = "media";
@@ -44,42 +63,6 @@ function getImageDimensions(filePath: string): { width: number; height: number }
   }
 }
 
-/**
- * Crop image to Instagram-safe 4:5 ratio (0.8) using center crop.
- * Returns path to cropped file, or null on failure.
- */
-function cropFor45(inputPath: string, outputPath: string): boolean {
-  try {
-    const dims = getImageDimensions(inputPath);
-    if (!dims) return false;
-    const { width, height } = dims;
-
-    // Determine crop filter
-    // Target ratio: 4:5 = 0.8 (width/height = 0.8, so height = width * 1.25)
-    let cropFilter: string;
-    const targetHeight = Math.floor(width * 1.25);
-    if (targetHeight <= height) {
-      // Image is taller than 4:5 — crop height to width*1.25, center vertically
-      const cropH = targetHeight;
-      const cropY = Math.floor((height - cropH) / 2);
-      cropFilter = `crop=${width}:${cropH}:0:${cropY}`;
-    } else {
-      // Image is wider than 4:5 — crop width to height*0.8, center horizontally
-      const cropW = Math.floor(height * 0.8);
-      const cropX = Math.floor((width - cropW) / 2);
-      cropFilter = `crop=${cropW}:${height}:${cropX}:0`;
-    }
-
-    execSync(
-      `${FFMPEG} -y -i "${inputPath}" -vf "${cropFilter}" "${outputPath}"`,
-      { encoding: "utf-8", timeout: 60000 }
-    );
-    return fs.existsSync(outputPath);
-  } catch (e) {
-    console.error("[Zernio] ffmpeg crop error:", e);
-    return false;
-  }
-}
 
 /**
  * Upload a local file to GitHub and return its raw URL.
@@ -148,126 +131,80 @@ async function uploadCroppedToGithub(localPath: string, filename: string): Promi
 }
 
 /**
- * Given a GitHub raw image URL, check if it needs cropping for Instagram (ratio 0.75–1.91).
- * If so, download, crop to 4:5, upload cropped version, return new URL.
- * If within range, return original URL.
+ * Normalize portrait images taller than 4:5 before Instagram publishing.
+ * Leaves horizontal, square, and already-compliant portrait assets alone.
  */
-async function ensureInstagramSafeImage(imageUrl: string): Promise<string> {
+export async function ensureInstagramSafeImage(imageUrl: string): Promise<string> {
   const tmpInput = path.join("/tmp", `pe-ig-input-${Date.now()}.jpg`);
   const basename = path.basename(imageUrl.split("?")[0]).replace(/\.[^.]+$/, "");
-  const croppedFilename = `${basename}-ig-crop.jpg`;
-  const tmpOutput = path.join("/tmp", `pe-ig-crop-${Date.now()}.jpg`);
+  let normalizedPath = tmpInput;
+  let hostedUrl: string | undefined;
 
   try {
-    // Download image
     const res = await fetch(imageUrl);
     if (!res.ok) {
       console.warn(`[Zernio] Could not download image for dimension check: ${imageUrl}`);
       return imageUrl;
     }
+
     const buf = Buffer.from(await res.arrayBuffer());
     fs.writeFileSync(tmpInput, buf);
 
-    // Check dimensions
-    const dims = getImageDimensions(tmpInput);
-    if (!dims) {
-      console.warn(`[Zernio] Could not read dimensions for ${imageUrl}`);
-      return imageUrl;
+    const normalized = await normalizeImageForSocial(tmpInput);
+    normalizedPath = normalized.path;
+
+    const sourcePath = normalized.wasNormalized ? normalized.path : tmpInput;
+    const outputFilename = normalized.wasNormalized
+      ? `${basename}-ig-4x5${path.extname(normalized.filename) || ".jpg"}`
+      : path.basename(normalized.filename);
+
+    if (normalized.wasNormalized) {
+      console.log(
+        `[Zernio] Auto-cropping image for Instagram: ${outputFilename} (${normalized.originalWidth}x${normalized.originalHeight} → ${normalized.finalWidth}x${normalized.finalHeight})`
+      );
     }
 
-    const ratio = dims.width / dims.height;
-    const IG_MIN = 0.75;
-    const IG_MAX = 1.91;
-
-    if (ratio >= IG_MIN && ratio <= IG_MAX) {
-      // Already safe
-      return imageUrl;
+    const githubUrl = await uploadCroppedToGithub(sourcePath, outputFilename);
+    if (githubUrl) {
+      hostedUrl = githubUrl;
+    } else {
+      hostedUrl = await hostPublicMediaFile(sourcePath, outputFilename);
+      console.log(`[Zernio] Hosted Instagram image locally: ${hostedUrl}`);
     }
 
-    console.log(`[Zernio] Auto-cropping image for Instagram: ${croppedFilename} (ratio ${ratio.toFixed(3)} outside ${IG_MIN}–${IG_MAX})`);
-
-    // Crop
-    const cropped = cropFor45(tmpInput, tmpOutput);
-    if (!cropped) {
-      console.warn(`[Zernio] Crop failed, using original`);
-      return imageUrl;
+    if (!hostedUrl) {
+      throw new Error("Failed to host Instagram image");
     }
 
-    // Upload to GitHub
-    const newUrl = await uploadCroppedToGithub(tmpOutput, croppedFilename);
-    if (!newUrl) {
-      console.warn(`[Zernio] Upload failed, using original`);
-      return imageUrl;
-    }
-
-    return newUrl;
+    return hostedUrl;
   } catch (e: any) {
     console.error("[Zernio] ensureInstagramSafeImage error:", e.message);
     return imageUrl;
   } finally {
+    cleanupNormalizedImage(normalizedPath, tmpInput);
     try { fs.unlinkSync(tmpInput); } catch {}
-    try { fs.unlinkSync(tmpOutput); } catch {}
   }
-}
-
-// Load account mapping from config
-function getAccountMap(): Record<string, Record<string, string>> {
-  try {
-    const raw = fs.readFileSync(path.join(process.cwd(), ".zernio-accounts.json"), "utf-8");
-    const config = JSON.parse(raw);
-    return config.accounts || {};
-  } catch {
-    return {};
-  }
-}
-
-// Map dealership ID to account key
-function getDealershipKey(dealershipId: number): string {
-  const map: Record<number, string> = {
-    1: "bmw_jackson",
-    2: "brian_harris_bmw",
-    3: "audi_baton_rouge",
-    4: "harris_porsche",
-    5: "opencraw",
-    6: "cooperative_agency",
-  };
-  return map[dealershipId] || "";
 }
 
 interface ZernioPostPayload {
   accountId: string;
-  platform: string; // instagram, facebook, googlebusiness
+  platform: string; // instagram, facebook, googlebusiness, tiktok
   content: string;
   mediaUrls?: string[];
+  mediaType?: string;
   scheduledAt?: string; // ISO string — if omitted, posts immediately
+  igCollaborators?: unknown;
+  igUserTags?: unknown;
+  tiktokSettings?: Record<string, unknown>;
+  dryRun?: boolean;
 }
 
-async function zernioPost(payload: ZernioPostPayload): Promise<{ success: boolean; postId?: string; error?: string }> {
+async function zernioPost(payload: ZernioPostPayload): Promise<{ success: boolean; postId?: string; error?: string; rawError?: any; droppedCollaborators?: unknown[] }> {
   const apiKey = getZernioKey();
   if (!apiKey) return { success: false, error: "No Zernio API key" };
 
   try {
-    const body: any = {
-      content: payload.content,
-      platforms: [{ accountId: payload.accountId, platform: payload.platform }],
-    };
-
-    if (payload.mediaUrls && payload.mediaUrls.length > 0) {
-      body.mediaItems = payload.mediaUrls.map(url => ({ url, type: "image" }));
-    }
-
-    // Always schedule at least 2 minutes ahead so Zernio has time to process
-    const scheduleTime = payload.scheduledAt
-      ? new Date(payload.scheduledAt)
-      : new Date(Date.now() + 2 * 60 * 1000);
-
-    // If scheduled time is in the past, push to 2 min from now
-    const now = new Date();
-    const finalSchedule = scheduleTime < now
-      ? new Date(now.getTime() + 2 * 60 * 1000)
-      : scheduleTime;
-
-    body.scheduledFor = finalSchedule.toISOString();
+    const body = buildZernioPostBody(payload);
 
     const res = await fetch(`${ZERNIO_BASE}/posts`, {
       method: "POST",
@@ -279,29 +216,129 @@ async function zernioPost(payload: ZernioPostPayload): Promise<{ success: boolea
     });
 
     const data = await res.json() as any;
+    const droppedCollaborators = collectDroppedCollaborators(data) ?? undefined;
 
     if (res.ok && data.post?._id) {
       const postId = data.post._id;
-      const status = data.post.status;
-      return { success: true, postId };
+      return { success: true, postId, droppedCollaborators };
     } else {
-      return { success: false, error: JSON.stringify(data) };
+      return { success: false, error: JSON.stringify(data), rawError: data, droppedCollaborators };
     }
   } catch (e: any) {
-    return { success: false, error: e.message };
+    return { success: false, error: e.message, rawError: e };
   }
+}
+
+function parsePublishResults(raw: string | null | undefined): Record<string, any> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function isDuplicateContentError(result: any): boolean {
+  const haystack = [
+    typeof result?.error === "string" ? result.error : "",
+    typeof result?.rawError?.error === "string" ? result.rawError.error : "",
+  ].join(" ").toLowerCase();
+
+  return haystack.includes("exact content is already scheduled")
+    || haystack.includes("within the last 24 hours")
+    || haystack.includes("already scheduled, publishing, or was posted");
+}
+
+function computeBackoffMinutes(attempts: number): number {
+  if (attempts <= 1) return 15;
+  if (attempts === 2) return 60;
+  if (attempts === 3) return 6 * 60;
+  return 24 * 60;
 }
 
 /**
  * Publish a single post to all its platforms via Zernio.
  */
-export async function publishPost(postId: number): Promise<{ success: boolean; results: Record<string, any> }> {
+export async function publishPost(
+  postId: number,
+  options: { manual?: boolean } = {},
+): Promise<{ success: boolean; results: Record<string, any> }> {
+  if (!canStartPublish(options)) {
+    console.error("[Zernio] Publish skipped: PUBLISH_ENABLED is not true");
+    return { success: false, results: { error: "PUBLISH_ENABLED is not true" } };
+  }
+  const existing = storage.getPost(postId);
+  if (!existing) return { success: false, results: { error: "Post not found" } };
+  if (!publishEnabled() && options.manual) {
+    const gate = evaluatePublishGate(existing);
+    if (!gate.ok) {
+      console.error(`[Zernio] Manual publish skipped for post ${postId}: ${gate.reason}`);
+      return { success: false, results: { skipped: true, error: gate.reason } };
+    }
+  }
+  const idem = evaluatePublishIdempotency(existing);
+  if (!idem.ok) {
+    console.error(`[Zernio] Publish skipped for post ${postId}: ${idem.reason}`);
+    return { success: false, results: { skipped: true, error: idem.reason, zernioIds: idem.zernioIds } };
+  }
+  const locked = await withPublishLock(postId, () => publishPostUnlocked(postId));
+  if (!locked.acquired || !locked.result) {
+    return {
+      success: false,
+      results: {
+        skipped: true,
+        reason: "Publish already in progress",
+      },
+    };
+  }
+
+  return locked.result;
+}
+
+async function publishPostUnlocked(postId: number): Promise<{ success: boolean; results: Record<string, any> }> {
   const post = storage.getPost(postId);
   if (!post) return { success: false, results: { error: "Post not found" } };
+
+  const gate = evaluatePublishGate(post);
+  if (!gate.ok) {
+    console.error(`[Zernio] Publish skipped for post ${postId}: ${gate.reason}`);
+    return { success: false, results: { skipped: true, error: gate.reason } };
+  }
+  const idem = evaluatePublishIdempotency(post);
+  if (!idem.ok) {
+    console.error(`[Zernio] Publish skipped for post ${postId}: ${idem.reason}`);
+    return { success: false, results: { skipped: true, error: idem.reason, zernioIds: idem.zernioIds } };
+  }
+
+  const duplicate = findRecentVehicleDuplicate(
+    post,
+    storage.getPosts({ dealershipId: post.dealershipId }),
+    undefined,
+    "publish",
+  );
+  if (duplicate) {
+    const blockedAt = new Date().toISOString();
+    const reason = recentVehicleBlockReason(duplicate, "publish");
+    storage.updatePost(postId, {
+      status: "rejected",
+      lastPublishAttemptAt: blockedAt,
+      publishResults: JSON.stringify({ duplicateVehicle: { blocked: true, duplicatePostId: duplicate.id, blockedAt, reason } }),
+      notes: `${post.notes || ""}${post.notes ? "\n" : ""}[duplicate blocked ${blockedAt}] ${reason}`,
+    } as any);
+    storage.logActivity({
+      postId,
+      dealershipId: post.dealershipId,
+      action: "rejected",
+      details: reason,
+    });
+    return { success: false, results: { duplicateVehicle: { blocked: true, duplicatePostId: duplicate.id, reason } } };
+  }
 
   const accountMap = getAccountMap();
   const dealershipKey = getDealershipKey(post.dealershipId);
   const accounts = accountMap[dealershipKey];
+  const dealership = storage.getDealership(post.dealershipId);
 
   if (!accounts) {
     console.error(`[Zernio] No account mapping for dealership ${post.dealershipId}`);
@@ -309,38 +346,160 @@ export async function publishPost(postId: number): Promise<{ success: boolean; r
   }
 
   const platforms = JSON.parse(post.platforms || '["instagram","facebook","googlebusiness"]') as string[];
-  const mediaUrls = post.mediaUrls ? JSON.parse(post.mediaUrls) : [];
-  const results: Record<string, any> = {};
+  let mediaUrls = post.mediaUrls ? JSON.parse(post.mediaUrls) : [];
+  const mediaType = (post.mediaType || "image") as string;
+  const priorResults = parsePublishResults((post as any).publishResults);
+  const results: Record<string, any> = { ...priorResults };
+  const attempts = ((post as any).publishAttempts || 0) + 1;
+  const attemptAt = new Date().toISOString();
   let allSuccess = true;
+  let anyNewSuccess = false;
 
+  // Auto bed music under single-video reels (provider-agnostic module; Epidemic today).
+  // Fail-open: if music fails, publish original video.
+  // Skip when already finished by reel pipeline or prior bed.
+  const notesLower = String(post.notes || "").toLowerCase();
+  const alreadyFinishedReel =
+    notesLower.includes("[reel-finished]") ||
+    notesLower.includes("[music]") ||
+    Boolean(priorResults.music?.trackId) ||
+    String(post.postType || "").toLowerCase() === "reels";
+
+  if (
+    mediaType === "video" &&
+    mediaUrls.length === 1 &&
+    isMusicAutoBedEnabled() &&
+    !alreadyFinishedReel &&
+    !parseMusicIdFromNotes(post.notes)
+  ) {
+    try {
+      const recentMusicIds = storage
+        .getPosts({ dealershipId: post.dealershipId })
+        .map((p) => parseMusicIdFromNotes(p.notes))
+        .filter((id): id is string => Boolean(id))
+        .slice(0, 40);
+
+      const prepared = await prepareReelWithMusic({
+        videoUrl: mediaUrls[0],
+        context: {
+          tenantId: null,
+          dealershipId: post.dealershipId,
+          brand: dealership?.brand || null,
+          postType: post.postType || null,
+          vehicleInfo: post.vehicleInfo || null,
+          excludeTrackIds: recentMusicIds,
+        },
+      });
+
+      if (prepared?.publicVideoUrl) {
+        mediaUrls = [prepared.publicVideoUrl];
+        results.music = {
+          provider: prepared.selection.provider,
+          trackId: prepared.selection.id,
+          title: prepared.selection.title,
+          bpm: prepared.selection.bpm,
+          score: prepared.selection.score,
+          reason: prepared.selection.reason,
+          publicVideoUrl: prepared.publicVideoUrl,
+          appliedAt: attemptAt,
+        };
+        storage.updatePost(postId, {
+          mediaUrls: JSON.stringify(mediaUrls),
+          notes: `${post.notes || ""}${post.notes ? "\n" : ""}${formatMusicNote(prepared.selection)}`,
+          publishResults: JSON.stringify(results),
+        } as any);
+        console.log(
+          `[Zernio] 🎵 Bed music: ${prepared.selection.title} (${prepared.selection.id}) → ${prepared.publicVideoUrl}`,
+        );
+      }
+    } catch (musicErr: any) {
+      console.error("[Zernio] Music bed failed (publishing original video):", musicErr?.message || musicErr);
+      results.music = {
+        error: musicErr?.message || String(musicErr),
+        failedAt: attemptAt,
+      };
+    }
+  }
+
+  let tiktokSettings: Record<string, unknown> | undefined;
   for (const platform of platforms) {
+    const prior = priorResults[platform];
+    if (prior?.success) {
+      results[platform] = prior;
+      continue;
+    }
+
+    if (platform === "tiktok" && !tiktokPublishEnabled()) {
+      console.warn(`[Zernio] TikTok skipped for post ${postId}: publishing disabled`);
+      results[platform] = { skipped: true, reason: "TikTok publishing disabled", skippedAt: attemptAt };
+      continue;
+    }
+
+    if (platform === "tiktok") {
+      const ownCaption = (post as { captionTiktok?: string | null }).captionTiktok;
+      if (ownCaption == null || String(ownCaption).trim() === "") {
+        console.warn(`[Zernio] TikTok skipped for post ${postId}: no TikTok caption`);
+        results[platform] = { skipped: true, reason: "TikTok caption is not set on this post", skippedAt: attemptAt };
+        continue;
+      }
+    }
+
     const accountId = accounts[platform];
     if (!accountId) {
-      console.warn(`[Zernio] No account ID for ${platform} on ${dealershipKey}`);
-      results[platform] = { skipped: true, reason: "No account ID" };
+      const reason = platform === "tiktok"
+        ? "TikTok account is not mapped for this store"
+        : "No account ID";
+      console.warn(`[Zernio] ${reason} for ${platform} on ${dealershipKey}`);
+      results[platform] = { skipped: true, reason, skippedAt: attemptAt };
       continue;
     }
 
-    // Instagram requires media — skip if no images
     if (platform === "instagram" && mediaUrls.length === 0) {
       console.warn(`[Zernio] Skipping Instagram — no media attached`);
-      results[platform] = { skipped: true, reason: "Instagram requires media" };
+      results[platform] = { skipped: true, reason: "Instagram requires media", skippedAt: attemptAt };
       continue;
     }
 
-    // Use platform-specific caption
-    let caption = post.caption || "";
-    if (platform === "googlebusiness" && (post as any).captionGmb) {
-      caption = (post as any).captionGmb;
-    } else if (platform === "facebook" && (post as any).captionFacebook) {
-      caption = (post as any).captionFacebook;
+    const composed = composePostContent(post, dealership);
+
+    let caption = composed.instagram;
+    if (platform === "googlebusiness") {
+      caption = composed.googlebusiness;
+    } else if (platform === "facebook") {
+      caption = composed.facebook;
+    } else if (platform === "tiktok") {
+      caption = composed.tiktok;
+      let creatorInfo: TikTokCreatorInfo | null = null;
+      try {
+        const creator = await getTikTokCreatorInfo(accountId);
+        if (creator.ok) creatorInfo = creator.info;
+      } catch {
+        creatorInfo = null;
+      }
+      const probe = mediaUrls.length === 1 ? await probeTikTokVideo(mediaUrls[0]) : null;
+      const validation = validateTikTokPost(post, {
+        storeDefaults: storeTikTokDefaults(post.dealershipId),
+        creatorInfo,
+        accountMapped: true,
+        requireAccount: true,
+        probe,
+      });
+      if (validation.errors.length > 0) {
+        const reason = validation.errors.join("; ");
+        console.warn(`[Zernio] TikTok validation skipped post ${postId}: ${reason}`);
+        results[platform] = { skipped: true, reason, skippedAt: attemptAt };
+        continue;
+      }
+      if (validation.warnings.length > 0) {
+        console.warn(`[Zernio] TikTok warnings for post ${postId}: ${validation.warnings.join("; ")}`);
+      }
+      tiktokSettings = validation.settings;
     }
 
     console.log(`[Zernio] Publishing to ${platform} (${accountId})...`);
 
-    // Auto-crop images for Instagram if aspect ratio is outside allowed range
     let finalMediaUrls = mediaUrls.length > 0 ? [...mediaUrls] : [];
-    if (platform === "instagram" && finalMediaUrls.length > 0) {
+    if (platform === "instagram" && mediaType !== "video" && finalMediaUrls.length > 0) {
       finalMediaUrls = await Promise.all(finalMediaUrls.map(url => ensureInstagramSafeImage(url)));
     }
 
@@ -349,59 +508,320 @@ export async function publishPost(postId: number): Promise<{ success: boolean; r
       platform,
       content: caption,
       mediaUrls: finalMediaUrls.length > 0 ? finalMediaUrls : undefined,
+      mediaType,
       scheduledAt: post.scheduledFor || undefined,
+      igCollaborators: (post as { igCollaborators?: unknown }).igCollaborators,
+      igUserTags: (post as { igUserTags?: unknown }).igUserTags,
+      tiktokSettings: platform === "tiktok" ? tiktokSettings : undefined,
     });
 
-    results[platform] = result;
-    if (!result.success) {
-      allSuccess = false;
-      console.error(`[Zernio] Failed ${platform}:`, result.error);
-    } else {
+    if (result.droppedCollaborators?.length) {
+      console.warn(
+        `[Zernio] Post ${postId} ${platform} droppedCollaborators: ${JSON.stringify(result.droppedCollaborators)}`,
+      );
+    }
+    const dropped = result.droppedCollaborators?.length
+      ? { droppedCollaborators: result.droppedCollaborators }
+      : {};
+
+    if (result.success) {
+      anyNewSuccess = true;
+      results[platform] = {
+        success: true,
+        postId: result.postId,
+        publishedAt: attemptAt,
+        ...dropped,
+      };
+      storage.updatePost(postId, {
+        publishResults: JSON.stringify(results),
+        lastPublishAttemptAt: attemptAt,
+      } as any);
       console.log(`[Zernio] ✅ ${platform} published (${result.postId})`);
+    } else {
+      allSuccess = false;
+      const duplicate = isDuplicateContentError(result);
+      results[platform] = {
+        success: false,
+        duplicate,
+        error: result.error,
+        rawError: result.rawError,
+        failedAt: attemptAt,
+        ...dropped,
+      };
+      console.error(`[Zernio] Failed ${platform}:`, result.error);
     }
   }
 
-  // Update post status — EARLY RETURN to avoid duplicate block below
-  if (allSuccess) {
+  const platformStates = platforms.map((platform) => results[platform]);
+  const unresolved = platformStates.filter((state) => state && !state.success && !state.skipped);
+  const allResolved = platformStates.every((state) => !state || state.success || state.skipped || state.duplicate);
+  const duplicateOnlyFailure = unresolved.length > 0 && unresolved.every((state) => state.duplicate);
+  const tiktokFlagSkip = results.tiktok?.reason === "TikTok publishing disabled";
+  const anotherPlatformSucceeded = platforms.some((platform) => platform !== "tiktok" && results[platform]?.success);
+  // A TikTok-only post stays approved while the flag is off so it can be sent later.
+  // A post that already published somewhere else is closed, so TikTok is not retried
+  // after the flag is turned on.
+  if (tiktokFlagSkip && !anotherPlatformSucceeded && unresolved.length === 0) {
+    storage.updatePost(postId, {
+      publishAttempts: attempts,
+      lastPublishAttemptAt: attemptAt,
+      publishResults: JSON.stringify(results),
+    } as any);
+    return { success: false, results };
+  }
+
+  if (allSuccess || allResolved || duplicateOnlyFailure) {
     storage.updatePost(postId, {
       status: "published",
       publishedAt: new Date().toISOString(),
-    });
+      publishAttempts: attempts,
+      lastPublishAttemptAt: attemptAt,
+      publishBackoffUntil: null,
+      publishResults: JSON.stringify(results),
+    } as any);
     storage.logActivity({
       postId,
       dealershipId: post.dealershipId,
       action: "published",
-      details: `Published to ${platforms.join(", ")} via Zernio`,
+      details: `Published to ${platforms.join(", ")} via Zernio${duplicateOnlyFailure ? " (duplicate-protected reconciliation)" : ""}`,
+    });
+    return { success: true, results };
+  }
+
+  const backoffMinutes = computeBackoffMinutes(attempts);
+  const backoffUntil = new Date(Date.now() + backoffMinutes * 60 * 1000).toISOString();
+  storage.updatePost(postId, {
+    publishAttempts: attempts,
+    lastPublishAttemptAt: attemptAt,
+    publishBackoffUntil: backoffUntil,
+    publishResults: JSON.stringify(results),
+    notes: `${post.notes || ""}${post.notes ? "\n" : ""}[publish retry scheduled ${attemptAt}] backoff until ${backoffUntil}`,
+  } as any);
+
+  if (anyNewSuccess) {
+    storage.logActivity({
+      postId,
+      dealershipId: post.dealershipId,
+      action: "partial_publish",
+      details: `Partial publish succeeded; retrying remaining platforms after backoff until ${backoffUntil}`,
     });
   }
 
-  return { success: allSuccess, results };
+  return { success: false, results };
+}
+
+const creatorInfoCache = new Map<string, { at: number; info: TikTokCreatorInfo }>();
+const CREATOR_INFO_TTL_MS = 10 * 60 * 1000;
+
+export function clearTikTokCreatorInfoCache() {
+  creatorInfoCache.clear();
+}
+
+export async function getTikTokCreatorInfo(
+  accountId: string,
+): Promise<{ ok: true; info: TikTokCreatorInfo } | { ok: false; status: number; error: string }> {
+  const cached = creatorInfoCache.get(accountId);
+  if (cached && Date.now() - cached.at < CREATOR_INFO_TTL_MS) {
+    return { ok: true, info: cached.info };
+  }
+  const apiKey = getZernioKey();
+  if (!apiKey) return { ok: false, status: 0, error: "No Zernio API key" };
+  const res = await fetch(
+    `${ZERNIO_BASE}/accounts/${encodeURIComponent(accountId)}/tiktok/creator-info?mediaType=video`,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+  );
+  console.log(`[Zernio] TikTok creator-info status ${res.status}`);
+  if (!res.ok) {
+    return { ok: false, status: res.status, error: "TikTok creator info was not available" };
+  }
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    return { ok: false, status: res.status, error: "TikTok creator info was not available" };
+  }
+  const info = normalizeTikTokCreatorInfo(data);
+  creatorInfoCache.set(accountId, { at: Date.now(), info });
+  return { ok: true, info };
+}
+
+/**
+ * Ask Zernio whether this TikTok post would pass body validation.
+ * dryRun persists nothing and publishes nothing. This never writes publishResults.
+ */
+export async function validateTikTokWithZernio(postId: number): Promise<{
+  ok: boolean;
+  status: number;
+  canPublish: boolean | null;
+  tiktok: unknown;
+  errors: string[];
+  dryRun: true;
+}> {
+  const post = storage.getPost(postId);
+  if (!post) {
+    return { ok: false, status: 404, canPublish: null, tiktok: null, errors: ["Post not found"], dryRun: true };
+  }
+  const platforms = (() => {
+    try {
+      const parsed = JSON.parse(post.platforms || "[]");
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  })();
+  if (!platforms.includes("tiktok")) {
+    return { ok: false, status: 400, canPublish: null, tiktok: null, errors: ["Post does not include TikTok"], dryRun: true };
+  }
+  const accountId = accountIdFor(post.dealershipId, "tiktok");
+  if (!accountId) {
+    return {
+      ok: false,
+      status: 400,
+      canPublish: null,
+      tiktok: null,
+      errors: ["TikTok account is not mapped for this store"],
+      dryRun: true,
+    };
+  }
+  const dealership = storage.getDealership(post.dealershipId);
+  const composed = composePostContent(post, dealership);
+  let creatorInfo: TikTokCreatorInfo | null = null;
+  try {
+    const creator = await getTikTokCreatorInfo(accountId);
+    if (creator.ok) creatorInfo = creator.info;
+  } catch {
+    creatorInfo = null;
+  }
+  const validation = validateTikTokPost(post, {
+    storeDefaults: storeTikTokDefaults(post.dealershipId),
+    creatorInfo,
+    accountMapped: true,
+    requireAccount: true,
+  });
+  if (validation.errors.length > 0) {
+    return { ok: false, status: 400, canPublish: false, tiktok: null, errors: validation.errors, dryRun: true };
+  }
+  let mediaUrls: string[] = [];
+  try {
+    const parsed = post.mediaUrls ? JSON.parse(post.mediaUrls) : [];
+    mediaUrls = Array.isArray(parsed) ? parsed.filter((url: unknown) => typeof url === "string") : [];
+  } catch {
+    mediaUrls = [];
+  }
+  const apiKey = getZernioKey();
+  if (!apiKey) {
+    return { ok: false, status: 0, canPublish: null, tiktok: null, errors: ["No Zernio API key"], dryRun: true };
+  }
+  const body = buildZernioPostBody({
+    content: composed.tiktok,
+    accountId,
+    platform: "tiktok",
+    mediaUrls,
+    mediaType: "video",
+    scheduledAt: post.scheduledFor || undefined,
+    tiktokSettings: validation.settings,
+    dryRun: true,
+  });
+  if ("publishNow" in body) delete body.publishNow;
+  const res = await fetch(`${ZERNIO_BASE}/posts`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  console.log(`[Zernio] TikTok dry-run status ${res.status}`);
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  const errors: string[] = [];
+  if (!res.ok) {
+    if (Array.isArray(data?.errors)) {
+      for (const item of data.errors) errors.push(typeof item === "string" ? item : JSON.stringify(item));
+    } else if (typeof data?.error === "string") {
+      errors.push(data.error);
+    } else if (data == null) {
+      errors.push("Zernio returned a non-JSON response");
+    } else {
+      errors.push("Zernio rejected the TikTok dry run");
+    }
+  }
+  return {
+    ok: res.ok,
+    status: res.status,
+    canPublish: typeof data?.canPublish === "boolean" ? data.canPublish : null,
+    tiktok: data?.tiktok ?? null,
+    errors,
+    dryRun: true,
+  };
 }
 
 /**
  * Polling loop — checks for posts due to publish and fires them.
  * Runs every minute.
  */
-export function startPublishPoller() {
+export function startPublishPoller(): boolean {
+  if (!shouldStartPublishPoller()) {
+    console.error("[Zernio] Publish loop not started: PUBLISH_ENABLED is not true");
+    return false;
+  }
   console.log("[Zernio] Publisher poller started — checking every 60 seconds");
 
   setInterval(async () => {
+    try {
+      const moved = runMissedSlotReschedule();
+      if (moved.moves.length > 0) {
+        const summary = moved.moves
+          .map((move) => `#${move.id} ${move.fromChicago ?? move.from} -> ${move.toChicago ?? move.to}`)
+          .join("; ");
+        console.log(`[Zernio] Rescheduled ${moved.moves.length} missed post(s) before polling: ${summary}`);
+      }
+    } catch (error) {
+      console.error("[Zernio] Missed-slot reschedule failed:", error);
+    }
     const now = new Date();
-    const allPosts = storage.getPosts({ status: "scheduled" });
+    const approvedPosts = storage.getPosts({ status: "approved" });
+    const duePosts = selectPublishablePosts(approvedPosts, now);
 
-    const duePosts = allPosts.filter(p => {
-      if (!p.scheduledFor) return false;
-      return new Date(p.scheduledFor) <= now;
+    const blockedScheduled = storage.getPosts({ status: "scheduled" }).filter((post) => {
+      if (!post.scheduledFor) return false;
+      const scheduled = new Date(post.scheduledFor);
+      return !Number.isNaN(scheduled.getTime()) && scheduled <= now;
     });
+    if (blockedScheduled.length > 0) {
+      console.error(
+        `[Zernio] ${blockedScheduled.length} scheduled post(s) are due but not publish-approved (ids: ${blockedScheduled.map((post) => post.id).join(", ")})`,
+      );
+    }
+
+    const blockedHeld = storage.getPosts({ status: "held" }).filter((post) => {
+      if (!post.scheduledFor) return false;
+      const scheduled = new Date(post.scheduledFor);
+      return !Number.isNaN(scheduled.getTime()) && scheduled <= now;
+    });
+    if (blockedHeld.length > 0) {
+      console.error(
+        `[Zernio] ${blockedHeld.length} held post(s) remain parked (ids: ${blockedHeld.map((post) => post.id).join(", ")})`,
+      );
+    }
 
     if (duePosts.length === 0) return;
 
-    console.log(`[Zernio] ${duePosts.length} post(s) due for publishing...`);
+    console.log(`[Zernio] ${duePosts.length} approved post(s) due for publishing...`);
 
     for (const post of duePosts) {
-      console.log(`[Zernio] Publishing post ${post.id}: ${post.vehicleInfo}`);
-      const result = await publishPost(post.id);
-      console.log(`[Zernio] Post ${post.id} result:`, result.success ? "✅ Published" : "❌ Failed");
+      try {
+        console.log(`[Zernio] Publishing post ${post.id}: ${post.vehicleInfo}`);
+        const result = await publishPost(post.id);
+        console.log(`[Zernio] Post ${post.id} result:`, result.success ? "✅ Published" : "❌ Failed");
+      } catch (error) {
+        console.error(`[Zernio] Post ${post.id} crashed during publish reconciliation:`, error);
+      }
     }
   }, 60 * 1000); // every 60 seconds
+  return true;
 }

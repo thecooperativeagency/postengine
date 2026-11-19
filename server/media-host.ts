@@ -6,9 +6,11 @@
  * Flow: Drive file ID → download → push to GitHub → return raw URL
  */
 
-import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
+import { downloadDriveFileSync } from "./drive-api";
+import { cleanupNormalizedImage, normalizeImageForSocial } from "./image-normalizer";
+import { hostPublicMediaFile } from "./public-media";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const GITHUB_REPO = "thecooperativeagency/postengine";
@@ -27,17 +29,13 @@ function getGithubToken(): string {
 }
 
 /**
- * Download a file from Google Drive using gog CLI
+ * Download a file from Google Drive.
  */
 function downloadFromDrive(fileId: string, destPath: string): boolean {
   try {
-    execSync(
-      `gog drive download ${fileId} --account ${ACCOUNT} --out "${destPath}" --no-input`,
-      { encoding: "utf-8", timeout: 60000 }
-    );
-    return fs.existsSync(destPath);
+    return downloadDriveFileSync(fileId, destPath);
   } catch (e) {
-    console.error(`[MediaHost] Failed to download ${fileId}:`, e);
+    console.error("[MediaHost] Failed to download Drive file:", e instanceof Error ? e.message : "unknown");
     return false;
   }
 }
@@ -108,7 +106,9 @@ async function uploadToGithub(localPath: string, filename: string): Promise<stri
  * Main function: given a Drive file ID and filename,
  * download and host on GitHub, return public URL.
  */
-export async function hostImage(fileId: string, filename: string): Promise<string | null> {
+export async function hostImage(fileId: string, filename: string, mimeType?: string): Promise<string | null> {
+  const isVideo = mimeType?.startsWith("video/") || /\.(mp4|mov|m4v|webm)$/i.test(filename);
+
   // Sanitize filename for GitHub
   const safeName = filename
     .replace(/[^a-zA-Z0-9._-]/g, "-")
@@ -122,10 +122,39 @@ export async function hostImage(fileId: string, filename: string): Promise<strin
   const downloaded = downloadFromDrive(fileId, tmpPath);
   if (!downloaded) return null;
 
-  // Upload to GitHub
-  const url = await uploadToGithub(tmpPath, safeName);
+  let uploadPath = tmpPath;
+  let uploadName = safeName;
 
-  // Cleanup temp file
+  try {
+    if (!isVideo) {
+      const normalized = await normalizeImageForSocial(tmpPath);
+      uploadPath = normalized.path;
+      uploadName = normalized.filename
+        .replace(/[^a-zA-Z0-9._-]/g, "-")
+        .replace(/--+/g, "-")
+        .toLowerCase();
+
+      if (normalized.wasNormalized) {
+        console.log(
+          `[MediaHost] Cropped ${filename} from ${normalized.originalWidth}x${normalized.originalHeight} to ${normalized.finalWidth}x${normalized.finalHeight} (4:5)`
+        );
+      }
+    }
+  } catch (e) {
+    console.warn(`[MediaHost] Image normalization skipped for ${filename}:`, e);
+  }
+
+  // Volume URL is the default. GitHub upload is optional and off unless explicitly enabled.
+  let url: string | null = null;
+  if (process.env.GITHUB_MEDIA_UPLOAD === "1") {
+    url = await uploadToGithub(uploadPath, uploadName);
+  }
+  if (!url) {
+    url = await hostPublicMediaFile(uploadPath, uploadName);
+  }
+
+  // Cleanup temp file(s)
+  cleanupNormalizedImage(uploadPath, tmpPath);
   try { fs.unlinkSync(tmpPath); } catch {}
 
   return url;
