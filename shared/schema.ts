@@ -40,6 +40,8 @@ export const posts = sqliteTable(
     caption: text("caption"), // Instagram/Facebook caption
     captionFacebook: text("caption_facebook"), // Facebook caption (same as IG unless different)
     captionGmb: text("caption_gmb"), // Google My Business caption
+    captionTiktok: text("caption_tiktok"), // TikTok caption. Falls back to caption when null.
+    tiktokSettings: text("tiktok_settings"), // JSON per-post TikTok overrides. Null uses store/global defaults.
     hashtags: text("hashtags"),
     ctaBlock: text("cta_block"), // dealership-specific CTA
     captionExact: integer("caption_exact", { mode: "boolean" }).notNull().default(false),
@@ -94,6 +96,8 @@ export const insertPostSchema = createInsertSchema(posts).omit({
 }).extend({
   igCollaborators: z.string().nullable().optional(),
   igUserTags: z.string().nullable().optional(),
+  captionTiktok: z.string().nullable().optional(),
+  tiktokSettings: z.string().nullable().optional(),
 });
 export type InsertPost = z.infer<typeof insertPostSchema>;
 export type Post = typeof posts.$inferSelect;

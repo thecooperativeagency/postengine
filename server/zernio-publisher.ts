@@ -12,7 +12,7 @@ import { execSync } from "child_process";
 import { cleanupNormalizedImage, normalizeImageForSocial } from "./image-normalizer";
 import { hostPublicMediaFile } from "./public-media";
 import { withPublishLock } from "./publish-lock";
-import { canStartPublish, publishEnabled, shouldStartPublishPoller } from "./publish-switch";
+import { canStartPublish, publishEnabled, shouldStartPublishPoller, tiktokPublishEnabled } from "./publish-switch";
 import { evaluatePublishGate, evaluatePublishIdempotency, selectPublishablePosts } from "./publish-gate";
 import { runMissedSlotReschedule } from "./missed-slot-reschedule";
 import { resolveBin } from "./local-bin";
@@ -24,6 +24,9 @@ import {
   prepareReelWithMusic,
 } from "./music";
 import { buildZernioPostBody, collectDroppedCollaborators } from "./zernio-payload";
+import { accountIdFor, getAccountMap, getDealershipKey, storeTikTokDefaults } from "./zernio-accounts";
+import { validateTikTokPost, type TikTokCreatorInfo } from "@shared/tiktok";
+import { probeTikTokVideo } from "./tiktok-probe";
 
 const ZERNIO_BASE = "https://zernio.com/api/v1";
 const FFMPEG = resolveBin("FFMPEG_PATH", "/opt/homebrew/bin/ffmpeg", "ffmpeg");
@@ -183,39 +186,17 @@ export async function ensureInstagramSafeImage(imageUrl: string): Promise<string
   }
 }
 
-// Load account mapping from config
-function getAccountMap(): Record<string, Record<string, string>> {
-  try {
-    const raw = fs.readFileSync(path.join(process.cwd(), ".zernio-accounts.json"), "utf-8");
-    const config = JSON.parse(raw);
-    return config.accounts || {};
-  } catch {
-    return {};
-  }
-}
-
-// Map dealership ID to account key
-function getDealershipKey(dealershipId: number): string {
-  const map: Record<number, string> = {
-    1: "bmw_jackson",
-    2: "brian_harris_bmw",
-    3: "audi_baton_rouge",
-    4: "harris_porsche",
-    5: "opencraw",
-    6: "cooperative_agency",
-  };
-  return map[dealershipId] || "";
-}
-
 interface ZernioPostPayload {
   accountId: string;
-  platform: string; // instagram, facebook, googlebusiness
+  platform: string; // instagram, facebook, googlebusiness, tiktok
   content: string;
   mediaUrls?: string[];
   mediaType?: string;
   scheduledAt?: string; // ISO string — if omitted, posts immediately
   igCollaborators?: unknown;
   igUserTags?: unknown;
+  tiktokSettings?: Record<string, unknown>;
+  dryRun?: boolean;
 }
 
 async function zernioPost(payload: ZernioPostPayload): Promise<{ success: boolean; postId?: string; error?: string; rawError?: any; droppedCollaborators?: unknown[] }> {
@@ -440,6 +421,7 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
     }
   }
 
+  let tiktokSettings: Record<string, unknown> | undefined;
   for (const platform of platforms) {
     const prior = priorResults[platform];
     if (prior?.success) {
@@ -447,10 +429,28 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
       continue;
     }
 
+    if (platform === "tiktok" && !tiktokPublishEnabled()) {
+      console.warn(`[Zernio] TikTok skipped for post ${postId}: publishing disabled`);
+      results[platform] = { skipped: true, reason: "TikTok publishing disabled", skippedAt: attemptAt };
+      continue;
+    }
+
+    if (platform === "tiktok") {
+      const ownCaption = (post as { captionTiktok?: string | null }).captionTiktok;
+      if (ownCaption == null || String(ownCaption).trim() === "") {
+        console.warn(`[Zernio] TikTok skipped for post ${postId}: no TikTok caption`);
+        results[platform] = { skipped: true, reason: "TikTok caption is not set on this post", skippedAt: attemptAt };
+        continue;
+      }
+    }
+
     const accountId = accounts[platform];
     if (!accountId) {
-      console.warn(`[Zernio] No account ID for ${platform} on ${dealershipKey}`);
-      results[platform] = { skipped: true, reason: "No account ID", skippedAt: attemptAt };
+      const reason = platform === "tiktok"
+        ? "TikTok account is not mapped for this store"
+        : "No account ID";
+      console.warn(`[Zernio] ${reason} for ${platform} on ${dealershipKey}`);
+      results[platform] = { skipped: true, reason, skippedAt: attemptAt };
       continue;
     }
 
@@ -467,6 +467,33 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
       caption = composed.googlebusiness;
     } else if (platform === "facebook") {
       caption = composed.facebook;
+    } else if (platform === "tiktok") {
+      caption = composed.tiktok;
+      let creatorInfo: TikTokCreatorInfo | null = null;
+      try {
+        const creator = await getTikTokCreatorInfo(accountId);
+        if (creator.ok) creatorInfo = creator.info;
+      } catch {
+        creatorInfo = null;
+      }
+      const probe = mediaUrls.length === 1 ? await probeTikTokVideo(mediaUrls[0]) : null;
+      const validation = validateTikTokPost(post, {
+        storeDefaults: storeTikTokDefaults(post.dealershipId),
+        creatorInfo,
+        accountMapped: true,
+        requireAccount: true,
+        probe,
+      });
+      if (validation.errors.length > 0) {
+        const reason = validation.errors.join("; ");
+        console.warn(`[Zernio] TikTok validation skipped post ${postId}: ${reason}`);
+        results[platform] = { skipped: true, reason, skippedAt: attemptAt };
+        continue;
+      }
+      if (validation.warnings.length > 0) {
+        console.warn(`[Zernio] TikTok warnings for post ${postId}: ${validation.warnings.join("; ")}`);
+      }
+      tiktokSettings = validation.settings;
     }
 
     console.log(`[Zernio] Publishing to ${platform} (${accountId})...`);
@@ -485,6 +512,7 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
       scheduledAt: post.scheduledFor || undefined,
       igCollaborators: (post as { igCollaborators?: unknown }).igCollaborators,
       igUserTags: (post as { igUserTags?: unknown }).igUserTags,
+      tiktokSettings: platform === "tiktok" ? tiktokSettings : undefined,
     });
 
     if (result.droppedCollaborators?.length) {
@@ -528,6 +556,19 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
   const unresolved = platformStates.filter((state) => state && !state.success && !state.skipped);
   const allResolved = platformStates.every((state) => !state || state.success || state.skipped || state.duplicate);
   const duplicateOnlyFailure = unresolved.length > 0 && unresolved.every((state) => state.duplicate);
+  const tiktokFlagSkip = results.tiktok?.reason === "TikTok publishing disabled";
+  const anotherPlatformSucceeded = platforms.some((platform) => platform !== "tiktok" && results[platform]?.success);
+  // A TikTok-only post stays approved while the flag is off so it can be sent later.
+  // A post that already published somewhere else is closed, so TikTok is not retried
+  // after the flag is turned on.
+  if (tiktokFlagSkip && !anotherPlatformSucceeded && unresolved.length === 0) {
+    storage.updatePost(postId, {
+      publishAttempts: attempts,
+      lastPublishAttemptAt: attemptAt,
+      publishResults: JSON.stringify(results),
+    } as any);
+    return { success: false, results };
+  }
 
   if (allSuccess || allResolved || duplicateOnlyFailure) {
     storage.updatePost(postId, {
@@ -567,6 +608,161 @@ async function publishPostUnlocked(postId: number): Promise<{ success: boolean; 
   }
 
   return { success: false, results };
+}
+
+const creatorInfoCache = new Map<string, { at: number; info: TikTokCreatorInfo }>();
+const CREATOR_INFO_TTL_MS = 10 * 60 * 1000;
+
+export function clearTikTokCreatorInfoCache() {
+  creatorInfoCache.clear();
+}
+
+export async function getTikTokCreatorInfo(
+  accountId: string,
+): Promise<{ ok: true; info: TikTokCreatorInfo } | { ok: false; status: number; error: string }> {
+  const cached = creatorInfoCache.get(accountId);
+  if (cached && Date.now() - cached.at < CREATOR_INFO_TTL_MS) {
+    return { ok: true, info: cached.info };
+  }
+  const apiKey = getZernioKey();
+  if (!apiKey) return { ok: false, status: 0, error: "No Zernio API key" };
+  const res = await fetch(
+    `${ZERNIO_BASE}/accounts/${encodeURIComponent(accountId)}/tiktok/creator-info?mediaType=video`,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+  );
+  console.log(`[Zernio] TikTok creator-info status ${res.status}`);
+  if (!res.ok) {
+    return { ok: false, status: res.status, error: "TikTok creator info was not available" };
+  }
+  let data: TikTokCreatorInfo;
+  try {
+    data = await res.json() as TikTokCreatorInfo;
+  } catch {
+    return { ok: false, status: res.status, error: "TikTok creator info was not available" };
+  }
+  const info: TikTokCreatorInfo = {
+    privacyLevels: Array.isArray(data?.privacyLevels) ? data.privacyLevels.map(String) : undefined,
+    postingLimits: data?.postingLimits,
+    interactionSettings: data?.interactionSettings,
+    commercialContentTypes: Array.isArray(data?.commercialContentTypes) ? data.commercialContentTypes.map(String) : undefined,
+  };
+  creatorInfoCache.set(accountId, { at: Date.now(), info });
+  return { ok: true, info };
+}
+
+/**
+ * Ask Zernio whether this TikTok post would pass body validation.
+ * dryRun persists nothing and publishes nothing. This never writes publishResults.
+ */
+export async function validateTikTokWithZernio(postId: number): Promise<{
+  ok: boolean;
+  status: number;
+  canPublish: boolean | null;
+  tiktok: unknown;
+  errors: string[];
+  dryRun: true;
+}> {
+  const post = storage.getPost(postId);
+  if (!post) {
+    return { ok: false, status: 404, canPublish: null, tiktok: null, errors: ["Post not found"], dryRun: true };
+  }
+  const platforms = (() => {
+    try {
+      const parsed = JSON.parse(post.platforms || "[]");
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  })();
+  if (!platforms.includes("tiktok")) {
+    return { ok: false, status: 400, canPublish: null, tiktok: null, errors: ["Post does not include TikTok"], dryRun: true };
+  }
+  const accountId = accountIdFor(post.dealershipId, "tiktok");
+  if (!accountId) {
+    return {
+      ok: false,
+      status: 400,
+      canPublish: null,
+      tiktok: null,
+      errors: ["TikTok account is not mapped for this store"],
+      dryRun: true,
+    };
+  }
+  const dealership = storage.getDealership(post.dealershipId);
+  const composed = composePostContent(post, dealership);
+  let creatorInfo: TikTokCreatorInfo | null = null;
+  try {
+    const creator = await getTikTokCreatorInfo(accountId);
+    if (creator.ok) creatorInfo = creator.info;
+  } catch {
+    creatorInfo = null;
+  }
+  const validation = validateTikTokPost(post, {
+    storeDefaults: storeTikTokDefaults(post.dealershipId),
+    creatorInfo,
+    accountMapped: true,
+    requireAccount: true,
+  });
+  if (validation.errors.length > 0) {
+    return { ok: false, status: 400, canPublish: false, tiktok: null, errors: validation.errors, dryRun: true };
+  }
+  let mediaUrls: string[] = [];
+  try {
+    const parsed = post.mediaUrls ? JSON.parse(post.mediaUrls) : [];
+    mediaUrls = Array.isArray(parsed) ? parsed.filter((url: unknown) => typeof url === "string") : [];
+  } catch {
+    mediaUrls = [];
+  }
+  const apiKey = getZernioKey();
+  if (!apiKey) {
+    return { ok: false, status: 0, canPublish: null, tiktok: null, errors: ["No Zernio API key"], dryRun: true };
+  }
+  const body = buildZernioPostBody({
+    content: composed.tiktok,
+    accountId,
+    platform: "tiktok",
+    mediaUrls,
+    mediaType: "video",
+    scheduledAt: post.scheduledFor || undefined,
+    tiktokSettings: validation.settings,
+    dryRun: true,
+  });
+  if ("publishNow" in body) delete body.publishNow;
+  const res = await fetch(`${ZERNIO_BASE}/posts`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  console.log(`[Zernio] TikTok dry-run status ${res.status}`);
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  const errors: string[] = [];
+  if (!res.ok) {
+    if (Array.isArray(data?.errors)) {
+      for (const item of data.errors) errors.push(typeof item === "string" ? item : JSON.stringify(item));
+    } else if (typeof data?.error === "string") {
+      errors.push(data.error);
+    } else if (data == null) {
+      errors.push("Zernio returned a non-JSON response");
+    } else {
+      errors.push("Zernio rejected the TikTok dry run");
+    }
+  }
+  return {
+    ok: res.ok,
+    status: res.status,
+    canPublish: typeof data?.canPublish === "boolean" ? data.canPublish : null,
+    tiktok: data?.tiktok ?? null,
+    errors,
+    dryRun: true,
+  };
 }
 
 /**
