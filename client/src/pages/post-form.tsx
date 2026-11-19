@@ -39,6 +39,12 @@ import {
   parseIgUserTags,
 } from "@shared/ig-mentions";
 import { Link } from "wouter";
+import {
+  TIKTOK_CAPTION_MAX,
+  TIKTOK_COMMERCIAL_TYPES,
+  TIKTOK_DEFAULTS,
+  TIKTOK_PRIVACY_LEVELS,
+} from "@shared/tiktok";
 
 const formSchema = z.object({
   dealershipId: z.number({ required_error: "Select a dealership" }),
@@ -47,6 +53,15 @@ const formSchema = z.object({
   caption: z.string().optional(),
   captionFacebook: z.string().optional(),
   captionGmb: z.string().optional(),
+  captionTiktok: z.string().optional(),
+  tiktokPrivacy: z.string().optional(),
+  tiktokAllowComment: z.boolean().optional(),
+  tiktokAllowDuet: z.boolean().optional(),
+  tiktokAllowStitch: z.boolean().optional(),
+  tiktokMadeWithAi: z.boolean().optional(),
+  tiktokCommercial: z.string().optional(),
+  tiktokCoverMs: z.string().optional(),
+  tiktokCoverUrl: z.string().optional(),
   ctaBlock: z.string().optional(),
   platforms: z.array(z.string()).min(1, "Select at least one platform"),
   scheduledFor: z.string().optional(),
@@ -67,6 +82,39 @@ const formSchema = z.object({
 });
 
 type FormValues = z.infer<typeof formSchema>;
+
+function readTikTokFormSettings(raw: unknown): Pick<FormValues, "tiktokPrivacy" | "tiktokAllowComment" | "tiktokAllowDuet" | "tiktokAllowStitch" | "tiktokMadeWithAi" | "tiktokCommercial" | "tiktokCoverMs" | "tiktokCoverUrl"> {
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = typeof raw === "string" && raw.trim() ? JSON.parse(raw) : {};
+  } catch {
+    parsed = {};
+  }
+  return {
+    tiktokPrivacy: typeof parsed.privacy_level === "string" ? parsed.privacy_level : TIKTOK_DEFAULTS.privacy_level,
+    tiktokAllowComment: typeof parsed.allow_comment === "boolean" ? parsed.allow_comment : TIKTOK_DEFAULTS.allow_comment,
+    tiktokAllowDuet: typeof parsed.allow_duet === "boolean" ? parsed.allow_duet : TIKTOK_DEFAULTS.allow_duet,
+    tiktokAllowStitch: typeof parsed.allow_stitch === "boolean" ? parsed.allow_stitch : TIKTOK_DEFAULTS.allow_stitch,
+    tiktokMadeWithAi: typeof parsed.video_made_with_ai === "boolean" ? parsed.video_made_with_ai : TIKTOK_DEFAULTS.video_made_with_ai,
+    tiktokCommercial: typeof parsed.commercialContentType === "string" ? parsed.commercialContentType : TIKTOK_DEFAULTS.commercialContentType,
+    tiktokCoverMs: parsed.video_cover_timestamp_ms != null ? String(parsed.video_cover_timestamp_ms) : String(TIKTOK_DEFAULTS.video_cover_timestamp_ms),
+    tiktokCoverUrl: typeof parsed.video_cover_image_url === "string" ? parsed.video_cover_image_url : "",
+  };
+}
+
+function tiktokSettingsFromForm(data: FormValues) {
+  const coverMs = Number(data.tiktokCoverMs);
+  return {
+    privacy_level: data.tiktokPrivacy || TIKTOK_DEFAULTS.privacy_level,
+    allow_comment: data.tiktokAllowComment !== false,
+    allow_duet: data.tiktokAllowDuet !== false,
+    allow_stitch: data.tiktokAllowStitch !== false,
+    video_made_with_ai: data.tiktokMadeWithAi === true,
+    commercialContentType: data.tiktokCommercial || TIKTOK_DEFAULTS.commercialContentType,
+    video_cover_timestamp_ms: Number.isFinite(coverMs) && coverMs >= 0 ? Math.round(coverMs) : TIKTOK_DEFAULTS.video_cover_timestamp_ms,
+    ...(data.tiktokCoverUrl?.trim() ? { video_cover_image_url: data.tiktokCoverUrl.trim() } : {}),
+  };
+}
 
 const platformOptions = [
   { value: "instagram", label: "Instagram" },
@@ -110,6 +158,15 @@ export default function PostForm() {
       caption: "",
       captionFacebook: "",
       captionGmb: "",
+      captionTiktok: "",
+      tiktokPrivacy: TIKTOK_DEFAULTS.privacy_level,
+      tiktokAllowComment: TIKTOK_DEFAULTS.allow_comment,
+      tiktokAllowDuet: TIKTOK_DEFAULTS.allow_duet,
+      tiktokAllowStitch: TIKTOK_DEFAULTS.allow_stitch,
+      tiktokMadeWithAi: TIKTOK_DEFAULTS.video_made_with_ai,
+      tiktokCommercial: TIKTOK_DEFAULTS.commercialContentType,
+      tiktokCoverMs: String(TIKTOK_DEFAULTS.video_cover_timestamp_ms),
+      tiktokCoverUrl: "",
       ctaBlock: "",
       platforms: ["instagram", "facebook", "googlebusiness"],
       scheduledFor: "",
@@ -216,15 +273,13 @@ export default function PostForm() {
           instagram: values.caption || "",
           facebook: values.captionFacebook || "",
           googlebusiness: values.captionGmb || "",
-          tiktok: values.caption || "",
+          tiktok: values.captionTiktok || values.caption || "",
         },
       });
       const body = await res.json();
       const captions = body?.captions || {};
       if (platforms.includes("instagram") && typeof captions.instagram === "string") {
         form.setValue("caption", captions.instagram);
-      } else if (platforms.includes("tiktok") && typeof captions.tiktok === "string" && !platforms.includes("instagram")) {
-        form.setValue("caption", captions.tiktok);
       }
       if (platforms.includes("facebook") && typeof captions.facebook === "string") {
         form.setValue("captionFacebook", captions.facebook);
@@ -232,13 +287,8 @@ export default function PostForm() {
       if (platforms.includes("googlebusiness") && typeof captions.googlebusiness === "string") {
         form.setValue("captionGmb", captions.googlebusiness);
       }
-      if (platforms.includes("tiktok") && typeof captions.tiktok === "string" && platforms.includes("instagram")) {
-        // Keep IG field primary; tuck TikTok line into notes for operator visibility.
-        const note = `TikTok caption: ${captions.tiktok}`;
-        const existingNotes = form.getValues("notes") || "";
-        if (!existingNotes.includes(captions.tiktok)) {
-          form.setValue("notes", [existingNotes, note].filter(Boolean).join("\n"));
-        }
+      if (platforms.includes("tiktok") && typeof captions.tiktok === "string") {
+        form.setValue("captionTiktok", captions.tiktok);
       }
       toast({
         title: "Captions drafted",
@@ -271,6 +321,8 @@ export default function PostForm() {
         caption: existingPost.caption || "",
         captionFacebook: (existingPost as any).captionFacebook || "",
         captionGmb: (existingPost as any).captionGmb || "",
+        captionTiktok: (existingPost as any).captionTiktok || "",
+        ...readTikTokFormSettings((existingPost as any).tiktokSettings),
         ctaBlock: existingPost.ctaBlock || "",
         platforms,
         scheduledFor: existingPost.scheduledFor
@@ -314,6 +366,9 @@ export default function PostForm() {
           (mediaUrls.length > 1 ? "carousel" : mediaUrls.some((u) => /\.(mp4|mov|webm|m4v)(\?|$)/i.test(u)) ? "video" : "image"),
         igCollaborators: data.igCollaborators?.trim() ? data.igCollaborators : null,
         igUserTags: data.igUserTags?.trim() ? data.igUserTags : null,
+        captionTiktok: data.captionTiktok?.trim() ? data.captionTiktok : null,
+        tiktokSettings: data.platforms.includes("tiktok") ? JSON.stringify(tiktokSettingsFromForm(data)) : null,
+        ...(postId ? {} : data.platforms.includes("tiktok") ? { hold: true, holdReason: "TikTok post held until approved" } : {}),
       };
       if (postId) {
         const res = await apiRequest("PATCH", `/api/posts/${postId}`, payload);
@@ -340,9 +395,48 @@ export default function PostForm() {
         toast({ title: "Schedule date required", description: "Pick a date and time before scheduling.", variant: "destructive" });
         return;
       }
+      if (data.platforms.includes("tiktok")) {
+        const videos = mediaUrls.filter((url) => /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url));
+        if (data.mediaType !== "video" || videos.length !== 1 || mediaUrls.length !== 1) {
+          toast({
+            title: "TikTok needs one video",
+            description: "Attach a single MP4, MOV, or WebM. Images are not posted to TikTok.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
       createMutation.mutate({ ...data, status });
     })();
   };
+
+  const watchPlatforms = form.watch("platforms");
+  const watchCaptionTiktok = form.watch("captionTiktok");
+  const tiktokSelected = (watchPlatforms || []).includes("tiktok");
+  const { data: tiktokCreator } = useQuery<{
+    privacyLevels?: string[];
+    interactionSettings?: {
+      allow_comment?: { enabled?: boolean };
+      allow_duet?: { enabled?: boolean };
+      allow_stitch?: { enabled?: boolean };
+    };
+  }>({
+    queryKey: ["/api/dealerships", watchDealershipId, "tiktok", "creator-info"],
+    enabled: tiktokSelected && Number.isInteger(watchDealershipId),
+    queryFn: async () => {
+      const res = await fetch(`/api/dealerships/${watchDealershipId}/tiktok/creator-info`, {
+        headers: getDashboardAuthHeaders(),
+      });
+      if (!res.ok) return {};
+      return res.json();
+    },
+  });
+  const privacyOptions = (tiktokCreator?.privacyLevels?.length
+    ? TIKTOK_PRIVACY_LEVELS.filter((level) => tiktokCreator.privacyLevels?.includes(level))
+    : [...TIKTOK_PRIVACY_LEVELS]);
+  const commentLockedOff = tiktokCreator?.interactionSettings?.allow_comment?.enabled === false;
+  const duetLockedOff = tiktokCreator?.interactionSettings?.allow_duet?.enabled === false;
+  const stitchLockedOff = tiktokCreator?.interactionSettings?.allow_stitch?.enabled === false;
 
   if (postLoading && postId) {
     return (
@@ -821,6 +915,168 @@ export default function PostForm() {
                       )}
                     />
                   </div>
+
+                  {tiktokSelected && (
+                    <div className="space-y-4 rounded-lg border p-3" data-testid="panel-tiktok">
+                      <div>
+                        <p className="text-sm font-medium">TikTok</p>
+                        <p className="text-xs text-muted-foreground">
+                          Saved on hold. Nothing posts until the post is approved and TikTok publishing is turned on.
+                        </p>
+                      </div>
+                      <FormField
+                        control={form.control}
+                        name="captionTiktok"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>TikTok caption</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                placeholder="TikTok caption. Hashtags stay. The Instagram link-in-bio line is not added."
+                                className="min-h-[100px] resize-y"
+                                {...field}
+                                value={field.value ?? ""}
+                                data-testid="textarea-caption-tiktok"
+                              />
+                            </FormControl>
+                            <p className="text-xs text-muted-foreground">
+                              {(watchCaptionTiktok || "").length}/{TIKTOK_CAPTION_MAX}
+                            </p>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="tiktokPrivacy"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Privacy</FormLabel>
+                            <Select value={field.value} onValueChange={field.onChange}>
+                              <FormControl>
+                                <SelectTrigger data-testid="select-tiktok-privacy">
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {privacyOptions.map((level) => (
+                                  <SelectItem key={level} value={level}>{level}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </FormItem>
+                        )}
+                      />
+                      <div className="flex flex-wrap gap-4">
+                        <FormField
+                          control={form.control}
+                          name="tiktokAllowComment"
+                          render={({ field }) => (
+                            <label className="flex items-center gap-2 text-sm">
+                              <Checkbox
+                                checked={commentLockedOff ? false : field.value !== false}
+                                disabled={commentLockedOff}
+                                onCheckedChange={(checked) => field.onChange(checked === true)}
+                                data-testid="checkbox-tiktok-comments"
+                              />
+                              Allow comments
+                            </label>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="tiktokAllowDuet"
+                          render={({ field }) => (
+                            <label className="flex items-center gap-2 text-sm">
+                              <Checkbox
+                                checked={duetLockedOff ? false : field.value !== false}
+                                disabled={duetLockedOff}
+                                onCheckedChange={(checked) => field.onChange(checked === true)}
+                                data-testid="checkbox-tiktok-duet"
+                              />
+                              Allow duet
+                            </label>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="tiktokAllowStitch"
+                          render={({ field }) => (
+                            <label className="flex items-center gap-2 text-sm">
+                              <Checkbox
+                                checked={stitchLockedOff ? false : field.value !== false}
+                                disabled={stitchLockedOff}
+                                onCheckedChange={(checked) => field.onChange(checked === true)}
+                                data-testid="checkbox-tiktok-stitch"
+                              />
+                              Allow stitch
+                            </label>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="tiktokMadeWithAi"
+                          render={({ field }) => (
+                            <label className="flex items-center gap-2 text-sm">
+                              <Checkbox
+                                checked={field.value === true}
+                                onCheckedChange={(checked) => field.onChange(checked === true)}
+                                data-testid="checkbox-tiktok-ai"
+                              />
+                              Made with AI
+                            </label>
+                          )}
+                        />
+                      </div>
+                      <FormField
+                        control={form.control}
+                        name="tiktokCommercial"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Commercial disclosure</FormLabel>
+                            <Select value={field.value} onValueChange={field.onChange}>
+                              <FormControl>
+                                <SelectTrigger data-testid="select-tiktok-commercial">
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {TIKTOK_COMMERCIAL_TYPES.map((value) => (
+                                  <SelectItem key={value} value={value}>{value}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </FormItem>
+                        )}
+                      />
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="tiktokCoverMs"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Cover frame (ms)</FormLabel>
+                              <FormControl>
+                                <Input {...field} value={field.value ?? ""} data-testid="input-tiktok-cover-ms" />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="tiktokCoverUrl"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Cover image URL</FormLabel>
+                              <FormControl>
+                                <Input {...field} value={field.value ?? ""} placeholder="https://" data-testid="input-tiktok-cover-url" />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   <FormField
                     control={form.control}

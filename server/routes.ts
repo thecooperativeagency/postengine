@@ -37,7 +37,10 @@ import {
 } from "./nov6-2026-publish-allowlist";
 import { handleImportStatus } from "./admin-import";
 import { generateCaption, generateCaptionsForPlatforms, normalizeCaptionPlatforms } from "./caption-writer";
-import { publishPost } from "./zernio-publisher";
+import { publishPost, validateTikTokWithZernio, getTikTokCreatorInfo } from "./zernio-publisher";
+import { accountIdFor, zernioMappingStatus } from "./zernio-accounts";
+import { readHoldRequest, holdPatchIfRequested } from "./post-hold";
+import { normalizeTikTokForStorage, tiktokWriteErrors } from "./tiktok-posts";
 import { sendApprovalRequest, sendWeeklySummary } from "./telegram-notify";
 import { composePostContent } from "./post-composer";
 import {
@@ -314,6 +317,33 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ---- Dealerships ----
+  app.get("/api/zernio/mapping", (req, res) => {
+    const status = zernioMappingStatus();
+    const visible: Record<string, (typeof status)[string]> = {};
+    for (const [id, flags] of Object.entries(status)) {
+      if (dashboardCanSeeDealership(req, Number(id))) visible[id] = flags;
+    }
+    res.json(visible);
+  });
+
+  app.get("/api/dealerships/:id/tiktok/creator-info", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const dealershipId = Number(req.params.id);
+    const dealership = storage.getDealership(dealershipId);
+    if (!dealership || !dashboardCanSeeDealership(req, dealershipId)) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    const accountId = accountIdFor(dealershipId, "tiktok");
+    if (!accountId) {
+      return res.status(404).json({ error: "TikTok account is not mapped for this store" });
+    }
+    const creator = await getTikTokCreatorInfo(accountId);
+    if (!creator.ok) {
+      return res.status(creator.status || 502).json({ error: creator.error });
+    }
+    res.json(creator.info);
+  });
+
   app.get("/api/dealerships", (req, res) => {
     res.json(storage.getDealerships().filter((dealer) => dashboardCanSeeDealership(req, dealer.id)));
   });
@@ -456,7 +486,9 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.post("/api/posts", (req, res) => {
     try {
-      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const body = req.body && typeof req.body === "object" ? { ...req.body } : {};
+      const holdRequest = readHoldRequest(body);
+      normalizeTikTokForStorage(body);
       normalizeIgFieldsForStorage(body);
       const data = insertPostSchema.parse(body);
       if (!dashboardCanSeeDealership(req, data.dealershipId)) {
@@ -467,7 +499,28 @@ export async function registerRoutes(server: Server, app: Express) {
           error: "Use the publish-approval, hold, or expiry endpoints to change this status",
         });
       }
-      const post = storage.createPost(data);
+      const tiktokErrors = tiktokWriteErrors(data);
+      if (tiktokErrors.length > 0) {
+        return res.status(400).json({ error: tiktokErrors.join("; "), errors: tiktokErrors });
+      }
+      let post = storage.createPost(data);
+      if (holdRequest.hold) {
+        const planned = holdPatchIfRequested(post, true, new Date(), holdRequest.reason);
+        if (planned && "error" in planned) {
+          return res.status(400).json({ error: planned.error });
+        }
+        if (planned && "patch" in planned) {
+          const held = storage.updatePost(post.id, planned.patch as any);
+          if (!held) return res.status(500).json({ error: "Failed to hold post" });
+          post = held;
+          storage.logActivity({
+            postId: post.id,
+            dealershipId: post.dealershipId,
+            action: "held",
+            details: `Post held on create (was ${planned.patch.statusBeforeHold}): ${post.vehicleInfo || post.postType}`,
+          });
+        }
+      }
       const created = presentIgFields(post);
       storage.logActivity({
         postId: created.id,
@@ -490,8 +543,10 @@ export async function registerRoutes(server: Server, app: Express) {
     }
 
     const body = { ...req.body };
+    const holdRequest = readHoldRequest(body);
     for (const field of PUBLISH_GATE_PATCH_FIELDS) delete body[field];
     try {
+      normalizeTikTokForStorage(body);
       normalizeIgFieldsForStorage(body);
     } catch (error) {
       if (error instanceof IgFieldError) return res.status(400).json({ error: error.message });
@@ -503,6 +558,13 @@ export async function registerRoutes(server: Server, app: Express) {
         error: "Use the publish-approval, hold, or expiry endpoints to change this status",
       });
     }
+    if (holdRequest.hold && (existing.status === "published" || existing.status === "rejected" || body.status === "published" || body.status === "rejected")) {
+      return res.status(400).json({ error: "Cannot hold a published or rejected post" });
+    }
+    const tiktokErrors = tiktokWriteErrors({ ...existing, ...body, dealershipId: body.dealershipId ?? existing.dealershipId });
+    if (tiktokErrors.length > 0) {
+      return res.status(400).json({ error: tiktokErrors.join("; "), errors: tiktokErrors });
+    }
     const scheduledForChanged = Object.prototype.hasOwnProperty.call(req.body ?? {}, "scheduledFor")
       && req.body.scheduledFor !== existing.scheduledFor;
 
@@ -513,11 +575,28 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.status(409).json({ error: message });
     }
 
-    const updated = storage.updatePost(Number(req.params.id), {
+    let updated = storage.updatePost(Number(req.params.id), {
       ...body,
       ...(scheduledForChanged ? { scheduleExpiryExempt: false, rescheduledFrom: null, rescheduledAt: null } : {}),
     });
     if (!updated) return res.status(500).json({ error: "Failed to update" });
+    if (holdRequest.hold) {
+      const planned = holdPatchIfRequested(updated, true, new Date(), holdRequest.reason);
+      if (planned && "error" in planned) {
+        return res.status(400).json({ error: planned.error });
+      }
+      if (planned && "patch" in planned) {
+        const held = storage.updatePost(updated.id, planned.patch as any);
+        if (!held) return res.status(500).json({ error: "Failed to hold post" });
+        updated = held;
+        storage.logActivity({
+          postId: updated.id,
+          dealershipId: updated.dealershipId,
+          action: "held",
+          details: `Post held (was ${planned.patch.statusBeforeHold}): ${updated.vehicleInfo || updated.postType}`,
+        });
+      }
+    }
     const presented = presentIgFields(updated);
 
     // Log status changes
@@ -842,6 +921,38 @@ export async function registerRoutes(server: Server, app: Express) {
 
     const result = await publishPost(postId, { manual: true });
     res.json(result);
+  });
+
+  app.post("/api/posts/:id/hold", (req, res) => {
+    const postId = Number(req.params.id);
+    const post = storage.getPost(postId);
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
+    const reason = typeof req.body?.reason === "string" && req.body.reason.trim()
+      ? req.body.reason.trim().slice(0, 500)
+      : "held";
+    const planned = holdPatchIfRequested(post, true, new Date(), reason);
+    if (!planned || "error" in planned) {
+      return res.status(409).json({ error: planned?.error || "Cannot hold this post" });
+    }
+    const updated = storage.updatePost(postId, planned.patch as any);
+    if (!updated) return res.status(500).json({ error: "Failed to update post" });
+    storage.logActivity({
+      postId: updated.id,
+      dealershipId: updated.dealershipId,
+      action: "held",
+      details: `Post held (was ${post.status}): ${updated.vehicleInfo || updated.postType}. ${reason}`,
+    });
+    res.json(updated);
+  });
+
+  app.post("/api/posts/:id/tiktok/validate", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const postId = Number(req.params.id);
+    const post = storage.getPost(postId);
+    if (!post || !dashboardCanSeeDealership(req, post.dealershipId)) return res.status(404).json({ error: "Not found" });
+    const result = await validateTikTokWithZernio(postId);
+    const status = result.status >= 400 ? result.status : (result.ok ? 200 : 502);
+    res.status(status === 0 ? 502 : status).json(result);
   });
 
   app.post("/api/posts/hold-backlog", (req, res) => {

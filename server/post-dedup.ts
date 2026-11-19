@@ -13,6 +13,7 @@ export interface VehicleDuplicateCandidate {
   createdAt?: string | null;
   postType?: string | null;
   folderSource?: string | null;
+  platforms?: string | string[] | null;
 }
 
 export type VehicleDuplicateMode = "queue" | "publish";
@@ -39,6 +40,30 @@ function isReels(postType?: string | null) {
 
 function normalizeFolderSource(value: string | null | undefined) {
   return (value || "").trim().toLowerCase();
+}
+
+function readPlatforms(value: VehicleDuplicateCandidate["platforms"]): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim().toLowerCase()).filter(Boolean);
+  }
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => String(item).trim().toLowerCase()).filter(Boolean);
+    }
+  } catch {
+    return value.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
+  }
+  return [];
+}
+
+/** Same-platform duplicates still collide. A TikTok-only reel does not collide with an Instagram-only one. Missing platforms keep the old match. */
+function platformsIntersect(target: VehicleDuplicateCandidate, existing: VehicleDuplicateCandidate): boolean {
+  const left = readPlatforms(target.platforms);
+  const right = readPlatforms(existing.platforms);
+  if (left.length === 0 || right.length === 0) return true;
+  return left.some((platform) => right.includes(platform));
 }
 
 function isDistinctReelCut(target: VehicleDuplicateCandidate, existing: VehicleDuplicateCandidate) {
@@ -76,6 +101,7 @@ export function findRecentVehicleDuplicate(
     }
 
     if (isDistinctReelCut(target, existing)) continue;
+    if (!platformsIntersect(target, existing)) continue;
 
     const existingVehicles = buildDuplicateKeys(existing.vehicleInfo);
     const sharesFingerprint = existingVehicles.some((vehicle) => targetVehicles.includes(vehicle));

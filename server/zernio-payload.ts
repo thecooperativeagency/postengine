@@ -10,6 +10,8 @@ export interface ZernioPostPayloadInput {
   now?: Date;
   igCollaborators?: unknown;
   igUserTags?: unknown;
+  tiktokSettings?: Record<string, unknown>;
+  dryRun?: boolean;
 }
 
 /**
@@ -50,10 +52,21 @@ export function buildZernioPostBody(input: ZernioPostPayloadInput): Record<strin
       url,
       type: /\.(mp4|mov|m4v|webm)(\?|$)/i.test(url) ? "video" : "image",
     }));
-    if (isSingleVideo && mediaItems.length === 1 && mediaItems[0].type !== "video") {
+    if ((isSingleVideo || input.platform === "tiktok") && mediaItems.length === 1 && mediaItems[0].type !== "video") {
       mediaItems[0].type = "video";
     }
     body.mediaItems = mediaItems;
+  }
+
+  if (input.platform === "tiktok") {
+    // Approval in PostEngine is the preview-and-consent act. These two flags
+    // are required by TikTok and are not stored or overridable on the post.
+    const settings: Record<string, unknown> = { ...(input.tiktokSettings || {}) };
+    if (settings.draft !== true) delete settings.draft;
+    settings.content_preview_confirmed = true;
+    settings.express_consent_given = true;
+    body.tiktokSettings = settings;
+    if (input.dryRun === true) body.dryRun = true;
   }
 
   const now = input.now ?? new Date();

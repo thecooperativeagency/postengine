@@ -1,9 +1,11 @@
+import { resolveTikTokCaption } from "@shared/tiktok";
 import { cleanText, stripHashtagLines, joinParts } from "./post-sanitizer";
 
 export interface ComposedPostContent {
   instagram: string;
   facebook: string;
   googlebusiness: string;
+  tiktok: string;
 }
 
 export function isCaptionExact(post: { captionExact?: unknown; caption_exact?: unknown } | null | undefined): boolean {
@@ -28,6 +30,7 @@ export function composePostContentFrom(
       instagram: caption,
       facebook: rawCaption(post?.captionFacebook, caption),
       googlebusiness: rawCaption(post?.captionGmb, caption),
+      tiktok: resolveTikTokCaption(post),
     };
   }
 
@@ -45,5 +48,7 @@ export function composePostContentFrom(
     instagram: joinParts(instagramCaption, instagramCta),
     facebook: joinParts(facebookCaption, facebookLink, facebookCta),
     googlebusiness: joinParts(gmbCaption, gmbLink, gmbCta),
+    // Hashtags stay. There is no TikTok CTA, and the Instagram linkin.bio line is not reused.
+    tiktok: resolveTikTokCaption(post),
   };
 }

@@ -1,4 +1,6 @@
+import { validateTikTokPost, postTargetsTikTok } from "@shared/tiktok";
 import { findRecentVehicleDuplicate, recentVehicleBlockReason } from "./post-dedup";
+import { accountIdFor, storeTikTokDefaults } from "./zernio-accounts";
 
 export const PUBLISH_OVERDUE_WINDOW_MS = 2 * 60 * 60 * 1000;
 export const CHICAGO_TZ = "America/Chicago";
@@ -21,6 +23,8 @@ export type PublishGatePost = {
   caption?: string | null;
   captionFacebook?: string | null;
   captionGmb?: string | null;
+  captionTiktok?: string | null;
+  tiktokSettings?: string | null;
   mediaUrls?: string | null;
   mediaType?: string | null;
   platforms?: string | null;
@@ -493,6 +497,17 @@ export function evaluateApproveForPublish(
   if (slotPastApprovalWindow(post, now, windowMs)) {
     return { ok: false, reason: APPROVAL_WINDOW_REASON };
   }
+  if (postTargetsTikTok(post.platforms)) {
+    const tiktok = validateTikTokPost(post, {
+      storeDefaults: storeTikTokDefaults(post.dealershipId),
+      accountMapped: Boolean(accountIdFor(post.dealershipId, "tiktok")),
+      requireAccount: true,
+      requireOwnCaption: true,
+    });
+    if (tiktok.errors.length > 0) {
+      return { ok: false, reason: tiktok.errors.join("; ") };
+    }
+  }
   const publishDuplicate = findRecentVehicleDuplicate(post, siblings, undefined, "publish");
   if (publishDuplicate) {
     return { ok: false, reason: recentVehicleBlockReason(publishDuplicate, "publish") };
@@ -546,6 +561,15 @@ export function listPublishBlockReasons(
   }
   if (options.publishEnabled === false) {
     pushReason(reasons, "Publisher is off");
+  }
+  if (postTargetsTikTok(post.platforms)) {
+    const tiktok = validateTikTokPost(post, {
+      storeDefaults: storeTikTokDefaults(post.dealershipId),
+      accountMapped: Boolean(accountIdFor(post.dealershipId, "tiktok")),
+      requireAccount: true,
+      requireOwnCaption: true,
+    });
+    for (const error of tiktok.errors) pushReason(reasons, error);
   }
   // Approve can be stricter than a fresh approval window. Only add that
   // reason when the gate already refuses, so a publishable row is not

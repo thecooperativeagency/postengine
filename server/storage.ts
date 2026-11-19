@@ -518,6 +518,12 @@ export class DatabaseStorage implements IStorage {
     if (!postColumnNames.has("ig_user_tags")) {
       sqlite.exec(`ALTER TABLE posts ADD COLUMN ig_user_tags TEXT;`);
     }
+    if (!postColumnNames.has("caption_tiktok")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN caption_tiktok TEXT;`);
+    }
+    if (!postColumnNames.has("tiktok_settings")) {
+      sqlite.exec(`ALTER TABLE posts ADD COLUMN tiktok_settings TEXT;`);
+    }
 
     const dealershipColumns = sqlite.prepare(`PRAGMA table_info(dealerships)`).all() as Array<{ name: string }>;
     const dealershipColumnNames = new Set(dealershipColumns.map((col) => col.name));

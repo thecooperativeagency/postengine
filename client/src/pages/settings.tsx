@@ -466,6 +466,18 @@ function CadenceSection({ dealership, postTypes }: { dealership: Dealership; pos
   );
 }
 
+function TikTokMappingLine({ dealershipId }: { dealershipId: number }) {
+  const { data } = useQuery<Record<string, { tiktok?: boolean }>>({
+    queryKey: ["/api/zernio/mapping"],
+  });
+  const mapped = data?.[String(dealershipId)]?.tiktok === true;
+  return (
+    <p className="text-xs text-muted-foreground" data-testid={`text-tiktok-mapping-${dealershipId}`}>
+      TikTok account: {mapped ? "mapped" : "not mapped"}
+    </p>
+  );
+}
+
 function DealershipCard({ dealership }: { dealership: Dealership }) {
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
@@ -552,6 +564,7 @@ function DealershipCard({ dealership }: { dealership: Dealership }) {
             <CardDescription className="text-xs">
               {dealership.brand} -- {dealership.location}
             </CardDescription>
+            <TikTokMappingLine dealershipId={dealership.id} />
           </div>
           <div className="flex items-center gap-2">
             <Button

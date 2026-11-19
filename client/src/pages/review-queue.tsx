@@ -35,6 +35,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PublishBlockReasons } from "@/components/publish-block-reasons";
 import type { Post, Dealership } from "@shared/schema";
 import { formatIgMentionLine } from "@shared/ig-mentions";
+import { postTargetsTikTok, summarizeTikTokSettings } from "@shared/tiktok";
 
 type QueuePost = Post & {
   publishBlockReasons?: string[];
@@ -358,6 +359,22 @@ function ReviewPostCard({
 }) {
   const { toast } = useToast();
   const [direction, setDirection] = useState("");
+  const hasTikTok = postTargetsTikTok(post.platforms);
+  const validateTikTok = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/posts/${post.id}/tiktok/validate`);
+      return res.json() as Promise<{ canPublish?: boolean | null; errors?: string[]; status?: number }>;
+    },
+    onSuccess: (body) => {
+      toast({
+        title: body.canPublish ? "Zernio dry run can publish" : "Zernio dry run did not pass",
+        description: body.errors?.length ? body.errors.join("; ") : `Status ${body.status ?? ""}`.trim(),
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "TikTok dry run failed", description: err.message, variant: "destructive" });
+    },
+  });
 
   const rewriteMutation = useMutation({
     mutationFn: async () => {
@@ -436,6 +453,26 @@ function ReviewPostCard({
             <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">
               {(post as any).captionGmb}
             </p>
+          </div>
+        )}
+        {hasTikTok && (
+          <div className="rounded-md border bg-muted/20 p-2 space-y-2" data-testid={`panel-tiktok-${post.id}`}>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">TikTok</p>
+            <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">
+              {(post as any).captionTiktok || post.caption || "No TikTok caption"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {summarizeTikTokSettings((post as any).tiktokSettings)}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => validateTikTok.mutate()}
+              disabled={validateTikTok.isPending}
+              data-testid={`button-tiktok-validate-${post.id}`}
+            >
+              {validateTikTok.isPending ? "Validating…" : "Validate with Zernio"}
+            </Button>
           </div>
         )}
         {formatIgMentionLine(post) && (

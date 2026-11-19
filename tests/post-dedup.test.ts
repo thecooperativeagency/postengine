@@ -215,3 +215,59 @@ test("publish mode still blocks a still that already went live in the cooldown w
 
   assert.equal(duplicate?.id, 499);
 });
+
+test("a TikTok-only reel does not collide with an Instagram-only post of the same vehicle", () => {
+  const duplicate = findRecentVehicleDuplicate(
+    {
+      id: 900,
+      dealershipId: 3,
+      vehicleInfo: "2026 Audi Q5",
+      status: "queued",
+      postType: "reels",
+      platforms: '["tiktok"]',
+      scheduledFor: "2026-07-02T15:00:00.000Z",
+      createdAt: "2026-07-01T15:00:00.000Z",
+    },
+    [
+      {
+        id: 800,
+        dealershipId: 3,
+        vehicleInfo: "2026 Audi Q5",
+        status: "published",
+        postType: "reels",
+        platforms: ["instagram"],
+        scheduledFor: "2026-07-01T15:00:00.000Z",
+        publishedAt: "2026-07-01T16:00:00.000Z",
+        createdAt: "2026-06-28T15:00:00.000Z",
+      },
+    ],
+  );
+  assert.equal(duplicate, null);
+});
+
+test("Instagram still collides with another Instagram post of the same vehicle", () => {
+  const duplicate = findRecentVehicleDuplicate(
+    {
+      id: 901,
+      dealershipId: 3,
+      vehicleInfo: "2026 Audi Q5",
+      status: "queued",
+      platforms: '["instagram"]',
+      scheduledFor: "2026-07-02T15:00:00.000Z",
+      createdAt: "2026-07-01T15:00:00.000Z",
+    },
+    [
+      {
+        id: 801,
+        dealershipId: 3,
+        vehicleInfo: "2026 Audi Q5",
+        status: "published",
+        platforms: '["instagram","facebook"]',
+        scheduledFor: "2026-07-01T15:00:00.000Z",
+        publishedAt: "2026-07-01T16:00:00.000Z",
+        createdAt: "2026-06-20T15:00:00.000Z",
+      },
+    ],
+  );
+  assert.equal(duplicate?.id, 801);
+});
