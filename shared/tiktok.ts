@@ -107,6 +107,62 @@ export function readPlatformList(platforms: unknown): string[] {
   return platforms.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
 }
 
+function readOptionValue(entry: unknown): string | null {
+  if (typeof entry === "string") {
+    const value = entry.trim();
+    return value && value !== "[object Object]" ? value : null;
+  }
+  if (entry && typeof entry === "object" && "value" in entry) {
+    const value = (entry as { value?: unknown }).value;
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function readInteraction(entry: unknown): { enabled: boolean } | undefined {
+  if (!entry || typeof entry !== "object" || !("enabled" in entry)) return undefined;
+  const enabled = (entry as { enabled?: unknown }).enabled;
+  return typeof enabled === "boolean" ? { enabled } : undefined;
+}
+
+/**
+ * Zernio's creator-info payload uses objects (`{ value, label }`) for privacy
+ * and commercial options, and nests interaction toggles under postingLimits.
+ * Older or partial payloads may send plain strings and a top-level
+ * interactionSettings. Both shapes normalize to the fields we validate against.
+ */
+export function normalizeTikTokCreatorInfo(raw: unknown): TikTokCreatorInfo {
+  const data = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const privacyLevels = Array.isArray(data.privacyLevels)
+    ? data.privacyLevels.map(readOptionValue).filter((value): value is string => Boolean(value))
+    : undefined;
+  const commercialContentTypes = Array.isArray(data.commercialContentTypes)
+    ? data.commercialContentTypes.map(readOptionValue).filter((value): value is string => Boolean(value))
+    : undefined;
+  const limits = data.postingLimits && typeof data.postingLimits === "object"
+    ? data.postingLimits as Record<string, unknown>
+    : {};
+  const maxRaw = limits.maxVideoDurationSec;
+  const maxNumber = typeof maxRaw === "number" ? maxRaw : typeof maxRaw === "string" ? Number(maxRaw) : NaN;
+  const interactionSource = data.interactionSettings && typeof data.interactionSettings === "object"
+    ? data.interactionSettings as Record<string, unknown>
+    : limits.interactionSettings && typeof limits.interactionSettings === "object"
+      ? limits.interactionSettings as Record<string, unknown>
+      : null;
+  return {
+    privacyLevels,
+    postingLimits: Number.isFinite(maxNumber) ? { maxVideoDurationSec: maxNumber } : undefined,
+    interactionSettings: interactionSource
+      ? {
+        allow_comment: readInteraction(interactionSource.allow_comment),
+        allow_duet: readInteraction(interactionSource.allow_duet),
+        allow_stitch: readInteraction(interactionSource.allow_stitch),
+      }
+      : undefined,
+    commercialContentTypes,
+  };
+}
+
 export function parseTikTokSettings(value: unknown): { ok: true; value: TikTokSettingsOverride } | { ok: false; error: string } {
   if (value == null || value === "") return { ok: true, value: {} };
   try {

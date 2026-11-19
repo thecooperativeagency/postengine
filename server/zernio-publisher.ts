@@ -25,7 +25,7 @@ import {
 } from "./music";
 import { buildZernioPostBody, collectDroppedCollaborators } from "./zernio-payload";
 import { accountIdFor, getAccountMap, getDealershipKey, storeTikTokDefaults } from "./zernio-accounts";
-import { validateTikTokPost, type TikTokCreatorInfo } from "@shared/tiktok";
+import { normalizeTikTokCreatorInfo, validateTikTokPost, type TikTokCreatorInfo } from "@shared/tiktok";
 import { probeTikTokVideo } from "./tiktok-probe";
 
 const ZERNIO_BASE = "https://zernio.com/api/v1";
@@ -634,18 +634,13 @@ export async function getTikTokCreatorInfo(
   if (!res.ok) {
     return { ok: false, status: res.status, error: "TikTok creator info was not available" };
   }
-  let data: TikTokCreatorInfo;
+  let data: unknown;
   try {
-    data = await res.json() as TikTokCreatorInfo;
+    data = await res.json();
   } catch {
     return { ok: false, status: res.status, error: "TikTok creator info was not available" };
   }
-  const info: TikTokCreatorInfo = {
-    privacyLevels: Array.isArray(data?.privacyLevels) ? data.privacyLevels.map(String) : undefined,
-    postingLimits: data?.postingLimits,
-    interactionSettings: data?.interactionSettings,
-    commercialContentTypes: Array.isArray(data?.commercialContentTypes) ? data.commercialContentTypes.map(String) : undefined,
-  };
+  const info = normalizeTikTokCreatorInfo(data);
   creatorInfoCache.set(accountId, { at: Date.now(), info });
   return { ok: true, info };
 }

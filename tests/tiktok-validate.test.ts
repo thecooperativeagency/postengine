@@ -8,13 +8,33 @@ import { composePostContentFrom } from "../server/compose-captions";
 import { holdPatchIfRequested } from "../server/post-hold";
 import { evaluateApproveForPublish, evaluatePublishGate, selectPublishablePosts } from "../server/publish-gate";
 import { storage } from "../server/storage";
-import { publishPost, validateTikTokWithZernio } from "../server/zernio-publisher";
-import { mergeTikTokSettings, validateTikTokPost } from "../shared/tiktok";
+import { clearTikTokCreatorInfoCache, getTikTokCreatorInfo, publishPost, validateTikTokWithZernio } from "../server/zernio-publisher";
+import { mergeTikTokSettings, normalizeTikTokCreatorInfo, validateTikTokPost } from "../shared/tiktok";
 
 const NOW = new Date("2026-11-19T18:00:00.000Z");
 const ORIGINAL_ACCOUNTS = process.env.ZERNIO_ACCOUNTS_PATH;
 const ORIGINAL_TIKTOK = process.env.TIKTOK_PUBLISH_ENABLED;
 const ORIGINAL_PUBLISH = process.env.PUBLISH_ENABLED;
+const ORIGINAL_ZERNIO_KEY = process.env.ZERNIO_API_KEY;
+
+/** Shape returned by GET /v1/accounts/{id}/tiktok/creator-info for a Business-app video account. */
+const ZERNIO_CREATOR_INFO = {
+  creator: { nickname: "Example Dealer", canPostMore: true },
+  privacyLevels: [{ value: "PUBLIC_TO_EVERYONE", label: "Everyone" }],
+  postingLimits: {
+    maxVideoDurationSec: 3600,
+    interactionSettings: {
+      allow_comment: { enabled: true, required: true, default: true, label: "Comment" },
+      allow_duet: { enabled: true, required: true, default: true, label: "Duet" },
+      allow_stitch: { enabled: true, required: true, default: true, label: "Stitch" },
+    },
+  },
+  commercialContentTypes: [
+    { value: "none", label: "None" },
+    { value: "brand_organic", label: "Your brand" },
+    { value: "brand_content", label: "Branded content" },
+  ],
+};
 
 afterEach(() => {
   if (ORIGINAL_ACCOUNTS === undefined) delete process.env.ZERNIO_ACCOUNTS_PATH;
@@ -23,6 +43,9 @@ afterEach(() => {
   else process.env.TIKTOK_PUBLISH_ENABLED = ORIGINAL_TIKTOK;
   if (ORIGINAL_PUBLISH === undefined) delete process.env.PUBLISH_ENABLED;
   else process.env.PUBLISH_ENABLED = ORIGINAL_PUBLISH;
+  if (ORIGINAL_ZERNIO_KEY === undefined) delete process.env.ZERNIO_API_KEY;
+  else process.env.ZERNIO_API_KEY = ORIGINAL_ZERNIO_KEY;
+  clearTikTokCreatorInfoCache();
 });
 
 const videoPost = {
@@ -55,6 +78,48 @@ test("TikTok validation rejects images, extra media, caption length, and private
     tiktokSettings: JSON.stringify({ privacy_level: "SELF_ONLY", commercialContentType: "brand_organic" }),
   });
   assert.ok(branded.errors.some((error) => /private/i.test(error)));
+});
+
+test("creator info accepts Zernio's object payload and still allows a public post", async (t) => {
+  const normalized = normalizeTikTokCreatorInfo(ZERNIO_CREATOR_INFO);
+  assert.deepEqual(normalized.privacyLevels, ["PUBLIC_TO_EVERYONE"]);
+  assert.equal(normalized.postingLimits?.maxVideoDurationSec, 3600);
+  assert.equal(normalized.interactionSettings?.allow_comment?.enabled, true);
+  assert.equal(normalized.interactionSettings?.allow_duet?.enabled, true);
+  assert.equal(normalized.interactionSettings?.allow_stitch?.enabled, true);
+  assert.deepEqual(normalized.commercialContentTypes, ["none", "brand_organic", "brand_content"]);
+
+  const fromStrings = normalizeTikTokCreatorInfo({
+    privacyLevels: ["PUBLIC_TO_EVERYONE"],
+    interactionSettings: { allow_stitch: { enabled: false } },
+    commercialContentTypes: ["none"],
+    postingLimits: { maxVideoDurationSec: "600" },
+  });
+  assert.deepEqual(fromStrings.privacyLevels, ["PUBLIC_TO_EVERYONE"]);
+  assert.equal(fromStrings.interactionSettings?.allow_stitch?.enabled, false);
+  assert.equal(fromStrings.postingLimits?.maxVideoDurationSec, 600);
+
+  process.env.ZERNIO_API_KEY = "test-key-not-real";
+  clearTikTokCreatorInfoCache();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify(ZERNIO_CREATOR_INFO), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  })) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const loaded = await getTikTokCreatorInfo("acct_tiktok_example");
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) return;
+  assert.deepEqual(loaded.info.privacyLevels, ["PUBLIC_TO_EVERYONE"]);
+  const checked = validateTikTokPost(videoPost, { creatorInfo: loaded.info, accountMapped: true });
+  assert.equal(checked.errors.some((error) => /not allowed/i.test(error)), false);
+  assert.equal(checked.settings.privacy_level, "PUBLIC_TO_EVERYONE");
+  assert.equal(checked.settings.allow_comment, true);
+  assert.equal(checked.settings.allow_duet, true);
+  assert.equal(checked.settings.allow_stitch, true);
 });
 
 test("creator info forces a disabled stitch toggle off", () => {
